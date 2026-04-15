@@ -1,0 +1,36 @@
+app_name: FXAutoTrade Lab
+watchlist:
+  symbols: ["USD_JPY", "EUR_JPY", "AUD_JPY"]
+  benchmark_symbols: ["USD_JPY"]
+  sector_symbols: []
+data:
+  source: fixture
+  cache_dir: data_cache
+  import_dir: imports
+  start_date: "2024-01-01"
+  end_date: "2026-04-15"
+  timeframes: ["1Day", "1Hour", "15Min", "1Min"]
+  preferred_entry_timeframe: "15Min"
+strategy:
+  name: multi_timeframe_pattern_scoring
+  entry_timeframe: "15Min"
+broker:
+  mode: local_sim
+  feed: gmo_public
+automation:
+  enabled: true
+  poll_interval_seconds: 3
+  max_cycles_for_demo: 12
+risk:
+  account_currency: JPY
+  starting_cash: 5000000.0
+  fixed_order_amount: 300000.0
+  max_daily_loss_amount: 100000.0
+reporting:
+  output_dir: reports
+persistence:
+  sqlite_path: runtime/trading_lab.sqlite
+ui:
+  default_page: 概要
+notes:
+  mode_label_ja: ローカルシミュレーション

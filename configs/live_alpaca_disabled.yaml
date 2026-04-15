@@ -1,0 +1,43 @@
+app_name: FXAutoTrade Lab
+watchlist:
+  symbols: ["AAPL", "MSFT", "NVDA"]
+  benchmark_symbols: ["SPY"]
+  sector_symbols: ["XLK"]
+data:
+  source: alpaca
+  cache_dir: data_cache
+  start_date: "2024-01-01"
+  end_date: "2025-12-31"
+  timeframes: ["1Day", "1Hour", "15Min"]
+  preferred_entry_timeframe: "15Min"
+strategy:
+  name: multi_timeframe_pattern_scoring
+  entry_timeframe: "15Min"
+broker:
+  mode: alpaca_live
+  feed: iex
+  live_trading_hard_disabled: true
+automation:
+  enabled: false
+  reconnect_seconds: 10
+  reconnect_max_attempts: 3
+  sync_broker_state_on_start: true
+  sync_broker_state_each_cycle: true
+  reconcile_orders_limit: 50
+  notifications_enabled: true
+  notify_on_reconnect: true
+  notification_channels:
+    channels: ["desktop", "log"]
+    sound_name: Glass
+    log_path: runtime/notifications.log
+    webhook_url: ""
+  close_positions_on_kill_switch: true
+risk:
+  max_daily_loss_pct: 0.02
+  max_daily_loss_amount: 2000.0
+reporting:
+  output_dir: reports
+persistence:
+  sqlite_path: runtime/trading_lab.sqlite
+notes:
+  warning_ja: ライブ取引は無効です

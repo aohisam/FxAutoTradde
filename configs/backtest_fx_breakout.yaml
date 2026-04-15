@@ -1,0 +1,77 @@
+app_name: FXAutoTrade Lab
+watchlist:
+  symbols: ["AUD_JPY"]
+  benchmark_symbols: ["AUD_JPY"]
+  sector_symbols: []
+data:
+  source: csv
+  cache_dir: data_cache
+  import_dir: imports
+  start_date: "2024-01-01"
+  end_date: "2026-04-15"
+  timeframes: ["1Min", "15Min", "1Hour", "1Day", "1Week", "1Month"]
+  preferred_entry_timeframe: "1Min"
+strategy:
+  name: fx_breakout_pullback
+  entry_timeframe: "1Min"
+  fx_breakout_pullback:
+    signal_timeframe: "15Min"
+    trend_timeframe: "1Hour"
+    execution_timeframe: "1Min"
+    ema_fast: 50
+    ema_slow: 200
+    ema_slope_lookback: 3
+    adx_period: 14
+    adx_threshold: 20
+    atr_period: 14
+    min_atr_percentile: 0.20
+    breakout_lookback: 20
+    breakout_buffer_atr: 0.0
+    pullback_window_bars: 5
+    min_pullback_atr_ratio: 0.05
+    shallow_pullback_max_ratio: 0.50
+    pullback_break_below_buffer_atr: 0.10
+    atr_stop_mult: 2.0
+    swing_buffer_atr: 0.10
+    atr_trailing_mult: 2.5
+    partial_exit_fraction: 0.5
+    trend_break_confirm_bars: 2
+    spread_percentile_threshold: 0.80
+    spread_context_lookback_days: 20
+    max_spread_to_atr_ratio: 0.15
+    entry_delay_bars: 0
+    spread_stress_multiplier: 1.0
+    overnight_swap_per_unit: 0.0
+    ml_filter:
+      enabled: false
+      backtest_mode: rule_only
+      decision_threshold: 0.50
+      require_pretrained_model: false
+      missing_model_behavior: rule_only
+      model_dir: models/fx_ml
+      dataset_dir: datasets/fx_ml
+      walk_forward:
+        mode: anchored
+        train_window: 2y
+        test_window: 1m
+        retrain_frequency: 1m
+broker:
+  mode: local_sim
+risk:
+  account_currency: JPY
+  starting_cash: 5000000.0
+  fixed_order_amount: 300000.0
+  max_daily_loss_amount: 100000.0
+automation:
+  enabled: false
+research:
+  mode: standard
+  output_dir: research_runs
+  cache_dir: research_cache
+  reuse_cached_steps: true
+  spread_stress_multipliers: [1.0, 1.2, 1.5]
+  entry_delay_scenarios: [0, 1, 2]
+reporting:
+  output_dir: reports
+persistence:
+  sqlite_path: runtime/trading_lab.sqlite

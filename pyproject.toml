@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fxautotrade-lab"
+version = "0.1.0"
+description = "macOS-first desktop quant trading lab for FX"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Codex" }
+]
+dependencies = [
+  "black>=24.4.2",
+  "click==8.1.7",
+  "numpy==2.4.4",
+  "pandas==3.0.2",
+  "plotly==6.7.0",
+  "pytz==2026.1.post1",
+  "pyarrow==23.0.1",
+  "pydantic==2.13.0",
+  "pydantic-settings==2.13.1",
+  "PySide6==6.11.0",
+  "PyYAML==6.0.3",
+  "ruff>=0.4.4",
+  "typer==0.23.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+]
+
+[project.scripts]
+fxautotrade-lab = "fxautotrade_lab.cli.__main__:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "B", "UP", "C4", "SIM"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
