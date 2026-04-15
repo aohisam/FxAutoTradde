@@ -12,12 +12,12 @@ def test_scoring_strategy_generates_columns(tmp_path):
     config = load_app_config(write_config(tmp_path))
     env = load_environment()
     service = MarketDataService(config, env)
-    frames = service.load_symbol_frames("AAPL")
+    frames = service.load_symbol_frames("USD_JPY")
     feature_set = build_multi_timeframe_feature_set(
-        symbol="AAPL",
+        symbol="USD_JPY",
         bars_by_timeframe=frames,
-        benchmark_bars=service.load_symbol_frames("SPY"),
-        sector_bars=service.load_symbol_frames("XLK"),
+        benchmark_bars=service.load_symbol_frames("USD_JPY"),
+        sector_bars=None,
         config=config,
     )
     strategy = create_strategy(config)

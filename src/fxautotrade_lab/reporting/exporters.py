@@ -86,7 +86,7 @@ def _summary_markdown(result: BacktestResult) -> str:
         f"- 戦略: {result.strategy_name}",
         f"- 対象銘柄: {', '.join(result.symbols)}",
         f"- 検証期間: {result.backtest_start} - {result.backtest_end}",
-        f"- 初期資産: {result.starting_cash:,.2f} USD",
+        f"- 初期資産: {result.starting_cash:,.2f} JPY",
         f"- 総損益: {result.metrics.get('total_return', 0):.2%}",
         f"- 最大ドローダウン: {result.metrics.get('max_drawdown', 0):.2%}",
         f"- 勝率: {result.metrics.get('win_rate', 0):.2%}",
@@ -95,8 +95,8 @@ def _summary_markdown(result: BacktestResult) -> str:
         "",
         "## 注意事項",
         "",
-        "- シミュレーションおよびペーパー取引の結果は将来を保証しません。",
+        "- シミュレーションおよび実時間シミュレーションの結果は将来を保証しません。",
         "- 実市場では流動性、スリッページ、注文制約が異なる場合があります。",
-        "- v1 ではライブ取引は既定で無効です。",
+        "- v1 では実売買は既定で無効です。",
     ]
     return "\n".join(lines)

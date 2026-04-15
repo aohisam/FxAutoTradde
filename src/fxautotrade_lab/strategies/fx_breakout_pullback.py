@@ -168,9 +168,11 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                 if self._as_bool(row.get("full_exit_trend_break_1h", False)):
                     working.at[timestamp, "exit_signal"] = True
                     reasons.append("1時間足EMAクロスで全決済シグナル")
+                    state = "FLAT_EXITED"
                 elif self._as_bool(row.get("partial_exit_trend_break_1h", False)):
                     working.at[timestamp, "partial_exit_signal"] = True
                     reasons.append("1時間足トレンド崩れで一部手仕舞いシグナル")
+                    state = "PARTIAL_EXIT_DONE"
 
             action = SignalAction.HOLD.value
             if self._as_bool(working.at[timestamp, "entry_signal"]):

@@ -13,6 +13,7 @@ from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.data.cache import ParquetBarCache
 from fxautotrade_lab.data.quality import validate_bar_frame
+from fxautotrade_lab.data.resample import resample_ohlcv
 from fxautotrade_lab.data.session import trading_days
 
 
@@ -84,6 +85,16 @@ class FixtureDataLoader:
     ) -> pd.DataFrame:
         seed = self.config.fixture_seed + sum(ord(char) for char in f"{symbol}-{timeframe.value}")
         rng = np.random.default_rng(seed)
+        if timeframe == TimeFrame.WEEK_1:
+            daily = self._generate_bars(symbol, TimeFrame.DAY_1, start, end)
+            weekly = resample_ohlcv(daily[["open", "high", "low", "close", "volume"]], "W-FRI")
+            weekly["symbol"] = symbol.upper()
+            return validate_bar_frame(weekly)
+        if timeframe == TimeFrame.MONTH_1:
+            daily = self._generate_bars(symbol, TimeFrame.DAY_1, start, end)
+            monthly = resample_ohlcv(daily[["open", "high", "low", "close", "volume"]], "ME")
+            monthly["symbol"] = symbol.upper()
+            return validate_bar_frame(monthly)
         if timeframe == TimeFrame.DAY_1:
             index = pd.DatetimeIndex(
                 [day.replace(hour=23, minute=59, second=0) for day in trading_days(start, end)]

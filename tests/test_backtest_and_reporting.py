@@ -54,8 +54,8 @@ def test_backtest_uses_custom_window_and_exports_period(tmp_path):
     assert result.backtest_start == "2024-02-01"
     assert result.backtest_end == "2024-02-29"
     assert not result.equity_curve.empty
-    assert result.equity_curve.index.min() >= pd.Timestamp("2024-02-01", tz="US/Eastern")
-    assert result.equity_curve.index.max() < pd.Timestamp("2024-03-01", tz="US/Eastern")
+    assert result.equity_curve.index.min() >= pd.Timestamp("2024-02-01", tz="Asia/Tokyo")
+    assert result.equity_curve.index.max() < pd.Timestamp("2024-03-01", tz="Asia/Tokyo")
 
     output_dir = Path(result.output_dir)
     summary_text = (output_dir / "summary.md").read_text(encoding="utf-8")

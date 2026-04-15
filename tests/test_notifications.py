@@ -12,9 +12,9 @@ def test_multichannel_notifier_writes_log_channel(tmp_path):
         enabled=True,
         config=NotificationChannelConfig(channels=["log"], log_path=log_path),
     )
-    result = notifier.notify(title="FXAutoTrade Lab", message="注文を送信しました。", subtitle="alpaca_paper")
+    result = notifier.notify(title="FXAutoTrade Lab", message="注文を送信しました。", subtitle="gmo_sim")
     assert result["log"] is True
     payload = json.loads(log_path.read_text(encoding="utf-8").strip())
     assert payload["title"] == "FXAutoTrade Lab"
     assert payload["message"] == "注文を送信しました。"
-    assert payload["subtitle"] == "alpaca_paper"
+    assert payload["subtitle"] == "gmo_sim"

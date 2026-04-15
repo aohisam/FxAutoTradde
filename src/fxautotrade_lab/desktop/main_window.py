@@ -61,7 +61,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 "データ同期",
                 "バックテスト",
                 "シグナル分析",
-                "フォワード自動売買",
+                "実時間シミュレーション",
                 "チャート",
                 "取引履歴",
                 "レポート",
@@ -101,7 +101,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 "データ同期": build_data_sync_page(self.app_state, self.submit_background_task, self.log_message),
                 "バックテスト": build_backtest_page(self.app_state, self.submit_background_task, self.log_message),
                 "シグナル分析": build_signals_page(self.app_state),
-                "フォワード自動売買": build_automation_page(
+                "実時間シミュレーション": build_automation_page(
                     self.app_state, self.submit_background_task, self.log_message
                 ),
                 "チャート": build_chart_page(self.app_state, self.submit_background_task, self.log_message),

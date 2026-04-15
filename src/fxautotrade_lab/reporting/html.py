@@ -61,8 +61,8 @@ def render_html_report(result: BacktestResult) -> str:
     caution = """
     <ul>
       <li>この結果はヒストリカル検証またはシミュレーションであり、将来利益を保証しません。</li>
-      <li>ペーパー取引やシミュレーションの約定、スリッページ、流動性は実運用と乖離する場合があります。</li>
-      <li>ライブ取引は既定で無効化されています。</li>
+      <li>実時間シミュレーションの約定、スリッページ、流動性は将来の実運用と乖離する場合があります。</li>
+      <li>実売買は既定で無効化されており、現行版は GMO データを用いた検証系が主系です。</li>
     </ul>
     """
     recent_signals = (
@@ -123,7 +123,7 @@ def render_html_report(result: BacktestResult) -> str:
       </p>
       <p>対象銘柄: {", ".join(result.symbols)}</p>
       <p>検証期間: {result.backtest_start} - {result.backtest_end}</p>
-      <p>初期資産: {result.starting_cash:,.2f} USD</p>
+      <p>初期資産: {result.starting_cash:,.2f} JPY</p>
       <p>実行ID: {result.run_id}</p>
     </div>
     <div class="card">
@@ -161,14 +161,14 @@ def render_html_report(result: BacktestResult) -> str:
         <tr><th>戦略</th><td>{result.strategy_name}</td></tr>
         <tr><th>対象銘柄</th><td>{", ".join(result.symbols)}</td></tr>
         <tr><th>検証期間</th><td>{result.backtest_start} - {result.backtest_end}</td></tr>
-        <tr><th>初期資産</th><td>{result.starting_cash:,.2f} USD</td></tr>
+        <tr><th>初期資産</th><td>{result.starting_cash:,.2f} JPY</td></tr>
         <tr><th>スリッページ/手数料</th><td>設定ファイルに基づく推定モデル</td></tr>
-        <tr><th>注文種別</th><td>v1 は成行ベースのローカル/ペーパー自動化が中心です</td></tr>
+        <tr><th>注文種別</th><td>v1 は Bid/Ask 前提のローカル約定・実時間シミュレーションが中心です</td></tr>
       </table>
     </div>
     <div class="card">
       <h2>前提と注意事項</h2>
-      <p>スリッページ/手数料仮定を含む推定結果です。paper/live の挙動は異なります。</p>
+      <p>スリッページ/手数料仮定を含む推定結果です。バックテスト、実時間シミュレーション、将来の実運用では挙動が異なります。</p>
       {caution}
     </div>
   </body>

@@ -13,7 +13,7 @@ Anaconda 系 Python で `Qt platform plugin "cocoa"` 初期化に失敗する場
 
 ```bash
 /opt/homebrew/bin/python3.11 -m venv .venv_gui
-./.venv_gui/bin/pip install PySide6 alpaca-py click==8.1.7 numpy pandas plotly pyarrow pydantic pydantic-settings PyYAML typer
+./.venv_gui/bin/pip install PySide6 click==8.1.7 numpy pandas plotly pyarrow pydantic pydantic-settings PyYAML typer pillow
 ./scripts/launch_desktop_macos.sh
 ```
 

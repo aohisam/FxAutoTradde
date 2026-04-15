@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from fxautotrade_lab.core.constants import ASIA_TOKYO
-from fxautotrade_lab.data.quality import validate_bar_frame
+from fxautotrade_lab.data.quality import summarize_bar_frame_quality, validate_bar_frame
 
 
 QUOTE_SIDE_COLUMNS = ["open", "high", "low", "close", "volume"]
@@ -32,15 +32,21 @@ def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
         missing = [column for column in required if column not in working.columns]
     if missing:
         raise ValueError(f"Missing quote columns: {missing}")
+    for column in required:
+        working[column] = pd.to_numeric(working[column], errors="coerce")
+    null_rows = int(working[required].isna().any(axis=1).sum())
+    if null_rows:
+        raise ValueError(f"Quote columns contain {null_rows} incomplete rows.")
     working["open"] = pd.to_numeric(working.get("open", working["bid_open"]), errors="coerce")
     working["high"] = pd.to_numeric(working.get("high", working["bid_high"]), errors="coerce")
     working["low"] = pd.to_numeric(working.get("low", working["bid_low"]), errors="coerce")
     working["close"] = pd.to_numeric(working.get("close", working["bid_close"]), errors="coerce")
     working["volume"] = pd.to_numeric(working.get("volume", working["bid_volume"]), errors="coerce").fillna(0.0)
     working = validate_bar_frame(working)
-    spread_close = working.get("spread_close")
-    if spread_close is not None and (pd.to_numeric(spread_close, errors="coerce") < 0).any():
-        raise ValueError("Negative spread detected in quote bars.")
+    for price_column in ("open", "high", "low", "close"):
+        spread = pd.to_numeric(working.get(f"spread_{price_column}"), errors="coerce")
+        if (spread < 0).any():
+            raise ValueError(f"Negative spread detected in quote bars ({price_column}).")
     return working
 
 
@@ -127,4 +133,43 @@ def quote_spread_summary(frame: pd.DataFrame) -> dict[str, float]:
         "spread_p95": float(spreads.quantile(0.95)),
         "spread_p99": float(spreads.quantile(0.99)),
         "spread_max": float(spreads.max()),
+    }
+
+
+def summarize_quote_bar_quality(frame: pd.DataFrame) -> dict[str, object]:
+    working = frame.copy()
+    summary = summarize_bar_frame_quality(working)
+    if "spread_close" not in working.columns:
+        return {
+            **summary,
+            "negative_spread_rows": 0,
+            "abnormal_spread_rows": 0,
+            "spread_p95": 0.0,
+            "spread_p99": 0.0,
+            "spread_max": 0.0,
+        }
+    spreads = pd.to_numeric(working["spread_close"], errors="coerce")
+    valid_spreads = spreads.dropna()
+    if valid_spreads.empty:
+        return {
+            **summary,
+            "negative_spread_rows": 0,
+            "abnormal_spread_rows": 0,
+            "spread_p95": 0.0,
+            "spread_p99": 0.0,
+            "spread_max": 0.0,
+        }
+    spread_p95 = float(valid_spreads.quantile(0.95))
+    spread_p99 = float(valid_spreads.quantile(0.99))
+    spread_max = float(valid_spreads.max())
+    median = float(valid_spreads.median())
+    abnormal_threshold = max(spread_p95 * 3.0, median * 10.0, 0.0001)
+    abnormal_rows = int((valid_spreads > abnormal_threshold).sum())
+    return {
+        **summary,
+        "negative_spread_rows": int((valid_spreads < 0).sum()),
+        "abnormal_spread_rows": abnormal_rows,
+        "spread_p95": spread_p95,
+        "spread_p99": spread_p99,
+        "spread_max": spread_max,
     }

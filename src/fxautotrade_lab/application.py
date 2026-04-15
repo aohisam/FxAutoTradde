@@ -125,7 +125,7 @@ class LabApplication:
             )
         return {"result": result, "logs": logs}
 
-    def run_paper(self, max_cycles: int | None = None) -> list:
+    def run_realtime_sim(self, max_cycles: int | None = None) -> list:
         self.automation_controller = AutomationController(self.config, self.env)
         self._invalidate_runtime_cache()
         self._invalidate_chart_cache()
@@ -397,37 +397,33 @@ class LabApplication:
 
     def credential_statuses(self) -> dict[str, dict[str, object]]:
         return {
-            "paper": {
-                "configured": False,
-                "source": "unused",
-                "key_hint": "未使用",
-                "keychain_available": False,
-            },
-            "live": {
-                "configured": False,
-                "source": "unused",
-                "key_hint": "未使用",
-                "keychain_available": False,
-            },
             "public": {
                 "configured": True,
                 "source": "public_api",
                 "key_hint": "認証不要",
                 "keychain_available": False,
-            }
+            },
+            "private": {
+                "configured": bool(self.env.has_credentials("private")),
+                "source": "env" if self.env.has_credentials("private") else "unset",
+                "key_hint": self._mask_api_key(self.env.gmo_api_key) if self.env.has_credentials("private") else "未設定",
+                "keychain_available": False,
+            },
         }
 
     def load_credential_values(self, profile: str) -> dict[str, object]:
         normalized = profile.lower().strip()
-        if normalized in {"paper", "live"}:
+        if normalized == "private":
+            api_key = self.env.gmo_api_key.strip()
+            api_secret = self.env.gmo_api_secret.strip()
             return {
-                "profile": normalized,
-                "configured": False,
-                "source": "unused",
-                "api_key": "",
-                "api_secret": "",
-                "api_key_masked": "",
-                "api_secret_masked": "",
+                "profile": "private",
+                "configured": bool(api_key and api_secret),
+                "source": "env" if api_key and api_secret else "unset",
+                "api_key": api_key,
+                "api_secret": api_secret,
+                "api_key_masked": self._mask_api_key(api_key),
+                "api_secret_masked": self._mask_api_secret(api_secret),
             }
         return {
             "profile": "public",
@@ -439,11 +435,11 @@ class LabApplication:
             "api_secret_masked": "",
         }
 
-    def save_alpaca_credentials(self, profile: str, api_key: str, api_secret: str) -> dict[str, object]:
+    def save_gmo_credentials(self, profile: str, api_key: str, api_secret: str) -> dict[str, object]:
         _ = profile, api_key, api_secret
-        raise RuntimeError("FX 版では GMO の public API を使用するため、資格情報の保存は不要です。")
+        raise RuntimeError("現行版では UI から GMO 認証情報を保存しません。.env に設定してください。")
 
-    def delete_alpaca_credentials(self, profile: str) -> bool:
+    def delete_gmo_credentials(self, profile: str) -> bool:
         _ = profile
         return False
 
@@ -557,10 +553,6 @@ class LabApplication:
         self.config.automation.notification_channels.sound_name = sound_name.strip() or "Glass"
         self.config.automation.notification_channels.webhook_url = webhook_url.strip()
         self.save_config()
-
-    def test_alpaca_connection(self, profile: str) -> dict[str, object]:
-        _ = profile
-        return self.test_gmo_connection()
 
     def test_gmo_connection(self) -> dict[str, object]:
         client = GmoForexPublicClient(self.env)

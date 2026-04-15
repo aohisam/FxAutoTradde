@@ -40,7 +40,7 @@ class EnvironmentConfig(BaseSettings):
 
 
 class WatchlistConfig(BaseModel):
-    symbols: list[str] = Field(default_factory=lambda: ["USD_JPY", "EUR_JPY", "AUD_JPY"])
+    symbols: list[str] = Field(default_factory=lambda: ["USD_JPY"])
     benchmark_symbols: list[str] = Field(default_factory=lambda: list(DEFAULT_BENCHMARK_SYMBOLS))
     sector_symbols: list[str] = Field(default_factory=lambda: list(DEFAULT_SECTOR_SYMBOLS))
 
@@ -67,7 +67,7 @@ class DataConfig(BaseModel):
     timeframes: list[TimeFrame] = Field(
         default_factory=lambda: [TimeFrame.DAY_1, TimeFrame.HOUR_1, TimeFrame.MIN_15, TimeFrame.MIN_1]
     )
-    preferred_entry_timeframe: TimeFrame = TimeFrame.MIN_15
+    preferred_entry_timeframe: TimeFrame = TimeFrame.MIN_1
     use_incremental_cache: bool = True
     max_bars_per_symbol: int = 5000
     stream_enabled: bool = False
@@ -185,8 +185,8 @@ class FxBreakoutPullbackConfig(BaseModel):
 
 
 class StrategyConfig(BaseModel):
-    name: str = "multi_timeframe_pattern_scoring"
-    entry_timeframe: TimeFrame = TimeFrame.MIN_15
+    name: str = "fx_breakout_pullback"
+    entry_timeframe: TimeFrame = TimeFrame.MIN_1
     baseline: BaselineStrategyConfig = Field(default_factory=BaselineStrategyConfig)
     scoring: ScoringStrategyConfig = Field(default_factory=ScoringStrategyConfig)
     fx_breakout_pullback: FxBreakoutPullbackConfig = Field(default_factory=FxBreakoutPullbackConfig)

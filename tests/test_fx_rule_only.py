@@ -20,8 +20,8 @@ def _make_fx_config(tmp_path: Path) -> AppConfig:
         {
             "app_name": "FX Rule Test",
             "watchlist": {
-                "symbols": ["AUD_JPY"],
-                "benchmark_symbols": ["AUD_JPY"],
+                "symbols": ["USD_JPY"],
+                "benchmark_symbols": ["USD_JPY"],
                 "sector_symbols": [],
             },
             "data": {
@@ -84,7 +84,7 @@ def _make_quote_frame(
         },
         index=index,
     )
-    return build_quote_bar_frame(bid, ask, "AUD_JPY")
+    return build_quote_bar_frame(bid, ask, "USD_JPY")
 
 
 def _write_jforex_csv(path: Path, frame: pd.DataFrame, side: str) -> None:
@@ -106,17 +106,17 @@ def test_bid_ask_import_and_resample(tmp_path: Path) -> None:
     mid_prices = np.linspace(100.0, 100.5, len(index))
     spreads = np.full(len(index), 0.04)
     quote_frame = _make_quote_frame(index, mid_prices, spreads)
-    bid_path = tmp_path / "AUDJPY_1 Min_Bid_test.csv"
-    ask_path = tmp_path / "AUDJPY_1 Min_Ask_test.csv"
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_test.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_test.csv"
     _write_jforex_csv(bid_path, quote_frame, "bid")
     _write_jforex_csv(ask_path, quote_frame, "ask")
 
     importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
     result = importer.import_bid_ask_files(bid_path, ask_path)
 
-    assert result.symbol == "AUD_JPY"
-    min1 = pd.read_parquet(tmp_path / "cache" / "AUD_JPY" / "1Min.parquet")
-    min15 = pd.read_parquet(tmp_path / "cache" / "AUD_JPY" / "15Min.parquet")
+    assert result.symbol == "USD_JPY"
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+    min15 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "15Min.parquet")
     assert {"bid_open", "ask_open", "mid_close", "spread_close"}.issubset(min1.columns)
     assert {"bid_open", "ask_open", "mid_close", "spread_close"}.issubset(min15.columns)
     assert float(min1["spread_close"].min()) > 0
@@ -197,7 +197,7 @@ def test_fx_engine_uses_ask_entry_and_bid_exit(tmp_path: Path) -> None:
         index=index,
     )
 
-    outputs = simulator.run({"AUD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
+    outputs = simulator.run({"USD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
 
     trades = outputs["trades"]
     assert len(trades.index) == 1
@@ -241,7 +241,7 @@ def test_fx_engine_conservative_same_bar_stop_after_entry(tmp_path: Path) -> Non
         index=index,
     )
 
-    outputs = simulator.run({"AUD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
+    outputs = simulator.run({"USD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
 
     trades = outputs["trades"]
     positions = outputs["positions"]
@@ -266,7 +266,7 @@ def test_fx_pipeline_spread_filter_excludes_current_bar(tmp_path: Path) -> None:
         TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
     }
 
-    feature_set = build_fx_feature_set("AUD_JPY", frames, config)
+    feature_set = build_fx_feature_set("USD_JPY", frames, config)
 
     assert bool(feature_set.execution_frame["spread_context_ok"].iloc[-2])
     assert not bool(feature_set.execution_frame["spread_context_ok"].iloc[-1])

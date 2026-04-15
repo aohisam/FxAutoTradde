@@ -1,6 +1,6 @@
 app_name: FXAutoTrade Lab
 watchlist:
-  symbols: ["USD_JPY", "EUR_JPY", "AUD_JPY"]
+  symbols: ["USD_JPY"]
   benchmark_symbols: ["USD_JPY"]
   sector_symbols: []
 data:
@@ -9,11 +9,15 @@ data:
   import_dir: imports
   start_date: "2024-01-01"
   end_date: "2026-04-15"
-  timeframes: ["1Day", "1Hour", "15Min", "1Min"]
-  preferred_entry_timeframe: "15Min"
+  timeframes: ["1Min", "15Min", "1Hour", "1Day", "1Week", "1Month"]
+  preferred_entry_timeframe: "1Min"
 strategy:
-  name: multi_timeframe_pattern_scoring
-  entry_timeframe: "15Min"
+  name: fx_breakout_pullback
+  entry_timeframe: "1Min"
+  fx_breakout_pullback:
+    signal_timeframe: "15Min"
+    trend_timeframe: "1Hour"
+    execution_timeframe: "1Min"
 broker:
   mode: local_sim
   feed: gmo_public

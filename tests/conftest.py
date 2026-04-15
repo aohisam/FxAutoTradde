@@ -9,16 +9,16 @@ def make_config_dict(tmp_path: Path, strategy_name: str = "multi_timeframe_patte
     return {
         "app_name": "FXAutoTrade Lab Test",
         "watchlist": {
-            "symbols": ["AAPL", "MSFT"],
-            "benchmark_symbols": ["SPY"],
-            "sector_symbols": ["XLK"],
+            "symbols": ["USD_JPY", "EUR_JPY"],
+            "benchmark_symbols": ["USD_JPY"],
+            "sector_symbols": [],
         },
         "data": {
             "source": "fixture",
             "cache_dir": str(tmp_path / "cache"),
             "start_date": "2024-01-01",
             "end_date": "2024-03-31",
-            "timeframes": ["1Day", "1Hour", "15Min"],
+            "timeframes": ["1Day", "1Hour", "15Min", "1Min"],
             "preferred_entry_timeframe": "15Min",
         },
         "strategy": {

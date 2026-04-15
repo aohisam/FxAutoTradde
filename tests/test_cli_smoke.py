@@ -29,6 +29,17 @@ def test_cli_demo_smoke(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def test_cli_realtime_sim_smoke(tmp_path):
+    config_path = write_config(tmp_path)
+    result = subprocess.run(
+        [sys.executable, "-m", "fxautotrade_lab.cli", "realtime-sim", "--config", str(config_path), "--max-cycles", "1"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_cli_verify_broker_smoke(tmp_path):
     config_path = write_config(tmp_path)
     result = subprocess.run(

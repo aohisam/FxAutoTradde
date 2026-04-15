@@ -53,13 +53,13 @@ def _typer_main() -> None:
         )
         typer.echo(f"Bid/Ask CSV 取込完了: {summary}")
 
-    @app.command("paper-run")
-    def paper_run(
+    @app.command("realtime-sim")
+    def realtime_sim(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
         max_cycles: int = typer.Option(0, "--max-cycles", help="実行サイクル数。0 は既定値"),
     ) -> None:
-        logs = LabApplication(Path(config)).run_paper(max_cycles=max_cycles or None)
-        typer.echo(f"ペーパー実行完了: {len(logs)} 件のイベント")
+        logs = LabApplication(Path(config)).run_realtime_sim(max_cycles=max_cycles or None)
+        typer.echo(f"実時間シミュレーション完了: {len(logs)} 件のイベント")
 
     @app.command("demo-run")
     def demo_run(config: str = typer.Option(..., "--config", help="設定ファイル")) -> None:
@@ -112,8 +112,8 @@ def _argparse_main() -> None:
     import_bidask.add_argument("--bid-file", required=True)
     import_bidask.add_argument("--ask-file", required=True)
     import_bidask.add_argument("--symbol", default="")
-    paper = subparsers.add_parser("paper-run", parents=[config_parser])
-    paper.add_argument("--max-cycles", type=int, default=None)
+    realtime = subparsers.add_parser("realtime-sim", parents=[config_parser])
+    realtime.add_argument("--max-cycles", type=int, default=None)
     subparsers.add_parser("demo-run", parents=[config_parser])
     export = subparsers.add_parser("export-report")
     export.add_argument("--run-id", required=True)
@@ -140,8 +140,8 @@ def _argparse_main() -> None:
             symbol=args.symbol or None,
         )
         print(summary)
-    elif args.command == "paper-run":
-        logs = LabApplication(Path(args.config)).run_paper(max_cycles=args.max_cycles)
+    elif args.command == "realtime-sim":
+        logs = LabApplication(Path(args.config)).run_realtime_sim(max_cycles=args.max_cycles)
         print(len(logs))
     elif args.command == "demo-run":
         result = LabApplication(Path(args.config)).run_demo()["result"]

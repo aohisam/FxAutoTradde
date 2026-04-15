@@ -20,8 +20,8 @@ def _make_fx_config(tmp_path: Path) -> AppConfig:
         {
             "app_name": "FX ML Test",
             "watchlist": {
-                "symbols": ["AUD_JPY"],
-                "benchmark_symbols": ["AUD_JPY"],
+                "symbols": ["USD_JPY"],
+                "benchmark_symbols": ["USD_JPY"],
                 "sector_symbols": [],
             },
             "data": {
@@ -77,7 +77,7 @@ def _synthetic_dataset(rows: int = 32) -> pd.DataFrame:
     index = pd.date_range("2026-01-01", periods=rows, freq="1h", tz="Asia/Tokyo")
     dataset = pd.DataFrame(
         {
-            "symbol": "AUD_JPY",
+            "symbol": "USD_JPY",
             "signal_time": index,
             "entry_time": index + pd.Timedelta(minutes=1),
             "exit_time": index + pd.Timedelta(minutes=15),
@@ -122,7 +122,7 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
     config.data.end_date = "2026-01-05"
     index = pd.date_range("2026-01-01 00:00:00", periods=60 * 24 * 5, freq="1min", tz="Asia/Tokyo")
     signal_frame = pd.DataFrame(index=index)
-    signal_frame["symbol"] = "AUD_JPY"
+    signal_frame["symbol"] = "USD_JPY"
     signal_frame["close"] = np.linspace(100.0, 102.0, len(index))
     signal_frame["entry_signal"] = False
     signal_frame.loc[index[::240], "entry_signal"] = True
@@ -139,7 +139,7 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
             return pd.Series(0.9, index=features.index)
 
     def fake_build_symbol_signals(*args, **kwargs):
-        return {"AUD_JPY": signal_frame}, {"AUD_JPY": {"1Min": signal_frame.copy()}}, {"AUD_JPY": signal_frame.copy()}
+        return {"USD_JPY": signal_frame}, {"USD_JPY": {"1Min": signal_frame.copy()}}, {"USD_JPY": signal_frame.copy()}
 
     def fake_train_model(*args, **kwargs):
         train_windows.append((kwargs["train_start"], kwargs["train_end"]))
@@ -191,7 +191,7 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
                 "exit_time": pd.to_datetime(["2026-01-01T01:00:00+09:00"]),
                 "net_pnl": [1000.0],
                 "realized_r_net": [0.5],
-                "symbol": ["AUD_JPY"],
+                "symbol": ["USD_JPY"],
             }
         ),
         signals=pd.DataFrame(
@@ -207,7 +207,7 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
         ),
     )
 
-    monkeypatch.setattr(ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "AUD_JPY"}]})
+    monkeypatch.setattr(ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "USD_JPY"}]})
     monkeypatch.setattr(ResearchPipeline, "_train_summary", lambda self: {"trained_rows": 8})
     monkeypatch.setattr(ResearchPipeline, "_run_backtest_variant", lambda self, **kwargs: fake_result)
     monkeypatch.setattr(ResearchPipeline, "_robustness_runs", lambda self, mode: {"rows": [{"spread_multiplier": 1.2}]})
@@ -227,7 +227,7 @@ def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
     index = pd.date_range("2026-01-01 00:00:00", periods=2, freq="1min", tz="Asia/Tokyo")
     execution_frame = pd.DataFrame(
         {
-            "symbol": ["AUD_JPY", "AUD_JPY"],
+            "symbol": ["USD_JPY", "USD_JPY"],
             "entry_signal": [False, True],
             "exit_signal": [False, False],
             "partial_exit_signal": [False, False],
@@ -267,7 +267,7 @@ def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(controller.strategy, "generate_signal_frame", lambda frame: frame)
 
-    snapshots = [{"AUD_JPY": {TimeFrame.MIN_1: execution_frame}}, {"AUD_JPY": {TimeFrame.MIN_1: execution_frame}}]
+    snapshots = [{"USD_JPY": {TimeFrame.MIN_1: execution_frame}}, {"USD_JPY": {TimeFrame.MIN_1: execution_frame}}]
 
     def fake_load_cycle_market_data(self):
         return snapshots.pop(0), None, None
@@ -284,8 +284,8 @@ def test_application_exposes_research_and_training(tmp_path: Path, monkeypatch) 
         """
 app_name: FXApp
 watchlist:
-  symbols: ["AUD_JPY"]
-  benchmark_symbols: ["AUD_JPY"]
+  symbols: ["USD_JPY"]
+  benchmark_symbols: ["USD_JPY"]
   sector_symbols: []
 data:
   source: csv

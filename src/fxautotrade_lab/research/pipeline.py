@@ -14,6 +14,7 @@ import yaml
 
 from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest, train_fx_filter_model_run
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
+from fxautotrade_lab.data.quote_bars import summarize_quote_bar_quality
 from fxautotrade_lab.data.service import MarketDataService
 
 
@@ -206,9 +207,7 @@ class ResearchPipeline:
                     "start": one_min.index.min().isoformat() if not one_min.empty else "",
                     "end": one_min.index.max().isoformat() if not one_min.empty else "",
                     "has_bid_ask": bool({"bid_open", "ask_open", "spread_close"}.issubset(one_min.columns)),
-                    "monotonic": bool(one_min.index.is_monotonic_increasing),
-                    "duplicate_timestamps": int(one_min.index.duplicated().sum()),
-                    "spread_p95": float(one_min["spread_close"].quantile(0.95)) if "spread_close" in one_min.columns and not one_min.empty else 0.0,
+                    **summarize_quote_bar_quality(one_min),
                 }
             )
         return {"symbols": rows}

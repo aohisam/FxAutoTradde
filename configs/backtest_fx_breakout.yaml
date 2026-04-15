@@ -1,7 +1,7 @@
 app_name: FXAutoTrade Lab
 watchlist:
-  symbols: ["AUD_JPY"]
-  benchmark_symbols: ["AUD_JPY"]
+  symbols: ["USD_JPY"]
+  benchmark_symbols: ["USD_JPY"]
   sector_symbols: []
 data:
   source: csv
@@ -39,9 +39,13 @@ strategy:
     spread_percentile_threshold: 0.80
     spread_context_lookback_days: 20
     max_spread_to_atr_ratio: 0.15
+    intrabar_policy: conservative_adverse
     entry_delay_bars: 0
     spread_stress_multiplier: 1.0
     overnight_swap_per_unit: 0.0
+    event_filter:
+      enabled: false
+      provider: disabled
     ml_filter:
       enabled: false
       backtest_mode: rule_only

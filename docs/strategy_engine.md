@@ -2,6 +2,17 @@
 
 ## 実装済み戦略
 
+### FxBreakoutPullbackStrategy
+
+- 1時間足 EMA50 > EMA200
+- EMA50 傾き > 0
+- ADX または ATR percentile によるトレンド許可
+- 15 分足終値ベースのブレイク判定
+- 1 分足の浅い押し確認後のみ再上昇でエントリー
+- Bid/Ask 前提の conservative intrabar 執行
+- ATR トレーリング、1 時間足トレンド崩れで部分手仕舞い
+- ML は参加許可フィルタとしてのみ追加可能
+
 ### BaselineTrendPullbackStrategy
 
 - 日足 50EMA > 200EMA
@@ -28,4 +39,4 @@
 - パターン名を魔法の予測子として扱わない
 - 将来データで訓練しない
 - ノールックアヘッドを優先
-- walk-forward は v1 では再最適化ではなく期間別評価サマリーです
+- walk-forward は未来漏れを避け、期間別評価サマリーを優先します

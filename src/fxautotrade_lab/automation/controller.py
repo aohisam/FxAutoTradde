@@ -1,4 +1,4 @@
-"""Automated forward simulation / paper trading loop."""
+"""Automated forward simulation loop for FX runtime validation."""
 
 from __future__ import annotations
 

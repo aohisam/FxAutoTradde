@@ -12,12 +12,12 @@ def test_daily_features_are_backward_aligned(tmp_path):
     config = load_app_config(write_config(tmp_path))
     env = load_environment()
     service = MarketDataService(config, env)
-    frames = service.load_symbol_frames("AAPL")
+    frames = service.load_symbol_frames("USD_JPY")
     feature_set = build_multi_timeframe_feature_set(
-        symbol="AAPL",
+        symbol="USD_JPY",
         bars_by_timeframe=frames,
-        benchmark_bars=service.load_symbol_frames("SPY"),
-        sector_bars=service.load_symbol_frames("XLK"),
+        benchmark_bars=service.load_symbol_frames("USD_JPY"),
+        sector_bars=None,
         config=config,
     )
     aligned = feature_set.entry_frame.dropna(subset=["daily_ema_50"])
@@ -32,7 +32,7 @@ def test_candle_feature_functions_return_numeric_series(tmp_path):
     config = load_app_config(write_config(tmp_path))
     env = load_environment()
     service = MarketDataService(config, env)
-    frame = service.load_symbol_frames("AAPL")[config.strategy.entry_timeframe].head(100)
+    frame = service.load_symbol_frames("USD_JPY")[config.strategy.entry_timeframe].head(100)
     for series in [bullish_engulfing(frame), hammer(frame), inside_bar(frame), doji(frame)]:
         assert len(series) == len(frame)
         assert series.dtype.kind in {"f", "i", "b"}

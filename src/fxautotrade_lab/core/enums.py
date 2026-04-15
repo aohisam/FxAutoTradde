@@ -8,8 +8,6 @@ from enum import Enum
 class BrokerMode(str, Enum):
     LOCAL_SIM = "local_sim"
     GMO_SIM = "gmo_sim"
-    ALPACA_PAPER = "alpaca_paper"
-    ALPACA_LIVE = "alpaca_live"
 
 
 class TimeFrame(str, Enum):

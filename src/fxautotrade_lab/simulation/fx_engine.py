@@ -56,6 +56,7 @@ class FxOpenPosition:
     entry_reason: str
     entry_score: float
     partial_exit_done: bool = False
+    lifecycle_state: str = "LONG_OPEN"
 
 
 class FxQuotePortfolioSimulator:
@@ -65,6 +66,20 @@ class FxQuotePortfolioSimulator:
         self.config = config
         self.risk_manager = RiskManager(config.risk)
         self.fx_cfg = config.strategy.fx_breakout_pullback
+        self.intrabar_priority = self._intrabar_priority()
+
+    def _intrabar_priority(self) -> tuple[str, ...]:
+        policy = self.fx_cfg.intrabar_policy.strip().lower()
+        if policy == "conservative_adverse":
+            return (
+                "protective_gap_exit",
+                "protective_stop",
+                "trailing_stop",
+                "partial_exit",
+                "new_entry",
+                "favorable_exit",
+            )
+        raise ValueError(f"Unsupported FX intrabar policy: {self.fx_cfg.intrabar_policy}")
 
     @staticmethod
     def _as_bool(value: object, default: bool = False) -> bool:
@@ -255,6 +270,7 @@ class FxQuotePortfolioSimulator:
                         "initial_stop_price": position.initial_stop_price,
                         "trailing_stop_price": position.trailing_stop_price,
                         "partial_exit_done": position.partial_exit_done,
+                        "strategy_state": position.lifecycle_state,
                     }
                 )
             equity_rows.append(
@@ -329,6 +345,10 @@ class FxQuotePortfolioSimulator:
         active_stop = max(position.initial_stop_price, position.trailing_stop_price)
         bid_open = self._quote_price(row, "bid", "open", position.entry_price)
         bid_low = self._quote_price(row, "bid", "low", position.entry_price)
+        # conservative_adverse:
+        # 1. open gap through the stop
+        # 2. hard stop hit inside the bar
+        # 3. trailing stop hit inside the bar
         if bid_open <= active_stop:
             exit_price = bid_open
             reason = "protective_gap_exit"
@@ -388,6 +408,7 @@ class FxQuotePortfolioSimulator:
         position.quantity -= pending_exit.quantity
         if pending_exit.kind == "partial_exit":
             position.partial_exit_done = True
+            position.lifecycle_state = "PARTIAL_EXIT_DONE"
         trade_row = self._trade_row(
             position=position,
             timestamp=timestamp,
@@ -480,7 +501,11 @@ class FxQuotePortfolioSimulator:
             breakout_level=pending_entry.breakout_level,
             entry_reason=pending_entry.reason,
             entry_score=pending_entry.score,
+            lifecycle_state="LONG_OPEN",
         )
+        # conservative_adverse:
+        # when the entry trigger and protective stop are both reachable inside the
+        # same 1-minute bar, the engine assumes we are filled first and then stopped.
         bid_open = self._quote_price(row, "bid", "open", fill.price)
         bid_low = self._quote_price(row, "bid", "low", fill.price)
         if bid_open <= pending_entry.initial_stop_price:
@@ -536,6 +561,8 @@ class FxQuotePortfolioSimulator:
             "signal_time": position.signal_time,
             "entry_time": position.entry_time,
             "exit_time": timestamp,
+            "strategy_state": "FLAT_EXITED",
+            "position_state_before_exit": position.lifecycle_state,
             "quantity": quantity,
             "initial_quantity": position.initial_quantity,
             "entry_price": position.entry_price,

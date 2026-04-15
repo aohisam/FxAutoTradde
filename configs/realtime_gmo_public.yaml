@@ -4,13 +4,14 @@ watchlist:
   benchmark_symbols: ["USD_JPY"]
   sector_symbols: []
 data:
-  source: fixture
+  source: gmo
   cache_dir: data_cache
   import_dir: imports
   start_date: "2024-01-01"
   end_date: "2026-04-15"
   timeframes: ["1Min", "15Min", "1Hour", "1Day", "1Week", "1Month"]
   preferred_entry_timeframe: "1Min"
+  stream_enabled: true
 strategy:
   name: fx_breakout_pullback
   entry_timeframe: "1Min"
@@ -18,23 +19,37 @@ strategy:
     signal_timeframe: "15Min"
     trend_timeframe: "1Hour"
     execution_timeframe: "1Min"
+    intrabar_policy: conservative_adverse
 broker:
-  mode: local_sim
+  mode: gmo_sim
   feed: gmo_public
 automation:
   enabled: true
-  poll_interval_seconds: 3
-  max_cycles_for_demo: 12
+  poll_interval_seconds: 15
+  reconnect_seconds: 5
+  reconnect_max_attempts: 3
+  sync_broker_state_on_start: true
+  sync_broker_state_each_cycle: true
+  notifications_enabled: true
+  notify_on_reconnect: true
+  notification_channels:
+    channels: ["desktop", "log"]
+    sound_name: Glass
+    log_path: runtime/notifications.log
+    webhook_url: ""
 risk:
   account_currency: JPY
   starting_cash: 5000000.0
   fixed_order_amount: 300000.0
+  max_daily_loss_pct: 0.02
   max_daily_loss_amount: 100000.0
 reporting:
   output_dir: reports
 persistence:
   sqlite_path: runtime/trading_lab.sqlite
 ui:
+  language: ja
+  theme: light
   default_page: 概要
 notes:
-  mode_label_ja: ローカルシミュレーション
+  runtime_warning_ja: GMO の実データを使う実時間シミュレーションです。実売買は行いません。

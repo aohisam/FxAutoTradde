@@ -706,7 +706,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             idle_mode_text = (
                 gmo_notice if current_mode == "gmo_sim" else "ローカルシミュレーション"
             )
-            banner.setText(f"フォワード自動売買\n{idle_mode_text}")
+            banner.setText(f"実時間シミュレーション\n{idle_mode_text}")
             runtime_summary.setText(f"停止中\n{snapshot_error}" if snapshot_error else "停止中")
             set_metric("mode", _label(MODE_LABELS, current_mode), "開始準備待ち")
             set_metric("connection", "待機中", snapshot_error or "まだ接続確認を行っていません。")
@@ -742,7 +742,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             return
 
         banner_lines = [
-            "フォワード自動売買",
+            "実時間シミュレーション",
             f"現在のモード: {_label(MODE_LABELS, snapshot['mode'])}",
             f"状態: {_label(STATUS_LABELS, snapshot['status'])}",
             f"接続: {_label(CONNECTION_LABELS, snapshot.get('connection_state', '-'))}",
@@ -755,7 +755,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         latest_bar_summary = snapshot.get("latest_market_bar_at", {})
         account_summary = snapshot.get("account_summary", {})
         open_symbols = snapshot.get("open_symbols", [])
-        message = account_summary.get("message") or account_summary.get("paper_notice_ja") or "-"
+        message = account_summary.get("message") or "-"
         equity_value = account_summary.get("equity") or account_summary.get("portfolio_value")
         set_metric(
             "mode",
