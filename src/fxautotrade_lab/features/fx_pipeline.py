@@ -102,9 +102,12 @@ def _event_blackout_series(
                 runtime_mode,
                 exc,
             )
+            return pd.Series(False, index=index)
         if failure_mode == "fail_closed":
             return pd.Series(True, index=index)
-        return pd.Series(False, index=index)
+        if failure_mode == "fail_open":
+            return pd.Series(False, index=index)
+        raise ValueError(f"未対応の event failure mode です: {failure_mode}")
     before = pd.Timedelta(minutes=event_cfg.event_blackout_before_minutes)
     after = pd.Timedelta(minutes=event_cfg.event_blackout_after_minutes)
     mask = pd.Series(False, index=index)
@@ -158,11 +161,24 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
             | working["atr_not_too_low_1h"]
         )
     )
+    working["trend_short_allowed_1h"] = (
+        (working["ema_fast_1h"] < working["ema_slow_1h"])
+        & (working["ema_fast_slope_1h"] < 0)
+        & (
+            (working["adx_1h"] >= fx_cfg.adx_threshold)
+            | working["atr_not_too_low_1h"]
+        )
+    )
     working["ema_cross_down_1h"] = working["ema_fast_1h"] <= working["ema_slow_1h"]
+    working["ema_cross_up_1h"] = working["ema_fast_1h"] >= working["ema_slow_1h"]
     working["slope_nonpos_1h"] = working["ema_fast_slope_1h"] <= 0
+    working["slope_nonneg_1h"] = working["ema_fast_slope_1h"] >= 0
     working["close_below_fast_1h"] = working["close"] < working["ema_fast_1h"]
+    working["close_above_fast_1h"] = working["close"] > working["ema_fast_1h"]
     working["slope_nonpos_count_1h"] = _consecutive_true_counts(working["slope_nonpos_1h"])
+    working["slope_nonneg_count_1h"] = _consecutive_true_counts(working["slope_nonneg_1h"])
     working["close_below_fast_count_1h"] = _consecutive_true_counts(working["close_below_fast_1h"])
+    working["close_above_fast_count_1h"] = _consecutive_true_counts(working["close_above_fast_1h"])
     working["partial_exit_trend_break_1h"] = (
         ~working["ema_cross_down_1h"]
         & (
@@ -171,6 +187,14 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
         )
     )
     working["full_exit_trend_break_1h"] = working["ema_cross_down_1h"]
+    working["partial_exit_short_trend_break_1h"] = (
+        ~working["ema_cross_up_1h"]
+        & (
+            (working["slope_nonneg_count_1h"] >= fx_cfg.trend_break_confirm_bars)
+            | (working["close_above_fast_count_1h"] >= fx_cfg.trend_break_confirm_bars)
+        )
+    )
+    working["full_exit_short_trend_break_1h"] = working["ema_cross_up_1h"]
     working["trend_gap_ratio_1h"] = (
         (working["ema_fast_1h"] - working["ema_slow_1h"]) / working["close"].replace(0, pd.NA)
     ).fillna(0.0)
@@ -187,8 +211,11 @@ def _prepare_signal_frame(frame: pd.DataFrame, trend_frame: pd.DataFrame, config
     trend_cols = [
         "trend_bar_timestamp",
         "trend_long_allowed_1h",
+        "trend_short_allowed_1h",
         "partial_exit_trend_break_1h",
         "full_exit_trend_break_1h",
+        "partial_exit_short_trend_break_1h",
+        "full_exit_short_trend_break_1h",
         "ema_fast_1h",
         "ema_slow_1h",
         "ema_fast_slope_1h",
@@ -199,14 +226,22 @@ def _prepare_signal_frame(frame: pd.DataFrame, trend_frame: pd.DataFrame, config
     working = _asof_join(working, trend_frame, trend_cols)
     working["breakout_level_15m"] = working["high"].rolling(fx_cfg.breakout_lookback).max().shift(1)
     working["donchian_low_15m"] = working["low"].rolling(fx_cfg.breakout_lookback).min().shift(1)
+    working["breakout_short_level_15m"] = working["donchian_low_15m"]
     working["donchian_width_15m"] = (working["breakout_level_15m"] - working["donchian_low_15m"]).fillna(0.0)
     working["breakout_atr_15m"] = working["atr_15m"].shift(1)
     working["breakout_strength_15m"] = (
         (working["close"] - working["breakout_level_15m"]) / working["breakout_atr_15m"].replace(0, pd.NA)
     ).fillna(0.0)
+    working["breakout_strength_short_15m"] = (
+        (working["breakout_short_level_15m"] - working["close"]) / working["breakout_atr_15m"].replace(0, pd.NA)
+    ).fillna(0.0)
     working["breakout_signal_15m"] = (
         (working["close"] > (working["breakout_level_15m"] + fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"]))
         & working["trend_long_allowed_1h"].fillna(False)
+    )
+    working["breakout_signal_short_15m"] = (
+        (working["close"] < (working["breakout_short_level_15m"] - fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"]))
+        & working["trend_short_allowed_1h"].fillna(False)
     )
     return working
 
@@ -240,19 +275,25 @@ def build_fx_feature_set(
     signal_cols = [
         "signal_bar_timestamp",
         "breakout_signal_15m",
+        "breakout_signal_short_15m",
         "breakout_level_15m",
+        "breakout_short_level_15m",
         "breakout_atr_15m",
         "atr_15m",
         "ema_fast_15m",
         "ema_slow_15m",
         "donchian_width_15m",
         "breakout_strength_15m",
+        "breakout_strength_short_15m",
     ]
     trend_cols = [
         "trend_bar_timestamp",
         "trend_long_allowed_1h",
+        "trend_short_allowed_1h",
         "partial_exit_trend_break_1h",
         "full_exit_trend_break_1h",
+        "partial_exit_short_trend_break_1h",
+        "full_exit_short_trend_break_1h",
         "ema_fast_1h",
         "ema_slow_1h",
         "ema_fast_slope_1h",
@@ -340,11 +381,15 @@ def build_fx_feature_set(
         & ~execution["event_blackout"].fillna(False)
     )
     execution["regime_label"] = "range_or_weak"
-    moderate_trend = execution["trend_long_allowed_1h"].fillna(False)
-    strong_trend = moderate_trend & (execution["adx_1h"].fillna(0.0) >= fx_cfg.adx_threshold)
+    moderate_long = execution["trend_long_allowed_1h"].fillna(False)
+    strong_long = moderate_long & (execution["adx_1h"].fillna(0.0) >= fx_cfg.adx_threshold)
+    moderate_short = execution["trend_short_allowed_1h"].fillna(False)
+    strong_short = moderate_short & (execution["adx_1h"].fillna(0.0) >= fx_cfg.adx_threshold)
     blocked = ~execution["entry_context_ok"].fillna(False)
-    execution.loc[moderate_trend, "regime_label"] = "trend_moderate"
-    execution.loc[strong_trend, "regime_label"] = "trend_strong"
+    execution.loc[moderate_long, "regime_label"] = "trend_up_moderate"
+    execution.loc[strong_long, "regime_label"] = "trend_up_strong"
+    execution.loc[moderate_short, "regime_label"] = "trend_down_moderate"
+    execution.loc[strong_short, "regime_label"] = "trend_down_strong"
     execution.loc[blocked, "regime_label"] = "blocked"
     execution["accepted_data"] = True
     return FxFeatureSet(

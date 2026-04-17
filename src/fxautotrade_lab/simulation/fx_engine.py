@@ -120,6 +120,10 @@ class FxQuotePortfolioSimulator:
             return OrderSide.BUY
         return default
 
+    def _breakout_level_from_row(self, row: pd.Series, position_side: str) -> float:
+        breakout_column = "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        return self._as_float(row.get(breakout_column), self._as_float(row.get("close"), 0.0))
+
     @staticmethod
     def _is_long(position_side: str) -> bool:
         return position_side == "long"
@@ -285,7 +289,7 @@ class FxQuotePortfolioSimulator:
                                 initial_stop_price=self._as_float(row.get("initial_stop_price"), 0.0),
                                 initial_risk_price=self._as_float(row.get("initial_risk_price"), 0.01),
                                 atr_at_entry=max(self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)), 0.01),
-                                breakout_level=self._as_float(row.get("breakout_level_15m"), self._as_float(row.get("close"), 0.0)),
+                                breakout_level=self._breakout_level_from_row(row, position_side),
                                 reason=str(row.get("explanation_ja", "")),
                                 score=self._as_float(row.get("signal_score"), 0.0),
                                 signal_time=pd.Timestamp(timestamp),

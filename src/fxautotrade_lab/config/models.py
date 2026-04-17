@@ -110,6 +110,15 @@ class FxEventFilterConfig(BaseModel):
     backtest_failure_mode: str = "warn_and_disable"
     realtime_failure_mode: str = "fail_closed"
 
+    @field_validator("backtest_failure_mode", "realtime_failure_mode", mode="before")
+    @classmethod
+    def _normalize_failure_mode(cls, value: object) -> str:
+        mode = str(value or "").strip().lower()
+        allowed = {"warn_and_disable", "fail_closed", "fail_open"}
+        if mode not in allowed:
+            raise ValueError(f"event failure mode は {sorted(allowed)} のいずれかを指定してください: {value}")
+        return mode
+
 
 class FxWalkForwardConfig(BaseModel):
     mode: str = "anchored"
@@ -180,6 +189,7 @@ class FxBreakoutPullbackConfig(BaseModel):
     intrabar_policy: str = "conservative_adverse"
     positive_r_threshold: float = 0.0
     max_jpy_cross_positions: int = 1
+    short_enabled: bool = False
     entry_delay_bars: int = 0
     spread_stress_multiplier: float = 1.0
     overnight_swap_per_unit: float = 0.0

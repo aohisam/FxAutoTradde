@@ -446,6 +446,17 @@ class AutomationController:
         return raw
 
     @staticmethod
+    def _fx_delayed_execute_at(frame: pd.DataFrame, timestamp: pd.Timestamp, delay_bars: int) -> pd.Timestamp | None:
+        try:
+            location = int(frame.index.get_loc(timestamp))
+        except KeyError:
+            return None
+        target_index = location + delay_bars + 1
+        if target_index >= len(frame.index):
+            return None
+        return pd.Timestamp(frame.index[target_index])
+
+    @staticmethod
     def _fx_position_side(value: object) -> str:
         return "short" if str(value or "").strip().lower() == "short" else "long"
 
@@ -457,6 +468,10 @@ class AutomationController:
         if candidate == OrderSide.BUY.value:
             return OrderSide.BUY
         return default
+
+    def _fx_breakout_level(self, latest: pd.Series, position_side: str) -> float:
+        breakout_column = "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        return self._coerce_float(latest.get(breakout_column) or latest.get("close"))
 
     def _fx_jpy_cross_limit_reached(self, symbol: str) -> bool:
         _, quote = split_fx_symbol(symbol)
@@ -519,7 +534,7 @@ class AutomationController:
             if not self._is_new_entry_bar(symbol, latest_ts):
                 continue
             self._record_fx_signal(symbol, latest, latest_ts)
-            self._execute_pending_fx_orders(symbol, latest, latest_ts)
+            self._execute_pending_fx_orders(symbol, signal_frame, latest, latest_ts)
             self._evaluate_fx_runtime_protection(symbol, latest, latest_ts)
             if symbol in self.open_symbols:
                 self._schedule_fx_exit_if_needed(symbol, latest, latest_ts)
@@ -542,63 +557,77 @@ class AutomationController:
                     "initial_stop_price": self._coerce_float(latest.get("initial_stop_price")),
                     "initial_risk_price": self._coerce_float(latest.get("initial_risk_price")) or 0.01,
                     "atr_at_entry": max(self._coerce_float(latest.get("breakout_atr_15m") or latest.get("atr_15m")), 0.01),
-                    "breakout_level": self._coerce_float(latest.get("breakout_level_15m") or latest.get("close")),
+                    "breakout_level": self._fx_breakout_level(latest, position_side),
                     "reason": str(latest.get("explanation_ja", "")),
                     "score": float(latest.get("signal_score", 0.0) or 0.0),
                 }
 
-    def _execute_pending_fx_orders(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp) -> None:
+    def _execute_pending_fx_orders(
+        self,
+        symbol: str,
+        signal_frame: pd.DataFrame,
+        latest: pd.Series,
+        latest_ts: pd.Timestamp,
+    ) -> None:
         upper = symbol.upper()
         pending_entry = self.fx_pending_entries.get(upper)
-        if pending_entry is not None and latest_ts > pd.Timestamp(pending_entry["signal_time"]):
-            entry_order_side = self._fx_order_side(pending_entry.get("entry_order_side"), OrderSide.BUY)
-            exit_order_side = self._fx_order_side(pending_entry.get("exit_order_side"), OrderSide.SELL)
-            position_side = self._fx_position_side(pending_entry.get("position_side"))
-            trigger_price = float(pending_entry["trigger_price"])
-            if entry_order_side == OrderSide.BUY:
-                quote_open = self._fx_quote_price(latest, "ask", "open")
-                quote_extreme = self._fx_quote_price(latest, "ask", "high")
-                trigger_hit = quote_open >= trigger_price or quote_extreme >= trigger_price
+        if pending_entry is not None:
+            execute_at = self._fx_delayed_execute_at(
+                signal_frame,
+                pd.Timestamp(pending_entry["signal_time"]),
+                self.config.strategy.fx_breakout_pullback.entry_delay_bars,
+            )
+            if execute_at is None or latest_ts < execute_at:
+                pass
             else:
-                quote_open = self._fx_quote_price(latest, "bid", "open")
-                quote_extreme = self._fx_quote_price(latest, "bid", "low")
-                trigger_hit = quote_open <= trigger_price or quote_extreme <= trigger_price
-            if bool(latest.get("entry_context_ok", False)) and trigger_hit:
-                quantity, sizing_message = self._entry_quantity_fx(symbol, latest, entry_order_side=entry_order_side)
-                if quantity > 0 and not self._has_pending_order(upper):
-                    order = self.broker.submit_market_order(
-                        symbol=upper,
-                        qty=quantity,
-                        side=entry_order_side,
-                        reason=str(pending_entry["reason"]),
-                    )
-                    fill_price = self._coerce_float(order.get("filled_avg_price") or order.get("price"))
-                    self.recent_orders.append(order)
-                    self.recent_orders = self.recent_orders[-100:]
-                    self.open_symbols.add(upper)
-                    self.last_actions[upper] = entry_order_side.value
-                    self.fx_position_state[upper] = {
-                        "position_side": position_side,
-                        "entry_order_side": entry_order_side.value,
-                        "exit_order_side": exit_order_side.value,
-                        "quantity": quantity,
-                        "initial_quantity": quantity,
-                        "entry_price": fill_price,
-                        "entry_time": latest_ts,
-                        "signal_time": pd.Timestamp(pending_entry["signal_time"]),
-                        "initial_stop_price": float(pending_entry["initial_stop_price"]),
-                        "trailing_stop_price": float(pending_entry["initial_stop_price"]),
-                        "highest_bid": self._fx_quote_price(latest, "bid", "close"),
-                        "lowest_ask": self._fx_quote_price(latest, "ask", "close"),
-                        "initial_risk_price": float(pending_entry["initial_risk_price"]),
-                        "atr_at_entry": float(pending_entry["atr_at_entry"]),
-                        "breakout_level": float(pending_entry["breakout_level"]),
-                        "partial_exit_done": False,
-                    }
-                    self._log("info", f"{upper}: FX エントリーを実行しました ({sizing_message})")
-                    if self.config.automation.sync_broker_state_each_cycle:
-                        self._sync_broker_state()
-            self.fx_pending_entries.pop(upper, None)
+                entry_order_side = self._fx_order_side(pending_entry.get("entry_order_side"), OrderSide.BUY)
+                exit_order_side = self._fx_order_side(pending_entry.get("exit_order_side"), OrderSide.SELL)
+                position_side = self._fx_position_side(pending_entry.get("position_side"))
+                trigger_price = float(pending_entry["trigger_price"])
+                if entry_order_side == OrderSide.BUY:
+                    quote_open = self._fx_quote_price(latest, "ask", "open")
+                    quote_extreme = self._fx_quote_price(latest, "ask", "high")
+                    trigger_hit = quote_open >= trigger_price or quote_extreme >= trigger_price
+                else:
+                    quote_open = self._fx_quote_price(latest, "bid", "open")
+                    quote_extreme = self._fx_quote_price(latest, "bid", "low")
+                    trigger_hit = quote_open <= trigger_price or quote_extreme <= trigger_price
+                if bool(latest.get("entry_context_ok", False)) and trigger_hit:
+                    quantity, sizing_message = self._entry_quantity_fx(symbol, latest, entry_order_side=entry_order_side)
+                    if quantity > 0 and not self._has_pending_order(upper):
+                        order = self.broker.submit_market_order(
+                            symbol=upper,
+                            qty=quantity,
+                            side=entry_order_side,
+                            reason=str(pending_entry["reason"]),
+                        )
+                        fill_price = self._coerce_float(order.get("filled_avg_price") or order.get("price"))
+                        self.recent_orders.append(order)
+                        self.recent_orders = self.recent_orders[-100:]
+                        self.open_symbols.add(upper)
+                        self.last_actions[upper] = entry_order_side.value
+                        self.fx_position_state[upper] = {
+                            "position_side": position_side,
+                            "entry_order_side": entry_order_side.value,
+                            "exit_order_side": exit_order_side.value,
+                            "quantity": quantity,
+                            "initial_quantity": quantity,
+                            "entry_price": fill_price,
+                            "entry_time": latest_ts,
+                            "signal_time": pd.Timestamp(pending_entry["signal_time"]),
+                            "initial_stop_price": float(pending_entry["initial_stop_price"]),
+                            "trailing_stop_price": float(pending_entry["initial_stop_price"]),
+                            "highest_bid": self._fx_quote_price(latest, "bid", "close"),
+                            "lowest_ask": self._fx_quote_price(latest, "ask", "close"),
+                            "initial_risk_price": float(pending_entry["initial_risk_price"]),
+                            "atr_at_entry": float(pending_entry["atr_at_entry"]),
+                            "breakout_level": float(pending_entry["breakout_level"]),
+                            "partial_exit_done": False,
+                        }
+                        self._log("info", f"{upper}: FX エントリーを実行しました ({sizing_message})")
+                        if self.config.automation.sync_broker_state_each_cycle:
+                            self._sync_broker_state()
+                self.fx_pending_entries.pop(upper, None)
         pending_exit = self.fx_pending_exits.get(upper)
         if pending_exit is not None and latest_ts > pd.Timestamp(pending_exit["signal_time"]):
             exit_quantity = int(pending_exit["quantity"])

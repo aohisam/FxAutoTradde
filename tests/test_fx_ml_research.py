@@ -292,6 +292,79 @@ def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
     assert controller.recent_signals
 
 
+def test_fx_automation_controller_respects_entry_delay_bars(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.entry_delay_bars = 1
+    controller = AutomationController(config, EnvironmentConfig())
+    index = pd.date_range("2026-01-01 00:00:00", periods=3, freq="1min", tz="Asia/Tokyo")
+    signal_frame = pd.DataFrame(
+        {
+            "entry_context_ok": [True, True, True],
+            "bid_open": [100.00, 100.20, 100.80],
+            "bid_high": [100.10, 100.40, 101.00],
+            "bid_low": [99.90, 100.10, 100.70],
+            "bid_close": [100.00, 100.30, 100.90],
+            "ask_open": [100.04, 100.24, 100.84],
+            "ask_high": [100.14, 100.44, 101.20],
+            "ask_low": [99.94, 100.14, 100.74],
+            "ask_close": [100.04, 100.34, 100.94],
+            "breakout_atr_15m": [0.5, 0.5, 0.5],
+            "atr_15m": [0.5, 0.5, 0.5],
+        },
+        index=index,
+    )
+    submitted: list[dict[str, object]] = []
+
+    class _Broker:
+        def submit_market_order(self, symbol: str, qty: int, side: OrderSide, reason: str) -> dict[str, object]:
+            order = {
+                "order_id": f"{symbol}-{side.value}-{len(submitted) + 1}",
+                "symbol": symbol,
+                "qty": str(qty),
+                "filled_qty": str(qty),
+                "side": side.value,
+                "status": "filled_local_sim",
+                "reason": reason,
+                "filled_avg_price": "101.00",
+            }
+            submitted.append(order)
+            return order
+
+    monkeypatch.setattr(
+        AutomationController,
+        "_entry_quantity_fx",
+        lambda self, symbol, latest, entry_order_side: (1000, "1,000 通貨"),
+    )
+    monkeypatch.setattr(AutomationController, "_has_pending_order", lambda self, symbol: False)
+    controller.broker = _Broker()
+
+    controller.fx_pending_entries["USD_JPY"] = {
+        "signal_time": index[0],
+        "position_side": "long",
+        "entry_order_side": "buy",
+        "exit_order_side": "sell",
+        "trigger_price": 101.00,
+        "initial_stop_price": 99.50,
+        "initial_risk_price": 1.50,
+        "atr_at_entry": 0.50,
+        "breakout_level": 100.50,
+        "reason": "delay test",
+        "score": 0.80,
+    }
+
+    controller._execute_pending_fx_orders("USD_JPY", signal_frame.iloc[:2], signal_frame.iloc[1], index[1])
+
+    assert not submitted
+    assert "USD_JPY" in controller.fx_pending_entries
+
+    controller._execute_pending_fx_orders("USD_JPY", signal_frame.iloc[:3], signal_frame.iloc[2], index[2])
+
+    assert len(submitted) == 1
+    assert submitted[0]["side"] == "buy"
+    assert "USD_JPY" not in controller.fx_pending_entries
+    assert "USD_JPY" in controller.open_symbols
+
+
 def test_fx_automation_controller_retrains_model_on_schedule(tmp_path: Path, monkeypatch) -> None:
     config = _make_fx_config(tmp_path)
     config.strategy.fx_breakout_pullback.ml_filter.enabled = True

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.context.economic_events import BaseEconomicEventProvider
@@ -238,6 +239,54 @@ def test_fx_strategy_uses_swing_reference_from_selected_timeframe(tmp_path: Path
     assert float(signal_frame.loc[index[2], "initial_stop_price"]) == pytest.approx(99.88, abs=1e-9)
 
 
+def test_fx_strategy_generates_short_entry_after_shallow_pullback(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.short_enabled = True
+    strategy = FxBreakoutPullbackStrategy(config)
+    index = pd.date_range("2026-01-05 11:00:00", periods=4, freq="1min", tz="Asia/Tokyo")
+    frame = pd.DataFrame(
+        {
+            "close": [100.0, 99.30, 99.22, 99.05],
+            "high": [100.1, 99.40, 99.35, 99.12],
+            "low": [99.9, 99.20, 99.15, 98.98],
+            "mid_high": [100.1, 99.40, 99.35, 99.12],
+            "mid_low": [99.9, 99.20, 99.15, 98.98],
+            "bid_low": [99.88, 99.18, 99.10, 98.95],
+            "trend_long_allowed_1h": [False, False, False, False],
+            "trend_short_allowed_1h": [True, True, True, True],
+            "spread_context_ok": [True, True, True, True],
+            "spread_ratio_ok": [True, True, True, True],
+            "entry_context_ok": [True, True, True, True],
+            "event_blackout": [False] * 4,
+            "rollover_blackout": [False] * 4,
+            "tokyo_early_blackout": [False] * 4,
+            "breakout_signal_15m": [False] * 4,
+            "breakout_signal_short_15m": [False, True, False, False],
+            "signal_bar_timestamp": [pd.NaT, index[1], index[1], index[1]],
+            "breakout_short_level_15m": [pd.NA, 99.50, 99.50, 99.50],
+            "breakout_atr_15m": [pd.NA, 0.50, 0.50, 0.50],
+            "atr_15m": [0.50, 0.50, 0.50, 0.50],
+            "swing_high_reference": [pd.NA, 99.90, 99.90, 99.90],
+            "trend_bar_timestamp": [index[0], index[0], index[0], index[0]],
+            "full_exit_trend_break_1h": [False] * 4,
+            "partial_exit_trend_break_1h": [False] * 4,
+            "full_exit_short_trend_break_1h": [False] * 4,
+            "partial_exit_short_trend_break_1h": [False] * 4,
+        },
+        index=index,
+    )
+
+    signal_frame = strategy.generate_signal_frame(frame)
+
+    assert not bool(signal_frame.loc[index[1], "entry_signal"])
+    assert bool(signal_frame.loc[index[2], "entry_signal"])
+    assert signal_frame.loc[index[2], "position_side"] == "short"
+    assert signal_frame.loc[index[2], "entry_order_side"] == "sell"
+    assert signal_frame.loc[index[2], "exit_order_side"] == "buy"
+    assert signal_frame.loc[index[2], "strategy_state"] == "ENTRY_ARMED"
+    assert float(signal_frame.loc[index[2], "initial_stop_price"]) > float(signal_frame.loc[index[2], "entry_trigger_price"])
+
+
 def test_fx_engine_uses_ask_entry_and_bid_exit(tmp_path: Path) -> None:
     config = _make_fx_config(tmp_path)
     config.risk.slippage_bps = 0.0
@@ -408,6 +457,38 @@ def test_event_blackout_warn_and_disable_logs_warning(tmp_path: Path, caplog: py
 
     assert not bool(feature_set.execution_frame["event_blackout"].iloc[-1])
     assert "イベントフィルタを無効化します" in caplog.text
+
+
+def test_event_blackout_fail_open_and_validation_are_explicit(tmp_path: Path) -> None:
+    class _RaisingProvider(BaseEconomicEventProvider):
+        def list_events(self, start: pd.Timestamp, end: pd.Timestamp, currencies: set[str]):
+            _ = start, end, currencies
+            raise RuntimeError("provider down")
+
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.event_filter.enabled = True
+    config.strategy.fx_breakout_pullback.event_filter.realtime_failure_mode = "fail_open"
+    index = pd.date_range("2026-01-01 00:00:00", periods=60, freq="1min", tz="Asia/Tokyo")
+    mid_prices = np.linspace(100.0, 100.5, len(index))
+    spreads = np.full(len(index), 0.02)
+    frame_1m = _make_quote_frame(index, mid_prices, spreads)
+    frames = {
+        TimeFrame.MIN_1: frame_1m,
+        TimeFrame.MIN_15: resample_quote_bars(frame_1m, "15min"),
+        TimeFrame.HOUR_1: resample_quote_bars(frame_1m, "1h"),
+        TimeFrame.DAY_1: resample_quote_bars(frame_1m, "1D"),
+        TimeFrame.WEEK_1: resample_quote_bars(frame_1m, "1W"),
+        TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
+    }
+
+    realtime_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True)
+
+    assert not bool(realtime_feature_set.execution_frame["event_blackout"].iloc[-1])
+
+    payload = config.model_dump(mode="python")
+    payload["strategy"]["fx_breakout_pullback"]["event_filter"]["realtime_failure_mode"] = "unexpected_mode"
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(payload)
 
 
 def test_fx_engine_supports_short_entry_and_buy_to_cover_exit(tmp_path: Path) -> None:
