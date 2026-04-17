@@ -545,19 +545,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     layout.addWidget(helper)
     layout.addWidget(warning)
 
-    columns = QHBoxLayout()
-    columns.setSpacing(16)
-    left_panel = QWidget()
-    left_layout = QVBoxLayout(left_panel)
-    left_layout.setContentsMargins(0, 0, 0, 0)
-    left_layout.setSpacing(16)
-    right_panel = QWidget()
-    right_layout = QVBoxLayout(right_panel)
-    right_layout.setContentsMargins(0, 0, 0, 0)
-    right_layout.setSpacing(16)
-    columns.addWidget(left_panel, 5)
-    columns.addWidget(right_panel, 4)
-    layout.addLayout(columns, 1)
+    cards_layout = QVBoxLayout()
+    cards_layout.setContentsMargins(0, 0, 0, 0)
+    cards_layout.setSpacing(16)
+    layout.addLayout(cards_layout, 1)
 
     def refresh_all_pages() -> None:
         window = page.window()
@@ -608,7 +599,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_mode_button = QPushButton("運用モードを保存")
     set_button_role(save_mode_button, "primary")
     mode_layout.addWidget(save_mode_button, alignment=Qt.AlignLeft)
-    left_layout.addWidget(mode_card)
+    cards_layout.addWidget(mode_card)
 
     sizing_card = QFrame()
     sizing_card.setObjectName("orderSizingCard")
@@ -655,7 +646,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_sizing_button = QPushButton("注文サイズを保存")
     set_button_role(save_sizing_button, "primary")
     sizing_layout.addWidget(save_sizing_button, alignment=Qt.AlignLeft)
-    left_layout.addWidget(sizing_card)
+    cards_layout.addWidget(sizing_card)
 
     notifications_card = QFrame()
     notifications_card.setObjectName("notificationsCard")
@@ -697,8 +688,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_notifications_button = QPushButton("通知設定を保存")
     set_button_role(save_notifications_button, "primary")
     notifications_layout.addWidget(save_notifications_button, alignment=Qt.AlignLeft)
-    left_layout.addWidget(notifications_card)
-    left_layout.addStretch(1)
+    cards_layout.addWidget(notifications_card)
 
     connection_card = QFrame()
     connection_card.setObjectName("gmoConnectionCard")
@@ -723,7 +713,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     connection_layout.addWidget(connection_note)
     connection_layout.addWidget(connection_status)
     connection_layout.addWidget(test_connection_button, alignment=Qt.AlignLeft)
-    right_layout.addWidget(connection_card)
+    cards_layout.addWidget(connection_card)
 
     summary_card = QFrame()
     summary_card.setObjectName("settingsSummaryCard")
@@ -736,7 +726,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     summary_label.setStyleSheet("background: #f8fafc; border: none; border-radius: 10px; padding: 12px;")
     summary_layout.addWidget(summary_title)
     summary_layout.addWidget(summary_label)
-    right_layout.addWidget(summary_card)
+    cards_layout.addWidget(summary_card)
 
     test_card = QFrame()
     test_card.setObjectName("settingsTestCard")
@@ -749,7 +739,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     test_output.setMinimumHeight(220)
     test_layout.addWidget(test_title)
     test_layout.addWidget(test_output)
-    right_layout.addWidget(test_card)
+    cards_layout.addWidget(test_card)
 
     config_card = QFrame()
     config_card.setObjectName("settingsConfigCard")
@@ -759,9 +749,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     config_title.setStyleSheet("font-size: 16px; font-weight: 700;")
     config_text = QTextEdit()
     config_text.setReadOnly(True)
+    config_text.setMinimumHeight(260)
     config_layout.addWidget(config_title)
     config_layout.addWidget(config_text)
-    right_layout.addWidget(config_card, 1)
+    cards_layout.addWidget(config_card)
 
     def update_mode_status() -> None:
         selected_mode = str(mode_combo.currentData() or "local_sim")

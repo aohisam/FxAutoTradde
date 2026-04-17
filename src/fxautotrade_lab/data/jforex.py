@@ -14,7 +14,9 @@ from fxautotrade_lab.data.cache import ParquetBarCache
 from fxautotrade_lab.data.quality import validate_bar_frame
 from fxautotrade_lab.data.quote_bars import (
     build_quote_bar_frame,
+    is_combined_quote_csv,
     quote_spread_summary,
+    read_combined_quote_csv,
     read_jforex_quote_csv,
     resample_quote_bars,
 )
@@ -65,6 +67,42 @@ class JForexCsvImporter:
     def import_file(self, file_path: str | Path, symbol: str | None = None) -> JForexImportResult:
         source_path = Path(file_path)
         normalized_symbol = normalize_fx_symbol(symbol) if symbol else infer_fx_symbol_from_filename(source_path)
+        if is_combined_quote_csv(source_path):
+            quote_frame = read_combined_quote_csv(source_path)
+            base = build_quote_bar_frame(
+                quote_frame[["bid_open", "bid_high", "bid_low", "bid_close", "bid_volume"]],
+                quote_frame[["ask_open", "ask_high", "ask_low", "ask_close", "ask_volume"]],
+                normalized_symbol,
+            )
+            spread_stats = quote_spread_summary(base)
+            cache_paths: dict[str, str] = {}
+            for timeframe, rule in TIMEFRAME_RULES.items():
+                derived = base.copy() if timeframe == TimeFrame.MIN_1 else resample_quote_bars(base, rule)
+                if derived.empty:
+                    continue
+                derived["symbol"] = normalized_symbol
+                path = self.cache.save(normalized_symbol, timeframe, derived)
+                self.cache.save_metadata(
+                    normalized_symbol,
+                    timeframe,
+                    {
+                        "source": "fx_cache_combined_quote",
+                        "timeframe": timeframe.value,
+                        "symbol": normalized_symbol,
+                        "version": 3,
+                        "source_path": str(source_path),
+                        **spread_stats,
+                    },
+                )
+                cache_paths[timeframe.value] = str(path)
+            return JForexImportResult(
+                symbol=normalized_symbol,
+                imported_rows=len(base.index),
+                source_path=source_path,
+                cache_paths=cache_paths,
+                start=base.index.min().isoformat(),
+                end=base.index.max().isoformat(),
+            )
         raw = pd.read_csv(source_path)
         raw.columns = [str(column).strip() for column in raw.columns]
         renamed = raw.rename(

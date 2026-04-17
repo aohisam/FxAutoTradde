@@ -9,12 +9,14 @@ from uuid import uuid4
 import pandas as pd
 
 from fxautotrade_lab.automation.notifications import MultiChannelNotifier
+from fxautotrade_lab.backtest.fx_backtest import train_fx_filter_model_run
 from fxautotrade_lab.brokers.base import BaseBroker
 from fxautotrade_lab.brokers.local_sim import LocalSimBroker
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import AutomationStatus, BrokerMode, OrderSide
 from fxautotrade_lab.core.models import AutomationEvent
+from fxautotrade_lab.core.windows import shift_timestamp
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.data.session import get_session_state
 from fxautotrade_lab.execution.safety import DuplicateOrderGuard
@@ -76,6 +78,9 @@ class AutomationController:
     fx_pending_entries: dict[str, dict[str, object]] = field(init=False)
     fx_pending_exits: dict[str, dict[str, object]] = field(init=False)
     fx_position_state: dict[str, dict[str, object]] = field(init=False)
+    fx_last_retrain_at: pd.Timestamp | None = field(init=False)
+    fx_next_retrain_at: pd.Timestamp | None = field(init=False)
+    fx_last_retrain_summary: dict[str, object] = field(init=False)
 
     def __post_init__(self) -> None:
         self.stop_event = Event()
@@ -117,6 +122,9 @@ class AutomationController:
         self.fx_pending_entries = {}
         self.fx_pending_exits = {}
         self.fx_position_state = {}
+        self.fx_last_retrain_at = None
+        self.fx_next_retrain_at = None
+        self.fx_last_retrain_summary = {}
 
     def _build_broker(self) -> BaseBroker:
         return LocalSimBroker(starting_equity=self.config.risk.starting_cash)
@@ -135,6 +143,53 @@ class AutomationController:
         if model is None and (ml_cfg.require_pretrained_model or ml_cfg.missing_model_behavior == "error"):
             raise RuntimeError(f"学習済み FX ML モデルが見つかりません: {model_path}")
         return model
+
+    def _fx_ml_retrain_enabled(self) -> bool:
+        if self.config.strategy.name != FxBreakoutPullbackStrategy.name:
+            return False
+        ml_cfg = self.config.strategy.fx_breakout_pullback.ml_filter
+        return bool(ml_cfg.enabled and ml_cfg.realtime_retrain_enabled)
+
+    def _schedule_next_fx_retrain(self, base_time: pd.Timestamp) -> None:
+        ml_cfg = self.config.strategy.fx_breakout_pullback.ml_filter
+        self.fx_last_retrain_at = pd.Timestamp(base_time)
+        self.fx_next_retrain_at = shift_timestamp(
+            pd.Timestamp(base_time),
+            ml_cfg.realtime_retrain_frequency,
+            backward=False,
+        )
+
+    def _maybe_retrain_fx_model(self, as_of: pd.Timestamp) -> None:
+        if not self._fx_ml_retrain_enabled():
+            return
+        current_time = pd.Timestamp(as_of)
+        if self.fx_loaded_model is not None and self.fx_last_retrain_at is None:
+            self._schedule_next_fx_retrain(current_time)
+            return
+        if self.fx_loaded_model is not None and self.fx_next_retrain_at is not None and current_time < self.fx_next_retrain_at:
+            return
+        try:
+            summary = train_fx_filter_model_run(
+                self.config,
+                self.env,
+                as_of=current_time.isoformat(),
+            )
+            model_path = summary.get("latest_model_path") or summary.get("model_path") or ""
+            loaded = load_filter_model(model_path)
+            if loaded is not None:
+                self.fx_loaded_model = loaded
+            self.fx_last_retrain_summary = summary
+            self._schedule_next_fx_retrain(current_time)
+            self._log(
+                "info",
+                f"FX ML を再学習しました。trained_rows={summary.get('trained_rows', 0)} / 次回={self.fx_next_retrain_at.isoformat() if self.fx_next_retrain_at is not None else '-'}",
+            )
+        except Exception as exc:
+            failure_mode = self.config.strategy.fx_breakout_pullback.ml_filter.realtime_retrain_failure_mode.strip().lower()
+            if failure_mode == "disable_ml":
+                self.fx_loaded_model = None
+            self._schedule_next_fx_retrain(current_time)
+            self._log("warning", f"FX ML の再学習に失敗したため既存モデルを維持します: {exc}")
 
     def stop(self) -> None:
         self.status = AutomationStatus.STOPPING
@@ -405,8 +460,22 @@ class AutomationController:
         self.recent_signals = self.recent_signals[-100:]
 
     def _run_fx_cycle(self, snapshots: dict[str, dict]) -> None:
+        cycle_as_of: pd.Timestamp | None = None
+        for frames in snapshots.values():
+            execution_frame = frames.get(self.config.strategy.fx_breakout_pullback.execution_timeframe)
+            if execution_frame is None or execution_frame.empty:
+                continue
+            latest_ts = pd.Timestamp(execution_frame.index[-1])
+            cycle_as_of = latest_ts if cycle_as_of is None else max(cycle_as_of, latest_ts)
+        if cycle_as_of is not None:
+            self._maybe_retrain_fx_model(cycle_as_of)
         for symbol, frames in snapshots.items():
-            feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=self.config)
+            feature_set = build_fx_feature_set(
+                symbol=symbol,
+                bars_by_timeframe=frames,
+                config=self.config,
+                runtime_mode=True,
+            )
             signal_frame = self.strategy.generate_signal_frame(feature_set.execution_frame)
             if self.fx_loaded_model is not None and self.config.strategy.fx_breakout_pullback.ml_filter.enabled:
                 signal_frame = apply_fx_ml_filter(signal_frame, self.fx_loaded_model, self.config, model_label="realtime")
@@ -656,6 +725,13 @@ class AutomationController:
             ),
             "order_size_mode": self.config.risk.order_size_mode.value,
             "latest_market_bar_at": dict(self.latest_market_bar_at),
+            "fx_ml_status": {
+                "enabled": bool(self.config.strategy.fx_breakout_pullback.ml_filter.enabled),
+                "model_loaded": self.fx_loaded_model is not None,
+                "last_retrain_at": self.fx_last_retrain_at.isoformat() if self.fx_last_retrain_at is not None else "",
+                "next_retrain_at": self.fx_next_retrain_at.isoformat() if self.fx_next_retrain_at is not None else "",
+                "last_retrain_summary": dict(self.fx_last_retrain_summary),
+            },
         }
 
     def _handle_entry(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp, signal_frame: pd.DataFrame) -> None:

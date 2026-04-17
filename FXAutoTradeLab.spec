@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-
-ROOT_DIR = Path(__file__).resolve().parent
+# PyInstaller executes the spec in the current working directory context.
+ROOT_DIR = Path.cwd().resolve()
 SRC_DIR = ROOT_DIR / "src"
 SCRIPT_PATH = ROOT_DIR / "scripts" / "desktop_entry.py"
 CONFIGS_DIR = ROOT_DIR / "configs"

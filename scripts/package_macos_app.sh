@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ICON_PATH="$ROOT_DIR/resources/app_icon.icns"
 SOURCE_ICON_PATH="$ROOT_DIR/icon.png"
+SPEC_PATH="$ROOT_DIR/FXAutoTradeLab.spec"
 
 ensure_macos_icon() {
   if [[ ! -f "$SOURCE_ICON_PATH" ]]; then
@@ -52,54 +53,19 @@ if [[ -f "$SOURCE_ICON_PATH" ]]; then
   xattr -cr "$SOURCE_ICON_PATH" >/dev/null 2>&1 || true
 fi
 
+run_pyinstaller() {
+  local pyinstaller_cmd="$1"
+  PYINSTALLER_CONFIG_DIR="$ROOT_DIR/.pyinstaller" \
+    "$pyinstaller_cmd" \
+      --clean \
+      --noconfirm \
+      "$SPEC_PATH"
+}
+
 if [[ -x "$ROOT_DIR/.venv_gui/bin/pyinstaller" ]]; then
-  PYINSTALLER_CONFIG_DIR="$ROOT_DIR/.pyinstaller" \
-    "$ROOT_DIR/.venv_gui/bin/pyinstaller" \
-      --name FXAutoTradeLab \
-      --windowed \
-      --noconfirm \
-      --hidden-import pytz \
-      --hidden-import fxautotrade_lab.desktop.pages.automation \
-      --hidden-import fxautotrade_lab.desktop.pages.backtest \
-      --hidden-import fxautotrade_lab.desktop.pages.data_sync \
-      --hidden-import fxautotrade_lab.desktop.pages.misc \
-      --hidden-import fxautotrade_lab.desktop.pages.overview \
-      --hidden-import fxautotrade_lab.desktop.pages.signals \
-      --hidden-import fxautotrade_lab.desktop.pages.watchlist \
-      --hidden-import fxautotrade_lab.desktop.charts \
-      --hidden-import fxautotrade_lab.desktop.models \
-      --hidden-import fxautotrade_lab.desktop.workers \
-      --hidden-import PySide6.QtCharts \
-      --paths "$ROOT_DIR/src" \
-      --add-data "$ROOT_DIR/configs:configs" \
-      --add-data "$ROOT_DIR/resources:resources" \
-      --icon "$ICON_PATH" \
-      --osx-bundle-identifier "com.fxautotrade.lab" \
-      "$ROOT_DIR/scripts/desktop_entry.py"
+  run_pyinstaller "$ROOT_DIR/.venv_gui/bin/pyinstaller"
 elif [[ -x "$ROOT_DIR/.venv/bin/pyinstaller" ]]; then
-  PYINSTALLER_CONFIG_DIR="$ROOT_DIR/.pyinstaller" \
-    "$ROOT_DIR/.venv/bin/pyinstaller" \
-      --name FXAutoTradeLab \
-      --windowed \
-      --noconfirm \
-      --hidden-import pytz \
-      --hidden-import fxautotrade_lab.desktop.pages.automation \
-      --hidden-import fxautotrade_lab.desktop.pages.backtest \
-      --hidden-import fxautotrade_lab.desktop.pages.data_sync \
-      --hidden-import fxautotrade_lab.desktop.pages.misc \
-      --hidden-import fxautotrade_lab.desktop.pages.overview \
-      --hidden-import fxautotrade_lab.desktop.pages.signals \
-      --hidden-import fxautotrade_lab.desktop.pages.watchlist \
-      --hidden-import fxautotrade_lab.desktop.charts \
-      --hidden-import fxautotrade_lab.desktop.models \
-      --hidden-import fxautotrade_lab.desktop.workers \
-      --hidden-import PySide6.QtCharts \
-      --paths "$ROOT_DIR/src" \
-      --add-data "$ROOT_DIR/configs:configs" \
-      --add-data "$ROOT_DIR/resources:resources" \
-      --icon "$ICON_PATH" \
-      --osx-bundle-identifier "com.fxautotrade.lab" \
-      "$ROOT_DIR/scripts/desktop_entry.py"
+  run_pyinstaller "$ROOT_DIR/.venv/bin/pyinstaller"
 elif [[ -x "$ROOT_DIR/.venv_gui/bin/pyside6-deploy" ]]; then
   "$ROOT_DIR/.venv_gui/bin/pyside6-deploy" "$ROOT_DIR/scripts/desktop_entry.py" -f
 elif [[ -x "$ROOT_DIR/.venv/bin/pyside6-deploy" ]]; then
@@ -107,51 +73,9 @@ elif [[ -x "$ROOT_DIR/.venv/bin/pyside6-deploy" ]]; then
 elif command -v pyside6-deploy >/dev/null 2>&1; then
   pyside6-deploy "$ROOT_DIR/scripts/desktop_entry.py" -f
 elif command -v pyinstaller >/dev/null 2>&1; then
-  PYINSTALLER_CONFIG_DIR="$ROOT_DIR/.pyinstaller" \
-    pyinstaller \
-      --name FXAutoTradeLab \
-      --windowed \
-      --noconfirm \
-      --hidden-import pytz \
-      --hidden-import fxautotrade_lab.desktop.pages.automation \
-      --hidden-import fxautotrade_lab.desktop.pages.backtest \
-      --hidden-import fxautotrade_lab.desktop.pages.data_sync \
-      --hidden-import fxautotrade_lab.desktop.pages.misc \
-      --hidden-import fxautotrade_lab.desktop.pages.overview \
-      --hidden-import fxautotrade_lab.desktop.pages.signals \
-      --hidden-import fxautotrade_lab.desktop.pages.watchlist \
-      --hidden-import fxautotrade_lab.desktop.charts \
-      --hidden-import fxautotrade_lab.desktop.models \
-      --hidden-import fxautotrade_lab.desktop.workers \
-      --hidden-import PySide6.QtCharts \
-      --paths "$ROOT_DIR/src" \
-      --add-data "$ROOT_DIR/configs:configs" \
-      --add-data "$ROOT_DIR/resources:resources" \
-      --icon "$ICON_PATH" \
-      --osx-bundle-identifier "com.fxautotrade.lab" \
-      "$ROOT_DIR/scripts/desktop_entry.py"
+  run_pyinstaller "$(command -v pyinstaller)"
 else
-    pyinstaller \
-      --name FXAutoTradeLab \
-      --windowed \
-      --noconfirm \
-      --hidden-import pytz \
-      --hidden-import fxautotrade_lab.desktop.pages.automation \
-      --hidden-import fxautotrade_lab.desktop.pages.backtest \
-      --hidden-import fxautotrade_lab.desktop.pages.data_sync \
-      --hidden-import fxautotrade_lab.desktop.pages.misc \
-      --hidden-import fxautotrade_lab.desktop.pages.overview \
-      --hidden-import fxautotrade_lab.desktop.pages.signals \
-      --hidden-import fxautotrade_lab.desktop.pages.watchlist \
-      --hidden-import fxautotrade_lab.desktop.charts \
-      --hidden-import fxautotrade_lab.desktop.models \
-      --hidden-import fxautotrade_lab.desktop.workers \
-      --hidden-import PySide6.QtCharts \
-      --add-data "$ROOT_DIR/configs:configs" \
-      --add-data "$ROOT_DIR/resources:resources" \
-      --icon "$ICON_PATH" \
-      --osx-bundle-identifier "com.fxautotrade.lab" \
-    "$ROOT_DIR/scripts/desktop_entry.py"
+  pyinstaller --clean --noconfirm "$SPEC_PATH"
 fi
 
 APP_BUNDLE="$ROOT_DIR/dist/FXAutoTradeLab.app"

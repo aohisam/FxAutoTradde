@@ -218,7 +218,19 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
     assert summary["run_id"]
     assert Path(summary["output_dir"]).exists()
     assert (Path(summary["output_dir"]) / "research_summary.json").exists()
+    assert (Path(summary["output_dir"]) / "regime_summary.csv").exists()
     assert summary["uplift"]["total_return_delta"] == 0.0
+
+    monkeypatch.setattr(
+        ResearchPipeline,
+        "_run_backtest_variant",
+        lambda self, **kwargs: (_ for _ in ()).throw(AssertionError("backtest cache should be reused")),
+    )
+    summary_cached = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run()
+
+    cached_steps = {step["step"]: step["status"] for step in summary_cached["steps"]}
+    assert cached_steps["baseline_backtest"] == "cached"
+    assert cached_steps["selected_backtest"] == "cached"
 
 
 def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
@@ -276,6 +288,68 @@ def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
     controller.run(max_cycles=1)
 
     assert controller.recent_signals
+
+
+def test_fx_automation_controller_retrains_model_on_schedule(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.ml_filter.enabled = True
+    config.strategy.fx_breakout_pullback.ml_filter.realtime_retrain_enabled = True
+    config.strategy.fx_breakout_pullback.ml_filter.realtime_retrain_frequency = "1d"
+    controller = AutomationController(config, EnvironmentConfig())
+    index = pd.date_range("2026-01-01 00:00:00", periods=2, freq="1min", tz="Asia/Tokyo")
+    execution_frame = pd.DataFrame(
+        {
+            "symbol": ["USD_JPY", "USD_JPY"],
+            "entry_signal": [False, False],
+            "exit_signal": [False, False],
+            "partial_exit_signal": [False, False],
+            "signal_action": ["hold", "hold"],
+            "signal_score": [0.0, 0.0],
+            "explanation_ja": ["idle", "idle"],
+            "entry_context_ok": [True, True],
+            "bid_open": [100.0, 100.1],
+            "bid_high": [100.2, 100.3],
+            "bid_low": [99.9, 100.0],
+            "bid_close": [100.1, 100.2],
+            "ask_open": [100.04, 100.14],
+            "ask_high": [100.24, 100.34],
+            "ask_low": [99.94, 100.04],
+            "ask_close": [100.14, 100.24],
+            "mid_open": [100.02, 100.12],
+            "mid_high": [100.22, 100.32],
+            "mid_low": [99.92, 100.02],
+            "mid_close": [100.12, 100.22],
+            "spread_open": [0.04, 0.04],
+            "spread_high": [0.04, 0.04],
+            "spread_low": [0.04, 0.04],
+            "spread_close": [0.04, 0.04],
+            "regime_label": ["trend_strong", "trend_strong"],
+        },
+        index=index,
+    )
+
+    retrain_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "fxautotrade_lab.automation.controller.build_fx_feature_set",
+        lambda *args, **kwargs: SimpleNamespace(execution_frame=execution_frame),
+    )
+    monkeypatch.setattr(controller.strategy, "generate_signal_frame", lambda frame: frame)
+    monkeypatch.setattr(
+        "fxautotrade_lab.automation.controller.train_fx_filter_model_run",
+        lambda config, env, as_of=None: retrain_calls.append(str(as_of)) or {"trained_rows": 4, "model_path": "", "latest_model_path": ""},
+    )
+
+    snapshots = [{"USD_JPY": {TimeFrame.MIN_1: execution_frame}}]
+
+    def fake_load_cycle_market_data(self):
+        return snapshots.pop(0), None, None
+
+    monkeypatch.setattr(AutomationController, "_load_cycle_market_data", fake_load_cycle_market_data)
+    controller.run(max_cycles=1)
+
+    assert retrain_calls
+    assert controller.fx_next_retrain_at is not None
 
 
 def test_application_exposes_research_and_training(tmp_path: Path, monkeypatch) -> None:

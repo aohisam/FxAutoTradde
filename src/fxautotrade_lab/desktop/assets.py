@@ -6,6 +6,14 @@ from pathlib import Path
 import sys
 
 
+def should_apply_runtime_window_icon() -> bool:
+    """Return whether Qt should override the platform window/application icon at runtime."""
+
+    # On macOS, overriding the icon at runtime can replace the bundle's Dock icon
+    # with the raw Qt pixmap, which makes the running app look oversized.
+    return sys.platform != "darwin"
+
+
 def resolve_app_icon_path() -> Path | None:
     """Return the best available application icon path for source or bundled runs."""
 

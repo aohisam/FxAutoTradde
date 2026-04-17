@@ -7,6 +7,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pandas as pd
@@ -79,6 +80,65 @@ def _monthly_equity_summary(equity_curve: pd.DataFrame) -> pd.DataFrame:
     return frame.rename(columns={frame.columns[0]: "month"})
 
 
+def _regime_summary(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
+    if signals is None or signals.empty:
+        return pd.DataFrame(columns=["regime", "rule_candidates", "accepted_candidates", "trade_count", "net_pnl", "average_r"])
+    signal_working = signals.copy()
+    regime_source = signal_working["regime_label"] if "regime_label" in signal_working.columns else pd.Series("unknown", index=signal_working.index)
+    signal_working["regime"] = regime_source.fillna("unknown").astype(str)
+    signal_summary = (
+        signal_working.groupby("regime", as_index=False)
+        .agg(
+            rule_candidates=("entry_signal_rule_only", "sum"),
+            accepted_candidates=("entry_signal", "sum"),
+        )
+        .sort_values("regime")
+    )
+    if trades is None or trades.empty:
+        signal_summary["trade_count"] = 0
+        signal_summary["net_pnl"] = 0.0
+        signal_summary["average_r"] = 0.0
+        return signal_summary
+    trade_working = trades.copy()
+    trade_working["signal_time"] = pd.to_datetime(trade_working["signal_time"], errors="coerce")
+    signal_regimes = (
+        signal_working.reset_index()
+        .rename(columns={"index": "timestamp"})
+        .assign(timestamp=lambda frame: pd.to_datetime(frame["timestamp"], errors="coerce"))
+        .loc[:, ["timestamp", "regime"]]
+    )
+    trade_with_regime = trade_working.merge(
+        signal_regimes,
+        left_on="signal_time",
+        right_on="timestamp",
+        how="left",
+    )
+    trade_with_regime["regime"] = trade_with_regime["regime"].fillna("unknown")
+    trade_summary = (
+        trade_with_regime.groupby("regime", as_index=False)
+        .agg(
+            trade_count=("symbol", "count"),
+            net_pnl=("net_pnl", "sum"),
+            average_r=("realized_r_net", "mean"),
+        )
+    )
+    return signal_summary.merge(trade_summary, on="regime", how="left").fillna(
+        {"trade_count": 0, "net_pnl": 0.0, "average_r": 0.0}
+    )
+
+
+def _load_backtest_frame(path: Path, *, index_col: int | None = None) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    frame = pd.read_csv(path, index_col=index_col)
+    if index_col is not None and not frame.empty:
+        frame.index = pd.to_datetime(frame.index, errors="coerce")
+    for column in ("timestamp", "signal_time", "entry_time", "exit_time"):
+        if column in frame.columns:
+            frame[column] = pd.to_datetime(frame[column], errors="coerce")
+    return frame
+
+
 @dataclass(slots=True)
 class ResearchPipeline:
     config: AppConfig
@@ -105,17 +165,25 @@ class ResearchPipeline:
             cache_dir / "train.json",
             lambda: self._train_summary(),
         )
-        baseline_result = self._run_backtest_variant(
-            mode_name="rule_only",
-            output_dir=output_dir,
-            ml_enabled=False,
-            backtest_mode="rule_only",
+        baseline_result = self._backtest_step(
+            "baseline_backtest",
+            cache_dir / "baseline_backtest.json",
+            lambda: self._run_backtest_variant(
+                mode_name="rule_only",
+                output_dir=output_dir,
+                ml_enabled=False,
+                backtest_mode="rule_only",
+            ),
         )
-        selected_result = self._run_backtest_variant(
-            mode_name="walk_forward_train",
-            output_dir=output_dir,
-            ml_enabled=True,
-            backtest_mode="walk_forward_train",
+        selected_result = self._backtest_step(
+            "selected_backtest",
+            cache_dir / "selected_backtest.json",
+            lambda: self._run_backtest_variant(
+                mode_name="walk_forward_train",
+                output_dir=output_dir,
+                ml_enabled=True,
+                backtest_mode="walk_forward_train",
+            ),
         )
         robustness = self._step(
             "robustness",
@@ -189,6 +257,35 @@ class ResearchPipeline:
         cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
         self.steps.append({"step": name, "status": "completed", "path": str(cache_path)})
         return payload
+
+    def _backtest_step(self, name: str, cache_path: Path, fn: Callable[[], Any]):
+        use_cache = self.config.research.reuse_cached_steps and cache_path.exists()
+        if use_cache:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            output_dir = Path(payload["output_dir"])
+            if output_dir.exists():
+                self.logs.append(f"{name}: 既存キャッシュを再利用しました")
+                self.steps.append({"step": name, "status": "cached", "path": str(cache_path)})
+                return SimpleNamespace(
+                    metrics=payload["metrics"],
+                    output_dir=str(output_dir),
+                    trades=_load_backtest_frame(output_dir / "trades.csv"),
+                    signals=_load_backtest_frame(output_dir / "signal_log.csv"),
+                    equity_curve=_load_backtest_frame(output_dir / "equity_curve.csv", index_col=0),
+                )
+        self.logs.append(f"{name}: 実行を開始します")
+        try:
+            result = fn()
+        except Exception as exc:
+            self.steps.append({"step": name, "status": "failed", "error": str(exc)})
+            raise
+        payload = {
+            "output_dir": result.output_dir,
+            "metrics": _sanitize_metrics(result.metrics),
+        }
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+        self.steps.append({"step": name, "status": "completed", "path": str(cache_path)})
+        return result
 
     def _validate_data(self) -> dict[str, Any]:
         data_service = MarketDataService(self.config, self.env)
@@ -322,6 +419,7 @@ class ResearchPipeline:
         _yearly_summary(selected_result.trades).to_csv(output_dir / "yearly_summary.csv", index=False)
         _monthly_equity_summary(selected_result.equity_curve).to_csv(output_dir / "monthly_summary.csv", index=False)
         _hourly_summary(selected_result.signals).to_csv(output_dir / "hourly_signal_summary.csv", index=False)
+        _regime_summary(selected_result.signals, selected_result.trades).to_csv(output_dir / "regime_summary.csv", index=False)
         (output_dir / "summary.md").write_text(
             "\n".join(
                 [
@@ -342,6 +440,7 @@ class ResearchPipeline:
                     "- ML は参加許可フィルタとしてのみ使っています。",
                     "- ラベルは realized_r_net を基準に作成しています。",
                     "- quick / standard / exhaustive は頑健性シナリオ数のみを変えます。",
+                    "- regime_summary.csv ではトレンド強弱とエントリー可否の局面別集計を確認できます。",
                 ]
             ),
             encoding="utf-8",

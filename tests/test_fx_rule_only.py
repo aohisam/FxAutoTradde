@@ -4,8 +4,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from fxautotrade_lab.config.models import AppConfig
+from fxautotrade_lab.context.economic_events import BaseEconomicEventProvider
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
 from fxautotrade_lab.data.cache import ParquetBarCache
 from fxautotrade_lab.data.jforex import JForexCsvImporter
@@ -101,6 +103,25 @@ def _write_jforex_csv(path: Path, frame: pd.DataFrame, side: str) -> None:
     renamed.to_csv(path, index=False)
 
 
+def _write_combined_quote_csv(path: Path, frame: pd.DataFrame) -> None:
+    combined = pd.DataFrame(
+        {
+            "timestamp": frame.index,
+            "bid_open": frame["bid_open"],
+            "bid_high": frame["bid_high"],
+            "bid_low": frame["bid_low"],
+            "bid_close": frame["bid_close"],
+            "ask_open": frame["ask_open"],
+            "ask_high": frame["ask_high"],
+            "ask_low": frame["ask_low"],
+            "ask_close": frame["ask_close"],
+            "bid_volume": frame["bid_volume"],
+            "ask_volume": frame["ask_volume"],
+        }
+    )
+    combined.to_csv(path, index=False)
+
+
 def test_bid_ask_import_and_resample(tmp_path: Path) -> None:
     index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
     mid_prices = np.linspace(100.0, 100.5, len(index))
@@ -120,6 +141,23 @@ def test_bid_ask_import_and_resample(tmp_path: Path) -> None:
     assert {"bid_open", "ask_open", "mid_close", "spread_close"}.issubset(min1.columns)
     assert {"bid_open", "ask_open", "mid_close", "spread_close"}.issubset(min15.columns)
     assert float(min1["spread_close"].min()) > 0
+
+
+def test_combined_quote_csv_import_preserves_bid_ask(tmp_path: Path) -> None:
+    index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    mid_prices = np.linspace(100.0, 100.5, len(index))
+    spreads = np.full(len(index), 0.05)
+    quote_frame = _make_quote_frame(index, mid_prices, spreads)
+    combined_path = tmp_path / "usd_jpy_combined_quote.csv"
+    _write_combined_quote_csv(combined_path, quote_frame)
+
+    importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
+    result = importer.import_file(combined_path, symbol="USD_JPY")
+
+    assert result.symbol == "USD_JPY"
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+    assert {"bid_open", "ask_open", "spread_close"}.issubset(min1.columns)
+    assert float(min1["spread_close"].median()) > 0.0
 
 
 def test_fx_strategy_requires_pullback_before_entry(tmp_path: Path) -> None:
@@ -159,6 +197,44 @@ def test_fx_strategy_requires_pullback_before_entry(tmp_path: Path) -> None:
     assert bool(signal_frame.loc[index[2], "entry_signal"])
     assert signal_frame.loc[index[2], "strategy_state"] == "ENTRY_ARMED"
     assert float(signal_frame.loc[index[2], "initial_stop_price"]) < float(signal_frame.loc[index[2], "entry_trigger_price"])
+
+
+def test_fx_strategy_uses_swing_reference_from_selected_timeframe(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    strategy = FxBreakoutPullbackStrategy(config)
+    index = pd.date_range("2026-01-05 10:00:00", periods=3, freq="1min", tz="Asia/Tokyo")
+    frame = pd.DataFrame(
+        {
+            "close": [100.0, 100.6, 100.66],
+            "high": [100.1, 100.7, 100.68],
+            "low": [100.0, 100.5, 100.62],
+            "mid_high": [100.1, 100.7, 100.68],
+            "mid_low": [100.0, 100.5, 100.62],
+            "ask_high": [100.12, 100.72, 100.70],
+            "trend_long_allowed_1h": [True, True, True],
+            "spread_context_ok": [True, True, True],
+            "spread_ratio_ok": [True, True, True],
+            "entry_context_ok": [True, True, True],
+            "event_blackout": [False] * 3,
+            "rollover_blackout": [False] * 3,
+            "tokyo_early_blackout": [False] * 3,
+            "breakout_signal_15m": [False, True, False],
+            "signal_bar_timestamp": [pd.NaT, index[1], index[1]],
+            "breakout_level_15m": [pd.NA, 100.4, 100.4],
+            "breakout_atr_15m": [pd.NA, 0.2, 0.2],
+            "atr_15m": [0.2, 0.2, 0.2],
+            "swing_low_reference": [pd.NA, 99.9, 99.9],
+            "trend_bar_timestamp": [index[0], index[0], index[0]],
+            "full_exit_trend_break_1h": [False] * 3,
+            "partial_exit_trend_break_1h": [False] * 3,
+        },
+        index=index,
+    )
+
+    signal_frame = strategy.generate_signal_frame(frame)
+
+    assert bool(signal_frame.loc[index[2], "entry_signal"])
+    assert float(signal_frame.loc[index[2], "initial_stop_price"]) == pytest.approx(99.88, abs=1e-9)
 
 
 def test_fx_engine_uses_ask_entry_and_bid_exit(tmp_path: Path) -> None:
@@ -270,3 +346,34 @@ def test_fx_pipeline_spread_filter_excludes_current_bar(tmp_path: Path) -> None:
 
     assert bool(feature_set.execution_frame["spread_context_ok"].iloc[-2])
     assert not bool(feature_set.execution_frame["spread_context_ok"].iloc[-1])
+
+
+def test_event_blackout_uses_runtime_failure_mode(tmp_path: Path) -> None:
+    class _RaisingProvider(BaseEconomicEventProvider):
+        def list_events(self, start: pd.Timestamp, end: pd.Timestamp, currencies: set[str]):
+            _ = start, end, currencies
+            raise RuntimeError("provider down")
+
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.event_filter.enabled = True
+    config.strategy.fx_breakout_pullback.event_filter.provider = "static_csv"
+    config.strategy.fx_breakout_pullback.event_filter.backtest_failure_mode = "warn_and_disable"
+    config.strategy.fx_breakout_pullback.event_filter.realtime_failure_mode = "fail_closed"
+    index = pd.date_range("2026-01-01 00:00:00", periods=60, freq="1min", tz="Asia/Tokyo")
+    mid_prices = np.linspace(100.0, 100.5, len(index))
+    spreads = np.full(len(index), 0.02)
+    frame_1m = _make_quote_frame(index, mid_prices, spreads)
+    frames = {
+        TimeFrame.MIN_1: frame_1m,
+        TimeFrame.MIN_15: resample_quote_bars(frame_1m, "15min"),
+        TimeFrame.HOUR_1: resample_quote_bars(frame_1m, "1h"),
+        TimeFrame.DAY_1: resample_quote_bars(frame_1m, "1D"),
+        TimeFrame.WEEK_1: resample_quote_bars(frame_1m, "1W"),
+        TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
+    }
+
+    backtest_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False)
+    realtime_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True)
+
+    assert not bool(backtest_feature_set.execution_frame["event_blackout"].iloc[-1])
+    assert bool(realtime_feature_set.execution_frame["event_blackout"].iloc[-1])

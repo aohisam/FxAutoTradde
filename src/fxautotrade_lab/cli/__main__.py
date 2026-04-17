@@ -39,6 +39,18 @@ def _typer_main() -> None:
         summary = LabApplication(Path(config)).run_research(mode=mode or None)
         typer.echo(f"research_run 完了: {summary['output_dir']}")
 
+    @app.command("import-csv")
+    def import_csv(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+        file_path: str = typer.Option(..., "--file", help="単一 CSV。bid_* / ask_* の結合 quote 形式にも対応"),
+        symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時はファイル名から推定"),
+    ) -> None:
+        summary = LabApplication(Path(config)).import_jforex_csv(
+            file_path=file_path,
+            symbol=symbol or None,
+        )
+        typer.echo(f"CSV 取込完了: {summary}")
+
     @app.command("import-bidask-csv")
     def import_bidask_csv(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
@@ -108,6 +120,9 @@ def _argparse_main() -> None:
     train_model.add_argument("--as-of", default="")
     research = subparsers.add_parser("research-run", parents=[config_parser])
     research.add_argument("--mode", default="")
+    import_csv = subparsers.add_parser("import-csv", parents=[config_parser])
+    import_csv.add_argument("--file", required=True)
+    import_csv.add_argument("--symbol", default="")
     import_bidask = subparsers.add_parser("import-bidask-csv", parents=[config_parser])
     import_bidask.add_argument("--bid-file", required=True)
     import_bidask.add_argument("--ask-file", required=True)
@@ -133,6 +148,12 @@ def _argparse_main() -> None:
     elif args.command == "research-run":
         summary = LabApplication(Path(args.config)).run_research(mode=args.mode or None)
         print(summary["output_dir"])
+    elif args.command == "import-csv":
+        summary = LabApplication(Path(args.config)).import_jforex_csv(
+            file_path=args.file,
+            symbol=args.symbol or None,
+        )
+        print(summary)
     elif args.command == "import-bidask-csv":
         summary = LabApplication(Path(args.config)).import_jforex_bid_ask_csv(
             bid_file_path=args.bid_file,

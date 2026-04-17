@@ -13,6 +13,7 @@ from fxautotrade_lab.backtest.metrics import compute_drawdown, compute_metrics
 from fxautotrade_lab.backtest.walk_forward import rolling_walk_forward, split_in_out_sample
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.models import BacktestResult
+from fxautotrade_lab.core.windows import shift_timestamp
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.ml.fx_filter import (
@@ -28,40 +29,15 @@ from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
 from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 
-
-def _offset_for_window(window: str) -> pd.DateOffset:
-    normalized = window.strip().lower()
-    if len(normalized) < 2:
-        raise ValueError(f"未対応の期間指定です: {window}")
-    count = int(normalized[:-1])
-    unit = normalized[-1]
-    if unit == "y":
-        return pd.DateOffset(years=count)
-    if unit == "m":
-        return pd.DateOffset(months=count)
-    if unit == "w":
-        return pd.DateOffset(weeks=count)
-    if unit == "d":
-        return pd.DateOffset(days=count)
-    if unit == "h":
-        return pd.DateOffset(hours=count)
-    raise ValueError(f"未対応の期間指定です: {window}")
-
-
-def _shift_timestamp(timestamp: pd.Timestamp, window: str, *, backward: bool) -> pd.Timestamp:
-    offset = _offset_for_window(window)
-    return timestamp - offset if backward else timestamp + offset
-
-
 def _build_test_windows(start: pd.Timestamp, end: pd.Timestamp, config: AppConfig) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     walk_cfg = config.strategy.fx_breakout_pullback.ml_filter.walk_forward
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     cursor = start
     while cursor < end:
-        window_end = min(_shift_timestamp(cursor, walk_cfg.test_window, backward=False), end)
+        window_end = min(shift_timestamp(cursor, walk_cfg.test_window, backward=False), end)
         if cursor < window_end:
             windows.append((cursor, window_end))
-        next_cursor = _shift_timestamp(cursor, walk_cfg.retrain_frequency, backward=False)
+        next_cursor = shift_timestamp(cursor, walk_cfg.retrain_frequency, backward=False)
         if next_cursor <= cursor:
             break
         cursor = next_cursor
@@ -71,8 +47,8 @@ def _build_test_windows(start: pd.Timestamp, end: pd.Timestamp, config: AppConfi
 def _training_window_start(window_start: pd.Timestamp, history_start: pd.Timestamp, config: AppConfig) -> pd.Timestamp:
     walk_cfg = config.strategy.fx_breakout_pullback.ml_filter.walk_forward
     if walk_cfg.mode == "rolling":
-        return max(history_start, _shift_timestamp(window_start, walk_cfg.train_window, backward=True))
-    initial_anchor = _shift_timestamp(history_start, "0d", backward=True)
+        return max(history_start, shift_timestamp(window_start, walk_cfg.train_window, backward=True))
+    initial_anchor = shift_timestamp(history_start, "0d", backward=True)
     return initial_anchor if history_start <= window_start else window_start
 
 
@@ -137,7 +113,7 @@ def _build_symbol_signals(
     raw_execution_frames: dict[str, pd.DataFrame] = {}
     for symbol in config.watchlist.symbols:
         frames = data_service.load_symbol_frames(symbol, start=history_start, end=backtest_end)
-        feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config)
+        feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False)
         signals = strategy.generate_signal_frame(feature_set.execution_frame)
         signal_frames[symbol] = signals
         raw_execution_frames[symbol] = feature_set.execution_frame
@@ -258,7 +234,7 @@ def run_fx_backtest(
     requested_end = pd.Timestamp(backtest_end, tz="Asia/Tokyo")
     history_start = requested_start
     if ml_cfg.enabled and ml_cfg.backtest_mode in {"train_from_scratch", "walk_forward_train"}:
-        history_start = _shift_timestamp(
+        history_start = shift_timestamp(
             requested_start,
             ml_cfg.walk_forward.train_window,
             backward=True,
@@ -395,7 +371,7 @@ def train_fx_filter_model_run(
 ) -> dict[str, object]:
     data_service = MarketDataService(config, env)
     train_end = pd.Timestamp(as_of or config.data.end_date, tz="Asia/Tokyo")
-    history_start = _shift_timestamp(
+    history_start = shift_timestamp(
         train_end,
         config.strategy.fx_breakout_pullback.ml_filter.walk_forward.train_window,
         backward=True,

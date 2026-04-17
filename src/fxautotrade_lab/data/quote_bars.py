@@ -11,6 +11,33 @@ from fxautotrade_lab.data.quality import summarize_bar_frame_quality, validate_b
 
 
 QUOTE_SIDE_COLUMNS = ["open", "high", "low", "close", "volume"]
+QUOTE_PRICE_COLUMNS = ["open", "high", "low", "close"]
+
+
+def _normalize_quote_column_name(value: str) -> str:
+    normalized = str(value).strip().lower()
+    for source, target in {
+        " ": "_",
+        "-": "_",
+        "/": "_",
+        "(": "_",
+        ")": "_",
+        "[": "_",
+        "]": "_",
+    }.items():
+        normalized = normalized.replace(source, target)
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized.strip("_")
+
+
+def _has_combined_quote_columns(columns: list[str]) -> bool:
+    normalized = {_normalize_quote_column_name(column) for column in columns}
+    required = {
+        *(f"bid_{column}" for column in QUOTE_PRICE_COLUMNS),
+        *(f"ask_{column}" for column in QUOTE_PRICE_COLUMNS),
+    }
+    return required.issubset(normalized)
 
 
 def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -84,6 +111,43 @@ def read_jforex_quote_csv(file_path: str | Path, side: str) -> pd.DataFrame:
     return frame.sort_index()
 
 
+def read_combined_quote_csv(file_path: str | Path) -> pd.DataFrame:
+    raw = pd.read_csv(Path(file_path))
+    renamed = raw.rename(columns={column: _normalize_quote_column_name(column) for column in raw.columns})
+    timestamp_column = next(
+        (column for column in ("timestamp", "time_eet", "time", "datetime", "date_time") if column in renamed.columns),
+        "",
+    )
+    if not timestamp_column:
+        raise ValueError("結合 quote CSV に timestamp 列がありません。")
+    required_prices = [
+        *(f"bid_{column}" for column in QUOTE_PRICE_COLUMNS),
+        *(f"ask_{column}" for column in QUOTE_PRICE_COLUMNS),
+    ]
+    missing = [column for column in required_prices if column not in renamed.columns]
+    if missing:
+        raise ValueError(f"結合 quote CSV に必要な列が不足しています: {missing}")
+    timestamps = pd.to_datetime(renamed[timestamp_column], errors="raise")
+    if timestamps.dt.tz is None:
+        localized = pd.DatetimeIndex(timestamps).tz_localize(
+            "Europe/Helsinki" if timestamp_column == "time_eet" else ASIA_TOKYO,
+            ambiguous="infer",
+            nonexistent="shift_forward",
+        )
+    else:
+        localized = pd.DatetimeIndex(timestamps).tz_convert(ASIA_TOKYO)
+    frame = pd.DataFrame(index=localized)
+    for column in required_prices:
+        frame[column] = pd.to_numeric(renamed[column], errors="coerce")
+    for side in ("bid", "ask"):
+        volume_column = f"{side}_volume"
+        if volume_column in renamed.columns:
+            frame[volume_column] = pd.to_numeric(renamed[volume_column], errors="coerce").fillna(0.0)
+        else:
+            frame[volume_column] = 0.0
+    return frame.sort_index()
+
+
 def build_quote_bar_frame(bid_frame: pd.DataFrame, ask_frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
     merged = bid_frame.join(ask_frame, how="inner")
     if merged.empty:
@@ -97,6 +161,11 @@ def build_quote_bar_frame(bid_frame: pd.DataFrame, ask_frame: pd.DataFrame, symb
     merged["volume"] = merged["bid_volume"] + merged["ask_volume"]
     merged["symbol"] = symbol.upper()
     return validate_quote_bar_frame(merged)
+
+
+def is_combined_quote_csv(file_path: str | Path) -> bool:
+    sample = pd.read_csv(Path(file_path), nrows=1)
+    return _has_combined_quote_columns([str(column) for column in sample.columns])
 
 
 def resample_quote_bars(frame: pd.DataFrame, rule: str) -> pd.DataFrame:

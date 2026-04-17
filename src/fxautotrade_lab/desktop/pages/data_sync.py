@@ -111,6 +111,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     banner = QLabel(
         "JForex の CSV を取り込むと、通貨ペアごとに複数時間足のキャッシュを作成します。"
+        " Bid/Ask を分けた 2 ファイル、または bid_* / ask_* を含む 1 ファイル quote CSV を推奨します。"
         " GMO を選ぶと、既存キャッシュは保持したまま、指定期間の未取得分だけを追加取得します。"
     )
     banner.setWordWrap(True)
@@ -363,7 +364,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         progress.setRange(0, 0)
         result_model.set_frame(None)
         if len(file_paths) == 1:
-            output.setPlainText("CSV を取り込み中...\nJForex の 1分足から複数時間足のキャッシュを作成しています。")
+            output.setPlainText(
+                "CSV を取り込み中...\n"
+                "bid_* / ask_* を含む quote CSV はそのまま使い、単純 OHLC の場合は mid 系列として取り込みます。"
+            )
             submit_task(
                 lambda: app_state.import_jforex_csv(file_paths[0]),
                 on_import_finished,

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from fxautotrade_lab.desktop.runtime import DesktopProcessManager
-from fxautotrade_lab.desktop.assets import resolve_app_icon_path
+from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 
 
 def _boot_log(message: str) -> None:
@@ -152,7 +152,7 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     app.setApplicationDisplayName("FXAutoTrade Lab")
     app.setQuitOnLastWindowClosed(True)
     icon_path = resolve_app_icon_path()
-    if icon_path is not None:
+    if icon_path is not None and should_apply_runtime_window_icon():
         app.setWindowIcon(QIcon(str(icon_path)))
     app.aboutToQuit.connect(process_manager.cleanup)
 

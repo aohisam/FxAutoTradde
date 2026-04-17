@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fxautotrade_lab.application import LabApplication
-from fxautotrade_lab.desktop.assets import resolve_app_icon_path
+from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 
 
 def load_main_window_class():  # pragma: no cover - UI helper
@@ -48,7 +48,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.settings = QSettings("FXAutoTradeLab", "Desktop")
             self.setWindowTitle("FXAutoTrade Lab")
             icon_path = resolve_app_icon_path()
-            if icon_path is not None:
+            if icon_path is not None and should_apply_runtime_window_icon():
                 self.setWindowIcon(QIcon(str(icon_path)))
             self.resize(self.app_state.config.ui.width, self.app_state.config.ui.height)
             self.thread_pool = QThreadPool.globalInstance()

@@ -60,6 +60,7 @@ class BacktestRunner:
                     symbol=symbol,
                     bars_by_timeframe=frames,
                     config=self.config,
+                    runtime_mode=False,
                 )
                 signals = strategy.generate_signal_frame(fx_feature_set.execution_frame)
                 signal_frames[symbol] = signals

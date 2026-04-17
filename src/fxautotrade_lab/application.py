@@ -324,6 +324,7 @@ class LabApplication:
                 symbol=selected_symbol,
                 bars_by_timeframe=symbol_frames,
                 config=self.config,
+                runtime_mode=runtime_mode,
             )
             if selected_timeframe == self.config.strategy.fx_breakout_pullback.execution_timeframe:
                 selected_frame = create_strategy(self.config).generate_signal_frame(fx_feature_set.execution_frame)

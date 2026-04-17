@@ -9,7 +9,7 @@ from fxautotrade_lab.strategies.base import BaseStrategy
 
 
 class FxBreakoutPullbackStrategy(BaseStrategy):
-    """Long-only FX breakout strategy with explicit pullback state transitions."""
+    """FX breakout strategy with explicit pullback state transitions and side-aware signals."""
 
     name = "fx_breakout_pullback"
 
@@ -40,6 +40,10 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
         working["signal_score"] = 0.0
         working["signal_action"] = SignalAction.HOLD.value
         working["strategy_state"] = "FLAT"
+        working["position_side"] = pd.NA
+        working["entry_order_side"] = pd.NA
+        working["exit_order_side"] = pd.NA
+        working["reverse_exit_signal"] = False
         working["breakout_episode_id"] = 0
         working["pullback_depth_atr"] = 0.0
         working["entry_trigger_price"] = pd.NA
@@ -134,9 +138,12 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                         )
                         swing_start = max(0, position - fx_cfg.swing_lookback_bars + 1)
                         swing_low = self._as_float(
-                            working.iloc[swing_start : position + 1]["mid_low"].min()
-                            if "mid_low" in working.columns
-                            else working.iloc[swing_start : position + 1]["low"].min(),
+                            row.get("swing_low_reference"),
+                            self._as_float(
+                                working.iloc[swing_start : position + 1]["mid_low"].min()
+                                if "mid_low" in working.columns
+                                else working.iloc[swing_start : position + 1]["low"].min(),
+                            ),
                         )
                         initial_stop = min(
                             trigger_price - fx_cfg.atr_stop_mult * breakout_atr,
@@ -146,6 +153,9 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                         trigger_distance_atr = (trigger_price - breakout_level) / max(breakout_atr, 0.01)
                         if self._as_bool(row.get("entry_context_ok", False)):
                             working.at[timestamp, "entry_signal"] = True
+                            working.at[timestamp, "position_side"] = "long"
+                            working.at[timestamp, "entry_order_side"] = SignalAction.BUY.value
+                            working.at[timestamp, "exit_order_side"] = SignalAction.SELL.value
                             working.at[timestamp, "entry_trigger_price"] = trigger_price
                             working.at[timestamp, "initial_stop_price"] = initial_stop
                             working.at[timestamp, "initial_risk_price"] = initial_risk
@@ -167,10 +177,13 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                 last_trend_bar = pd.Timestamp(trend_bar)
                 if self._as_bool(row.get("full_exit_trend_break_1h", False)):
                     working.at[timestamp, "exit_signal"] = True
+                    working.at[timestamp, "reverse_exit_signal"] = True
+                    working.at[timestamp, "exit_order_side"] = SignalAction.SELL.value
                     reasons.append("1時間足EMAクロスで全決済シグナル")
                     state = "FLAT_EXITED"
                 elif self._as_bool(row.get("partial_exit_trend_break_1h", False)):
                     working.at[timestamp, "partial_exit_signal"] = True
+                    working.at[timestamp, "exit_order_side"] = SignalAction.SELL.value
                     reasons.append("1時間足トレンド崩れで一部手仕舞いシグナル")
                     state = "PARTIAL_EXIT_DONE"
 

@@ -226,6 +226,7 @@ class MarketDataService:
                 self.config.strategy.fx_breakout_pullback.execution_timeframe,
                 self.config.strategy.fx_breakout_pullback.signal_timeframe,
                 self.config.strategy.fx_breakout_pullback.trend_timeframe,
+                self.config.strategy.fx_breakout_pullback.swing_timeframe,
                 TimeFrame.DAY_1,
                 TimeFrame.WEEK_1,
                 TimeFrame.MONTH_1,

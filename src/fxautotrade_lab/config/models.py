@@ -138,6 +138,9 @@ class FxMlConfig(BaseModel):
     label_clip_lower: float = -5.0
     label_clip_upper: float = 10.0
     pretrained_model_path: Path | None = None
+    realtime_retrain_enabled: bool = False
+    realtime_retrain_frequency: str = "1d"
+    realtime_retrain_failure_mode: str = "keep_current"
     walk_forward: FxWalkForwardConfig = Field(default_factory=FxWalkForwardConfig)
 
 

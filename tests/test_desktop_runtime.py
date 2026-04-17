@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from fxautotrade_lab.application import LabApplication
-from fxautotrade_lab.desktop.assets import resolve_app_icon_path
+from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 from fxautotrade_lab.desktop.app import _desktop_storage_overrides, _resolve_config_path
 from fxautotrade_lab.desktop.runtime import DesktopProcessManager
 
@@ -85,7 +85,14 @@ def test_resolve_app_icon_path_prefers_repo_icon():
     assert icon_path.name in {"icon.png", "app_icon.icns", "app_icon.svg"}
 
 
+def test_should_apply_runtime_window_icon_depends_on_platform(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin", raising=False)
+    assert should_apply_runtime_window_icon() is False
+    monkeypatch.setattr(sys, "platform", "linux", raising=False)
+    assert should_apply_runtime_window_icon() is True
+
+
 def test_spec_uses_relative_paths():
     spec_text = Path("FXAutoTradeLab.spec").read_text(encoding="utf-8")
     assert "/Users/" not in spec_text
-    assert "ROOT_DIR = Path(__file__).resolve().parent" in spec_text
+    assert "ROOT_DIR = Path.cwd().resolve()" in spec_text

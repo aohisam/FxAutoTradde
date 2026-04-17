@@ -77,6 +77,8 @@ def _event_blackout_series(
     symbol: str,
     config: AppConfig,
     provider: BaseEconomicEventProvider,
+    *,
+    runtime_mode: bool,
 ) -> pd.Series:
     event_cfg = config.strategy.fx_breakout_pullback.event_filter
     if not event_cfg.enabled:
@@ -87,7 +89,10 @@ def _event_blackout_series(
     try:
         events = provider.list_events(index.min(), index.max(), {base, quote})
     except Exception:
-        if event_cfg.backtest_failure_mode == "fail_closed":
+        failure_mode = (
+            event_cfg.realtime_failure_mode if runtime_mode else event_cfg.backtest_failure_mode
+        ).strip().lower()
+        if failure_mode == "fail_closed":
             return pd.Series(True, index=index)
         return pd.Series(False, index=index)
     before = pd.Timedelta(minutes=event_cfg.event_blackout_before_minutes)
@@ -96,6 +101,25 @@ def _event_blackout_series(
     for event in events:
         mask |= (index >= event.timestamp - before) & (index <= event.timestamp + after)
     return mask
+
+
+def _prepare_swing_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
+    fx_cfg = config.strategy.fx_breakout_pullback
+    working = validate_quote_bar_frame(frame.copy())
+    low_column = "mid_low" if "mid_low" in working.columns else "low"
+    high_column = "mid_high" if "mid_high" in working.columns else "high"
+    working["swing_bar_timestamp"] = working.index
+    working["swing_low_reference"] = (
+        pd.to_numeric(working[low_column], errors="coerce")
+        .rolling(fx_cfg.swing_lookback_bars, min_periods=1)
+        .min()
+    )
+    working["swing_high_reference"] = (
+        pd.to_numeric(working[high_column], errors="coerce")
+        .rolling(fx_cfg.swing_lookback_bars, min_periods=1)
+        .max()
+    )
+    return working
 
 
 def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
@@ -183,11 +207,14 @@ def build_fx_feature_set(
     config: AppConfig,
     *,
     event_provider: BaseEconomicEventProvider | None = None,
+    runtime_mode: bool = False,
 ) -> FxFeatureSet:
     fx_cfg = config.strategy.fx_breakout_pullback
     execution_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.execution_timeframe].copy())
     signal_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.signal_timeframe].copy())
     trend_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.trend_timeframe].copy())
+    swing_base = bars_by_timeframe.get(fx_cfg.swing_timeframe, bars_by_timeframe[fx_cfg.execution_timeframe])
+    swing_frame = validate_quote_bar_frame(swing_base.copy())
     provider = event_provider or build_event_provider(fx_cfg.event_filter)
     daily_frame = (
         validate_quote_bar_frame(bars_by_timeframe[TimeFrame.DAY_1].copy())
@@ -197,6 +224,7 @@ def build_fx_feature_set(
 
     prepared_trend = _prepare_trend_frame(trend_frame, config)
     prepared_signal = _prepare_signal_frame(signal_frame, prepared_trend, config)
+    prepared_swing = _prepare_swing_frame(swing_frame, config)
 
     execution = execution_frame.copy()
     signal_cols = [
@@ -224,7 +252,13 @@ def build_fx_feature_set(
     ]
     execution = _asof_join(execution, prepared_signal, signal_cols)
     execution = _asof_join(execution, prepared_trend, trend_cols)
+    execution = _asof_join(
+        execution,
+        prepared_swing,
+        ["swing_bar_timestamp", "swing_low_reference", "swing_high_reference"],
+    )
     execution["symbol"] = symbol.upper()
+    execution["swing_source_timeframe"] = fx_cfg.swing_timeframe.value
     execution["weekday"] = execution.index.weekday
     execution["hour"] = execution.index.hour
     bucket_keys = execution["weekday"].astype(str) + "_" + execution["hour"].astype(str)
@@ -259,7 +293,13 @@ def build_fx_feature_set(
         if fx_cfg.tokyo_early_blackout_enabled
         else False
     )
-    execution["event_blackout"] = _event_blackout_series(execution.index, symbol, config, provider)
+    execution["event_blackout"] = _event_blackout_series(
+        execution.index,
+        symbol,
+        config,
+        provider,
+        runtime_mode=runtime_mode,
+    )
     if not daily_frame.empty:
         daily_enrich = daily_frame.copy()
         daily_enrich["prev_day_high"] = daily_enrich["high"].shift(1)
@@ -283,6 +323,13 @@ def build_fx_feature_set(
         & ~pd.Series(execution["tokyo_early_blackout"], index=execution.index).fillna(False)
         & ~execution["event_blackout"].fillna(False)
     )
+    execution["regime_label"] = "range_or_weak"
+    moderate_trend = execution["trend_long_allowed_1h"].fillna(False)
+    strong_trend = moderate_trend & (execution["adx_1h"].fillna(0.0) >= fx_cfg.adx_threshold)
+    blocked = ~execution["entry_context_ok"].fillna(False)
+    execution.loc[moderate_trend, "regime_label"] = "trend_moderate"
+    execution.loc[strong_trend, "regime_label"] = "trend_strong"
+    execution.loc[blocked, "regime_label"] = "blocked"
     execution["accepted_data"] = True
     return FxFeatureSet(
         symbol=symbol.upper(),
