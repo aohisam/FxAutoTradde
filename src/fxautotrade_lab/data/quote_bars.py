@@ -138,11 +138,11 @@ def read_combined_quote_csv(file_path: str | Path) -> pd.DataFrame:
         localized = pd.DatetimeIndex(timestamps).tz_convert(ASIA_TOKYO)
     frame = pd.DataFrame(index=localized)
     for column in required_prices:
-        frame[column] = pd.to_numeric(renamed[column], errors="coerce")
+        frame[column] = pd.to_numeric(renamed[column], errors="coerce").to_numpy()
     for side in ("bid", "ask"):
         volume_column = f"{side}_volume"
         if volume_column in renamed.columns:
-            frame[volume_column] = pd.to_numeric(renamed[volume_column], errors="coerce").fillna(0.0)
+            frame[volume_column] = pd.to_numeric(renamed[volume_column], errors="coerce").fillna(0.0).to_numpy()
         else:
             frame[volume_column] = 0.0
     return frame.sort_index()

@@ -100,6 +100,11 @@ def _regime_summary(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame
         signal_summary["average_r"] = 0.0
         return signal_summary
     trade_working = trades.copy()
+    if "signal_time" not in trade_working.columns:
+        signal_summary["trade_count"] = 0
+        signal_summary["net_pnl"] = 0.0
+        signal_summary["average_r"] = 0.0
+        return signal_summary
     trade_working["signal_time"] = pd.to_datetime(trade_working["signal_time"], errors="coerce")
     signal_regimes = (
         signal_working.reset_index()
@@ -263,16 +268,15 @@ class ResearchPipeline:
         if use_cache:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
             output_dir = Path(payload["output_dir"])
-            if output_dir.exists():
-                self.logs.append(f"{name}: 既存キャッシュを再利用しました")
-                self.steps.append({"step": name, "status": "cached", "path": str(cache_path)})
-                return SimpleNamespace(
-                    metrics=payload["metrics"],
-                    output_dir=str(output_dir),
-                    trades=_load_backtest_frame(output_dir / "trades.csv"),
-                    signals=_load_backtest_frame(output_dir / "signal_log.csv"),
-                    equity_curve=_load_backtest_frame(output_dir / "equity_curve.csv", index_col=0),
-                )
+            self.logs.append(f"{name}: 既存キャッシュを再利用しました")
+            self.steps.append({"step": name, "status": "cached", "path": str(cache_path)})
+            return SimpleNamespace(
+                metrics=payload["metrics"],
+                output_dir=str(output_dir),
+                trades=_load_backtest_frame(output_dir / "trades.csv"),
+                signals=_load_backtest_frame(output_dir / "signal_log.csv"),
+                equity_curve=_load_backtest_frame(output_dir / "equity_curve.csv", index_col=0),
+            )
         self.logs.append(f"{name}: 実行を開始します")
         try:
             result = fn()
