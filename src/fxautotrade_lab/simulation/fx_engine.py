@@ -19,6 +19,9 @@ class PendingEntry:
     symbol: str
     execute_at: pd.Timestamp
     quantity: int
+    position_side: str
+    entry_order_side: OrderSide
+    exit_order_side: OrderSide
     trigger_price: float
     initial_stop_price: float
     initial_risk_price: float
@@ -34,6 +37,7 @@ class PendingExit:
     symbol: str
     execute_at: pd.Timestamp
     quantity: int
+    order_side: OrderSide
     reason: str
     kind: str
 
@@ -42,12 +46,16 @@ class PendingExit:
 class FxOpenPosition:
     symbol: str
     position_id: str
+    position_side: str
+    entry_order_side: OrderSide
+    exit_order_side: OrderSide
     quantity: int
     initial_quantity: int
     entry_time: pd.Timestamp
     signal_time: pd.Timestamp
     entry_price: float
     highest_bid: float
+    lowest_ask: float
     initial_stop_price: float
     trailing_stop_price: float
     initial_risk_price: float
@@ -98,6 +106,36 @@ class FxQuotePortfolioSimulator:
         except (TypeError, ValueError):
             return default
         return default if pd.isna(result) else result
+
+    @staticmethod
+    def _normalize_position_side(value: object) -> str:
+        return "short" if str(value or "").strip().lower() == "short" else "long"
+
+    @staticmethod
+    def _order_side_from_value(value: object, default: OrderSide) -> OrderSide:
+        candidate = str(value or "").strip().lower()
+        if candidate == OrderSide.SELL.value:
+            return OrderSide.SELL
+        if candidate == OrderSide.BUY.value:
+            return OrderSide.BUY
+        return default
+
+    @staticmethod
+    def _is_long(position_side: str) -> bool:
+        return position_side == "long"
+
+    @staticmethod
+    def _quote_side_for_order(order_side: OrderSide) -> str:
+        return "ask" if order_side == OrderSide.BUY else "bid"
+
+    def _mark_to_market_price(self, row: pd.Series, position: FxOpenPosition) -> float:
+        quote_side = "bid" if self._is_long(position.position_side) else "ask"
+        return self._quote_price(row, quote_side, "close", position.entry_price)
+
+    @staticmethod
+    def _position_market_value(position: FxOpenPosition, current_price: float) -> float:
+        multiplier = 1.0 if position.position_side == "long" else -1.0
+        return multiplier * current_price * position.quantity
 
     def _quote_price(self, row: pd.Series, side: str, field: str, default: float = 0.0) -> float:
         raw_value = row.get(f"{side}_{field}")
@@ -153,7 +191,11 @@ class FxQuotePortfolioSimulator:
             prices: dict[str, float] = {}
             for symbol, frame in prepared.items():
                 if timestamp in frame.index:
-                    prices[symbol] = self._quote_price(frame.loc[timestamp], "bid", "close", 0.0)
+                    position = positions.get(symbol)
+                    if position is None:
+                        prices[symbol] = self._quote_price(frame.loc[timestamp], "bid", "close", 0.0)
+                    else:
+                        prices[symbol] = self._mark_to_market_price(frame.loc[timestamp], position)
             for symbol, frame in prepared.items():
                 if timestamp not in frame.index:
                     continue
@@ -210,7 +252,16 @@ class FxQuotePortfolioSimulator:
                 next_timestamp = row.get("next_timestamp")
                 if pd.notna(next_timestamp):
                     if symbol not in positions and symbol not in pending_entries and self._as_bool(row.get("entry_signal", False)):
-                        quantity = self._entry_quantity(symbol, row, cash, positions, prepared, timestamp)
+                        position_side = self._normalize_position_side(row.get("position_side"))
+                        entry_order_side = self._order_side_from_value(
+                            row.get("entry_order_side"),
+                            OrderSide.BUY if position_side == "long" else OrderSide.SELL,
+                        )
+                        exit_order_side = self._order_side_from_value(
+                            row.get("exit_order_side"),
+                            OrderSide.SELL if position_side == "long" else OrderSide.BUY,
+                        )
+                        quantity = self._entry_quantity(symbol, row, cash, positions, prepared, timestamp, entry_order_side)
                         if quantity > 0:
                             execute_at = self._delayed_execute_at(frame, pd.Timestamp(timestamp), self.fx_cfg.entry_delay_bars)
                             if execute_at is None:
@@ -219,9 +270,17 @@ class FxQuotePortfolioSimulator:
                                 symbol=symbol,
                                 execute_at=execute_at,
                                 quantity=quantity,
+                                position_side=position_side,
+                                entry_order_side=entry_order_side,
+                                exit_order_side=exit_order_side,
                                 trigger_price=self._as_float(
                                     row.get("entry_trigger_price"),
-                                    self._quote_price(row, "ask", "high", self._as_float(row.get("close"), 0.0)),
+                                    self._quote_price(
+                                        row,
+                                        self._quote_side_for_order(entry_order_side),
+                                        "high" if entry_order_side == OrderSide.BUY else "low",
+                                        self._as_float(row.get("close"), 0.0),
+                                    ),
                                 ),
                                 initial_stop_price=self._as_float(row.get("initial_stop_price"), 0.0),
                                 initial_risk_price=self._as_float(row.get("initial_risk_price"), 0.01),
@@ -237,6 +296,7 @@ class FxQuotePortfolioSimulator:
                                 symbol=symbol,
                                 execute_at=pd.Timestamp(next_timestamp),
                                 quantity=positions[symbol].quantity,
+                                order_side=positions[symbol].exit_order_side,
                                 reason="1時間足EMAクロスで全決済",
                                 kind="favorable_exit",
                             )
@@ -251,6 +311,7 @@ class FxQuotePortfolioSimulator:
                                     symbol=symbol,
                                     execute_at=pd.Timestamp(next_timestamp),
                                     quantity=partial_quantity,
+                                    order_side=positions[symbol].exit_order_side,
                                     reason="1時間足トレンド崩れで一部手仕舞い",
                                     kind="partial_exit",
                                 )
@@ -259,12 +320,14 @@ class FxQuotePortfolioSimulator:
             exposure = 0.0
             for symbol, position in positions.items():
                 current_price = prices.get(symbol, position.entry_price)
-                exposure += current_price * position.quantity
-                equity += current_price * position.quantity
+                market_value = self._position_market_value(position, current_price)
+                exposure += abs(market_value)
+                equity += market_value
                 position_rows.append(
                     {
                         "timestamp": timestamp,
                         "symbol": symbol,
+                        "position_side": position.position_side,
                         "quantity": position.quantity,
                         "entry_price": position.entry_price,
                         "initial_stop_price": position.initial_stop_price,
@@ -298,25 +361,39 @@ class FxQuotePortfolioSimulator:
         positions: dict[str, FxOpenPosition],
         frames: dict[str, pd.DataFrame],
         timestamp: pd.Timestamp,
+        entry_order_side: OrderSide,
     ) -> int:
         prices = {
             current_symbol: (
-                self._quote_price(frames[current_symbol].loc[timestamp], "bid", "close", position.entry_price)
+                self._mark_to_market_price(frames[current_symbol].loc[timestamp], position)
                 if timestamp in frames[current_symbol].index
                 else position.entry_price
             )
             for current_symbol, position in positions.items()
         }
-        equity = cash + sum(position.quantity * prices.get(symbol_name, position.entry_price) for symbol_name, position in positions.items())
+        equity = cash + sum(
+            self._position_market_value(position, prices.get(symbol_name, position.entry_price))
+            for symbol_name, position in positions.items()
+        )
         sizing = self.risk_manager.size_position(
             cash=cash,
             equity=equity,
-            price=self._quote_price(row, "ask", "close", self._as_float(row.get("close"), 0.0)),
+            price=self._quote_price(
+                row,
+                self._quote_side_for_order(entry_order_side),
+                "close",
+                self._as_float(row.get("close"), 0.0),
+            ),
             atr_value=max(self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)), 0.01),
         )
         if not self.risk_manager.can_open_position(
             open_positions=len(positions),
-            current_exposure_ratio=0.0 if equity <= 0 else (sum(position.quantity * prices.get(name, position.entry_price) for name, position in positions.items()) / equity),
+            current_exposure_ratio=0.0
+            if equity <= 0
+            else (
+                sum(abs(self._position_market_value(position, prices.get(name, position.entry_price))) for name, position in positions.items())
+                / equity
+            ),
             quantity=sizing.quantity,
         ):
             return 0
@@ -339,28 +416,43 @@ class FxQuotePortfolioSimulator:
         mode: BrokerMode,
     ) -> tuple[float, dict[str, object] | None, dict[str, object] | None, dict[str, object] | None, bool]:
         current_atr = max(float(row.get("atr_15m") or position.atr_at_entry), 0.01)
-        position.highest_bid = max(position.highest_bid, self._quote_price(row, "bid", "high", position.highest_bid))
-        trailing_candidate = position.highest_bid - self.fx_cfg.atr_trailing_mult * current_atr
-        position.trailing_stop_price = max(position.trailing_stop_price, trailing_candidate)
-        active_stop = max(position.initial_stop_price, position.trailing_stop_price)
-        bid_open = self._quote_price(row, "bid", "open", position.entry_price)
-        bid_low = self._quote_price(row, "bid", "low", position.entry_price)
-        # conservative_adverse:
-        # 1. open gap through the stop
-        # 2. hard stop hit inside the bar
-        # 3. trailing stop hit inside the bar
-        if bid_open <= active_stop:
-            exit_price = bid_open
-            reason = "protective_gap_exit"
-        elif bid_low <= position.initial_stop_price:
-            exit_price = position.initial_stop_price
-            reason = "protective_stop"
-        elif bid_low <= active_stop:
-            exit_price = active_stop
-            reason = "trailing_stop"
+        if self._is_long(position.position_side):
+            position.highest_bid = max(position.highest_bid, self._quote_price(row, "bid", "high", position.highest_bid))
+            trailing_candidate = position.highest_bid - self.fx_cfg.atr_trailing_mult * current_atr
+            position.trailing_stop_price = max(position.trailing_stop_price, trailing_candidate)
+            active_stop = max(position.initial_stop_price, position.trailing_stop_price)
+            protective_open = self._quote_price(row, "bid", "open", position.entry_price)
+            protective_extreme = self._quote_price(row, "bid", "low", position.entry_price)
+            if protective_open <= active_stop:
+                exit_price = protective_open
+                reason = "protective_gap_exit"
+            elif protective_extreme <= position.initial_stop_price:
+                exit_price = position.initial_stop_price
+                reason = "protective_stop"
+            elif protective_extreme <= active_stop:
+                exit_price = active_stop
+                reason = "trailing_stop"
+            else:
+                return 0.0, None, None, None, False
         else:
-            return 0.0, None, None, None, False
-        fill = apply_fill_model(exit_price, OrderSide.SELL, position.quantity, self.config.risk)
+            position.lowest_ask = min(position.lowest_ask, self._quote_price(row, "ask", "low", position.lowest_ask))
+            trailing_candidate = position.lowest_ask + self.fx_cfg.atr_trailing_mult * current_atr
+            position.trailing_stop_price = min(position.trailing_stop_price, trailing_candidate)
+            active_stop = min(position.initial_stop_price, position.trailing_stop_price)
+            protective_open = self._quote_price(row, "ask", "open", position.entry_price)
+            protective_extreme = self._quote_price(row, "ask", "high", position.entry_price)
+            if protective_open >= active_stop:
+                exit_price = protective_open
+                reason = "protective_gap_exit"
+            elif protective_extreme >= position.initial_stop_price:
+                exit_price = position.initial_stop_price
+                reason = "protective_stop"
+            elif protective_extreme >= active_stop:
+                exit_price = active_stop
+                reason = "trailing_stop"
+            else:
+                return 0.0, None, None, None, False
+        fill = apply_fill_model(exit_price, position.exit_order_side, position.quantity, self.config.risk)
         order_id = str(uuid4())
         trade_row = self._trade_row(
             position=position,
@@ -375,7 +467,7 @@ class FxQuotePortfolioSimulator:
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": position.symbol,
-            "side": OrderSide.SELL.value,
+            "side": position.exit_order_side.value,
             "quantity": position.quantity,
             "status": OrderStatus.FILLED.value,
             "reason": reason,
@@ -386,13 +478,18 @@ class FxQuotePortfolioSimulator:
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": position.symbol,
-            "side": OrderSide.SELL.value,
+            "side": position.exit_order_side.value,
             "quantity": position.quantity,
             "price": fill.price,
             "fee": fill.fee,
             "slippage": fill.slippage,
         }
-        return fill.price * position.quantity - fill.fee, trade_row, fill_row, order_row, True
+        cash_delta = (
+            fill.price * position.quantity - fill.fee
+            if position.exit_order_side == OrderSide.SELL
+            else -(fill.price * position.quantity + fill.fee)
+        )
+        return cash_delta, trade_row, fill_row, order_row, True
 
     def _execute_scheduled_exit(
         self,
@@ -402,8 +499,13 @@ class FxQuotePortfolioSimulator:
         pending_exit: PendingExit,
         mode: BrokerMode,
     ) -> tuple[float, dict[str, object] | None, dict[str, object], dict[str, object]]:
-        exit_price = self._quote_price(row, "bid", "open", position.entry_price)
-        fill = apply_fill_model(exit_price, OrderSide.SELL, pending_exit.quantity, self.config.risk)
+        exit_price = self._quote_price(
+            row,
+            self._quote_side_for_order(pending_exit.order_side),
+            "open",
+            position.entry_price,
+        )
+        fill = apply_fill_model(exit_price, pending_exit.order_side, pending_exit.quantity, self.config.risk)
         order_id = str(uuid4())
         position.quantity -= pending_exit.quantity
         if pending_exit.kind == "partial_exit":
@@ -422,7 +524,7 @@ class FxQuotePortfolioSimulator:
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": position.symbol,
-            "side": OrderSide.SELL.value,
+            "side": pending_exit.order_side.value,
             "quantity": pending_exit.quantity,
             "status": OrderStatus.FILLED.value,
             "reason": pending_exit.reason,
@@ -433,13 +535,18 @@ class FxQuotePortfolioSimulator:
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": position.symbol,
-            "side": OrderSide.SELL.value,
+            "side": pending_exit.order_side.value,
             "quantity": pending_exit.quantity,
             "price": fill.price,
             "fee": fill.fee,
             "slippage": fill.slippage,
         }
-        return fill.price * pending_exit.quantity - fill.fee, trade_row, fill_row, order_row
+        cash_delta = (
+            fill.price * pending_exit.quantity - fill.fee
+            if pending_exit.order_side == OrderSide.SELL
+            else -(fill.price * pending_exit.quantity + fill.fee)
+        )
+        return cash_delta, trade_row, fill_row, order_row
 
     def _execute_pending_entry(
         self,
@@ -451,24 +558,34 @@ class FxQuotePortfolioSimulator:
     ) -> tuple[float, FxOpenPosition | None, dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
         if not self._as_bool(row.get("entry_context_ok", False)):
             return 0.0, None, None, None, None
-        ask_open = self._quote_price(row, "ask", "open", 0.0)
-        ask_high = self._quote_price(row, "ask", "high", 0.0)
-        if ask_open >= pending_entry.trigger_price:
-            entry_raw_price = ask_open
-        elif ask_high >= pending_entry.trigger_price:
-            entry_raw_price = pending_entry.trigger_price
+        if pending_entry.entry_order_side == OrderSide.BUY:
+            quote_open = self._quote_price(row, "ask", "open", 0.0)
+            quote_extreme = self._quote_price(row, "ask", "high", 0.0)
+            if quote_open >= pending_entry.trigger_price:
+                entry_raw_price = quote_open
+            elif quote_extreme >= pending_entry.trigger_price:
+                entry_raw_price = pending_entry.trigger_price
+            else:
+                return 0.0, None, None, None, None
         else:
-            return 0.0, None, None, None, None
-        fill = apply_fill_model(entry_raw_price, OrderSide.BUY, pending_entry.quantity, self.config.risk)
-        total_cost = fill.price * pending_entry.quantity + fill.fee
-        if cash < total_cost:
+            quote_open = self._quote_price(row, "bid", "open", 0.0)
+            quote_extreme = self._quote_price(row, "bid", "low", 0.0)
+            if quote_open <= pending_entry.trigger_price:
+                entry_raw_price = quote_open
+            elif quote_extreme <= pending_entry.trigger_price:
+                entry_raw_price = pending_entry.trigger_price
+            else:
+                return 0.0, None, None, None, None
+        fill = apply_fill_model(entry_raw_price, pending_entry.entry_order_side, pending_entry.quantity, self.config.risk)
+        total_value = fill.price * pending_entry.quantity
+        if pending_entry.entry_order_side == OrderSide.BUY and cash < (total_value + fill.fee):
             return 0.0, None, None, None, None
         order_id = str(uuid4())
         order_row = {
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": pending_entry.symbol,
-            "side": OrderSide.BUY.value,
+            "side": pending_entry.entry_order_side.value,
             "quantity": pending_entry.quantity,
             "status": OrderStatus.FILLED.value,
             "reason": pending_entry.reason,
@@ -479,7 +596,7 @@ class FxQuotePortfolioSimulator:
             "order_id": order_id,
             "timestamp": timestamp,
             "symbol": pending_entry.symbol,
-            "side": OrderSide.BUY.value,
+            "side": pending_entry.entry_order_side.value,
             "quantity": pending_entry.quantity,
             "price": fill.price,
             "fee": fill.fee,
@@ -488,12 +605,16 @@ class FxQuotePortfolioSimulator:
         position = FxOpenPosition(
             symbol=pending_entry.symbol,
             position_id=str(uuid4()),
+            position_side=pending_entry.position_side,
+            entry_order_side=pending_entry.entry_order_side,
+            exit_order_side=pending_entry.exit_order_side,
             quantity=pending_entry.quantity,
             initial_quantity=pending_entry.quantity,
             entry_time=timestamp,
             signal_time=pending_entry.signal_time,
             entry_price=fill.price,
             highest_bid=self._quote_price(row, "bid", "open", fill.price),
+            lowest_ask=self._quote_price(row, "ask", "open", fill.price),
             initial_stop_price=pending_entry.initial_stop_price,
             trailing_stop_price=pending_entry.initial_stop_price,
             initial_risk_price=max(pending_entry.initial_risk_price, 0.01),
@@ -501,22 +622,36 @@ class FxQuotePortfolioSimulator:
             breakout_level=pending_entry.breakout_level,
             entry_reason=pending_entry.reason,
             entry_score=pending_entry.score,
-            lifecycle_state="LONG_OPEN",
+            lifecycle_state="LONG_OPEN" if pending_entry.position_side == "long" else "SHORT_OPEN",
         )
         # conservative_adverse:
         # when the entry trigger and protective stop are both reachable inside the
         # same 1-minute bar, the engine assumes we are filled first and then stopped.
-        bid_open = self._quote_price(row, "bid", "open", fill.price)
-        bid_low = self._quote_price(row, "bid", "low", fill.price)
-        if bid_open <= pending_entry.initial_stop_price:
-            exit_raw = bid_open
-            stop_reason = "protective_gap_exit"
-        elif bid_low <= pending_entry.initial_stop_price:
-            exit_raw = pending_entry.initial_stop_price
-            stop_reason = "protective_stop"
+        if pending_entry.position_side == "long":
+            protective_open = self._quote_price(row, "bid", "open", fill.price)
+            protective_extreme = self._quote_price(row, "bid", "low", fill.price)
+            if protective_open <= pending_entry.initial_stop_price:
+                exit_raw = protective_open
+                stop_reason = "protective_gap_exit"
+            elif protective_extreme <= pending_entry.initial_stop_price:
+                exit_raw = pending_entry.initial_stop_price
+                stop_reason = "protective_stop"
+            else:
+                entry_cash_delta = -(total_value + fill.fee)
+                return entry_cash_delta, position, order_row, fill_row, None
         else:
-            return -total_cost, position, order_row, fill_row, None
-        exit_fill = apply_fill_model(exit_raw, OrderSide.SELL, pending_entry.quantity, self.config.risk)
+            protective_open = self._quote_price(row, "ask", "open", fill.price)
+            protective_extreme = self._quote_price(row, "ask", "high", fill.price)
+            if protective_open >= pending_entry.initial_stop_price:
+                exit_raw = protective_open
+                stop_reason = "protective_gap_exit"
+            elif protective_extreme >= pending_entry.initial_stop_price:
+                exit_raw = pending_entry.initial_stop_price
+                stop_reason = "protective_stop"
+            else:
+                entry_cash_delta = total_value - fill.fee
+                return entry_cash_delta, position, order_row, fill_row, None
+        exit_fill = apply_fill_model(exit_raw, pending_entry.exit_order_side, pending_entry.quantity, self.config.risk)
         stop_order_id = str(uuid4())
         stop_trade = self._trade_row(
             position=position,
@@ -528,7 +663,16 @@ class FxQuotePortfolioSimulator:
             mode=mode,
         )
         return (
-            -total_cost + (exit_fill.price * pending_entry.quantity - exit_fill.fee),
+            (
+                -(total_value + fill.fee)
+                if pending_entry.entry_order_side == OrderSide.BUY
+                else total_value - fill.fee
+            )
+            + (
+                exit_fill.price * pending_entry.quantity - exit_fill.fee
+                if pending_entry.exit_order_side == OrderSide.SELL
+                else -(exit_fill.price * pending_entry.quantity + exit_fill.fee)
+            ),
             None,
             order_row,
             fill_row,
@@ -549,7 +693,11 @@ class FxQuotePortfolioSimulator:
         reason: str,
         mode: BrokerMode,
     ) -> dict[str, object]:
-        gross_pnl = (exit_price - position.entry_price) * quantity
+        gross_pnl = (
+            (exit_price - position.entry_price) * quantity
+            if position.position_side == "long"
+            else (position.entry_price - exit_price) * quantity
+        )
         hold_bars = max(int((timestamp - position.entry_time) / pd.Timedelta(minutes=1)), 0)
         overnight_days = max((timestamp.normalize() - position.entry_time.normalize()).days, 0)
         carry_cost = overnight_days * self.fx_cfg.overnight_swap_per_unit * quantity
@@ -561,12 +709,15 @@ class FxQuotePortfolioSimulator:
             "signal_time": position.signal_time,
             "entry_time": position.entry_time,
             "exit_time": timestamp,
+            "position_side": position.position_side,
             "strategy_state": "FLAT_EXITED",
             "position_state_before_exit": position.lifecycle_state,
             "quantity": quantity,
             "initial_quantity": position.initial_quantity,
             "entry_price": position.entry_price,
             "exit_price": exit_price,
+            "entry_order_side": position.entry_order_side.value,
+            "exit_order_side": position.exit_order_side.value,
             "gross_pnl": gross_pnl,
             "net_pnl": net_pnl,
             "hold_bars": hold_bars,

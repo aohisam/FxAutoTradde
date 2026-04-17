@@ -114,8 +114,14 @@ class LocalSimBroker(BaseBroker):
     def close_all_positions(self) -> dict[str, object]:
         count = len(self.open_positions)
         for symbol, position in list(self.open_positions.items()):
-            latest_price = self.latest_prices.get(symbol, float(position.get("avg_entry_price", 0.0)))
-            self._fill_sell_order(symbol, int(position.get("qty", 0)), latest_price)
+            qty = int(position.get("qty", 0))
+            side = str(position.get("side", "long"))
+            if side == "short":
+                latest_price = self.latest_ask_prices.get(symbol, self.latest_prices.get(symbol, float(position.get("avg_entry_price", 0.0))))
+                self._fill_buy_order(symbol, qty, latest_price)
+            else:
+                latest_price = self.latest_bid_prices.get(symbol, self.latest_prices.get(symbol, float(position.get("avg_entry_price", 0.0))))
+                self._fill_sell_order(symbol, qty, latest_price)
         return {"closed_positions": count, "message_ja": "ローカルポジションを全てクローズしました"}
 
     def update_market_data(self, prices: dict[str, float], timestamp: pd.Timestamp | None = None) -> None:
@@ -159,6 +165,26 @@ class LocalSimBroker(BaseBroker):
                 "side": "long",
             }
             return
+        if str(existing.get("side", "long")) == "short":
+            current_qty = int(existing.get("qty", 0))
+            avg_entry = float(existing.get("avg_entry_price", 0.0))
+            cover_qty = min(qty, current_qty)
+            if cover_qty > 0:
+                self.realized_pl += (avg_entry - fill_price) * cover_qty
+            remaining_short = current_qty - cover_qty
+            remaining_buy = qty - cover_qty
+            if remaining_short > 0:
+                existing["qty"] = remaining_short
+                return
+            self.open_positions.pop(symbol, None)
+            if remaining_buy > 0:
+                self.open_positions[symbol] = {
+                    "symbol": symbol,
+                    "qty": int(remaining_buy),
+                    "avg_entry_price": float(fill_price),
+                    "side": "long",
+                }
+            return
         current_qty = int(existing.get("qty", 0))
         current_avg = float(existing.get("avg_entry_price", 0.0))
         new_qty = current_qty + qty
@@ -169,6 +195,23 @@ class LocalSimBroker(BaseBroker):
     def _fill_sell_order(self, symbol: str, qty: int, fill_price: float) -> None:
         existing = self.open_positions.get(symbol)
         if existing is None:
+            self.cash_balance += fill_price * qty
+            self.open_positions[symbol] = {
+                "symbol": symbol,
+                "qty": int(qty),
+                "avg_entry_price": float(fill_price),
+                "side": "short",
+            }
+            return
+        if str(existing.get("side", "long")) == "short":
+            proceeds = fill_price * qty
+            self.cash_balance += proceeds
+            current_qty = int(existing.get("qty", 0))
+            current_avg = float(existing.get("avg_entry_price", 0.0))
+            new_qty = current_qty + qty
+            weighted = ((current_avg * current_qty) + proceeds) / new_qty if new_qty else 0.0
+            existing["qty"] = new_qty
+            existing["avg_entry_price"] = weighted
             return
         current_qty = int(existing.get("qty", 0))
         avg_entry = float(existing.get("avg_entry_price", 0.0))
@@ -178,24 +221,39 @@ class LocalSimBroker(BaseBroker):
         self.cash_balance += fill_price * sell_qty
         self.realized_pl += (fill_price - avg_entry) * sell_qty
         remaining_qty = current_qty - sell_qty
+        remaining_sell = qty - sell_qty
         if remaining_qty <= 0:
             self.open_positions.pop(symbol, None)
+            if remaining_sell > 0:
+                self.cash_balance += fill_price * remaining_sell
+                self.open_positions[symbol] = {
+                    "symbol": symbol,
+                    "qty": int(remaining_sell),
+                    "avg_entry_price": float(fill_price),
+                    "side": "short",
+                }
             return
         existing["qty"] = remaining_qty
 
     def _serialize_position(self, symbol: str, position: dict[str, object]) -> dict[str, object]:
         qty = int(position.get("qty", 0))
         avg_entry = float(position.get("avg_entry_price", 0.0))
-        current_price = float(self.latest_bid_prices.get(symbol, self.latest_prices.get(symbol, avg_entry)))
-        market_value = current_price * qty
-        unrealized = (current_price - avg_entry) * qty
+        side = str(position.get("side", "long"))
+        if side == "short":
+            current_price = float(self.latest_ask_prices.get(symbol, self.latest_prices.get(symbol, avg_entry)))
+            market_value = -current_price * qty
+            unrealized = (avg_entry - current_price) * qty
+        else:
+            current_price = float(self.latest_bid_prices.get(symbol, self.latest_prices.get(symbol, avg_entry)))
+            market_value = current_price * qty
+            unrealized = (current_price - avg_entry) * qty
         return {
             "symbol": symbol,
             "qty": str(qty),
             "avg_entry_price": _format_decimal(avg_entry),
             "market_value": _format_decimal(market_value),
             "unrealized_pl": _format_decimal(unrealized),
-            "side": str(position.get("side", "long")),
+            "side": side,
             "current_price": _format_decimal(current_price),
         }
 
@@ -203,8 +261,12 @@ class LocalSimBroker(BaseBroker):
         market_value = 0.0
         for symbol, position in self.open_positions.items():
             qty = int(position.get("qty", 0))
-            current_price = float(
-                self.latest_bid_prices.get(symbol, self.latest_prices.get(symbol, float(position.get("avg_entry_price", 0.0))))
-            )
-            market_value += current_price * qty
+            avg_entry = float(position.get("avg_entry_price", 0.0))
+            side = str(position.get("side", "long"))
+            if side == "short":
+                current_price = float(self.latest_ask_prices.get(symbol, self.latest_prices.get(symbol, avg_entry)))
+                market_value -= current_price * qty
+            else:
+                current_price = float(self.latest_bid_prices.get(symbol, self.latest_prices.get(symbol, avg_entry)))
+                market_value += current_price * qty
         return self.cash_balance + market_value

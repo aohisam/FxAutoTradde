@@ -10,7 +10,7 @@ from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
-from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
+from fxautotrade_lab.core.enums import BrokerMode, OrderSide, TimeFrame
 from fxautotrade_lab.ml.fx_filter import FEATURE_COLUMNS, apply_fx_ml_filter, fit_fx_filter_model, load_filter_model
 from fxautotrade_lab.research.pipeline import ResearchPipeline
 
@@ -114,6 +114,8 @@ def test_fx_ml_train_save_load_and_apply(tmp_path: Path) -> None:
     assert "entry_signal_rule_only" in filtered.columns
     assert filtered["entry_signal_rule_only"].all()
     assert filtered["ml_probability"].between(0, 1).all()
+    assert loaded.metadata["hyperparameters"]["learning_rate"] == config.strategy.fx_breakout_pullback.ml_filter.learning_rate
+    assert loaded.metadata["hyperparameters"]["max_iter"] == config.strategy.fx_breakout_pullback.ml_filter.max_iter
 
 
 def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) -> None:
@@ -350,6 +352,41 @@ def test_fx_automation_controller_retrains_model_on_schedule(tmp_path: Path, mon
 
     assert retrain_calls
     assert controller.fx_next_retrain_at is not None
+
+
+def test_fx_automation_controller_enforces_jpy_cross_limit(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    config.watchlist.symbols = ["USD_JPY", "EUR_JPY"]
+    config.risk.max_positions = 3
+    config.risk.minimum_order_quantity = 1
+    config.risk.fixed_order_amount = 500000
+    controller = AutomationController(config, EnvironmentConfig())
+    controller.account_summary = {
+        "equity": "1000000",
+        "portfolio_value": "1000000",
+        "cash": "1000000",
+        "buying_power": "1000000",
+    }
+    controller.open_symbols = set()
+    controller.fx_position_state = {
+        "USD_JPY": {
+            "quantity": 1000,
+            "position_side": "long",
+        }
+    }
+    latest = pd.Series(
+        {
+            "ask_close": 101.04,
+            "bid_close": 101.00,
+            "breakout_atr_15m": 0.4,
+            "atr_15m": 0.4,
+        }
+    )
+
+    quantity, message = controller._entry_quantity_fx("EUR_JPY", latest, entry_order_side=OrderSide.BUY)
+
+    assert quantity == 0
+    assert "JPY クロス保有上限" in message
 
 
 def test_application_exposes_research_and_training(tmp_path: Path, monkeypatch) -> None:

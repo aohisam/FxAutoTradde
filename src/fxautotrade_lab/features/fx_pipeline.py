@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 
 import pandas as pd
 
@@ -13,6 +14,8 @@ from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.core.symbols import split_fx_symbol
 from fxautotrade_lab.data.quote_bars import validate_quote_bar_frame
 from fxautotrade_lab.features.indicators import adx, atr, ema
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -88,10 +91,17 @@ def _event_blackout_series(
         return pd.Series(dtype=bool)
     try:
         events = provider.list_events(index.min(), index.max(), {base, quote})
-    except Exception:
+    except Exception as exc:
         failure_mode = (
             event_cfg.realtime_failure_mode if runtime_mode else event_cfg.backtest_failure_mode
         ).strip().lower()
+        if failure_mode == "warn_and_disable":
+            logger.warning(
+                "経済イベント取得に失敗したためイベントフィルタを無効化します: symbol=%s runtime_mode=%s error=%s",
+                symbol,
+                runtime_mode,
+                exc,
+            )
         if failure_mode == "fail_closed":
             return pd.Series(True, index=index)
         return pd.Series(False, index=index)
@@ -261,10 +271,16 @@ def build_fx_feature_set(
     execution["swing_source_timeframe"] = fx_cfg.swing_timeframe.value
     execution["weekday"] = execution.index.weekday
     execution["hour"] = execution.index.hour
-    bucket_keys = execution["weekday"].astype(str) + "_" + execution["hour"].astype(str)
+    execution["spread_context_bucket"] = (
+        execution["symbol"].astype(str)
+        + "_"
+        + execution["weekday"].astype(str)
+        + "_"
+        + execution["hour"].astype(str)
+    )
     execution["spread_context_limit"] = _contextual_quantile_threshold(
         execution["spread_close"],
-        bucket_keys,
+        execution["spread_context_bucket"],
         lookback_days=fx_cfg.spread_context_lookback_days,
         quantile=fx_cfg.spread_percentile_threshold,
     )

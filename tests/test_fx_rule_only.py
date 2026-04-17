@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -346,6 +347,7 @@ def test_fx_pipeline_spread_filter_excludes_current_bar(tmp_path: Path) -> None:
 
     assert bool(feature_set.execution_frame["spread_context_ok"].iloc[-2])
     assert not bool(feature_set.execution_frame["spread_context_ok"].iloc[-1])
+    assert feature_set.execution_frame["spread_context_bucket"].iloc[-1].startswith("USD_JPY_")
 
 
 def test_event_blackout_uses_runtime_failure_mode(tmp_path: Path) -> None:
@@ -377,3 +379,83 @@ def test_event_blackout_uses_runtime_failure_mode(tmp_path: Path) -> None:
 
     assert not bool(backtest_feature_set.execution_frame["event_blackout"].iloc[-1])
     assert bool(realtime_feature_set.execution_frame["event_blackout"].iloc[-1])
+
+
+def test_event_blackout_warn_and_disable_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    class _RaisingProvider(BaseEconomicEventProvider):
+        def list_events(self, start: pd.Timestamp, end: pd.Timestamp, currencies: set[str]):
+            _ = start, end, currencies
+            raise RuntimeError("provider down")
+
+    config = _make_fx_config(tmp_path)
+    config.strategy.fx_breakout_pullback.event_filter.enabled = True
+    config.strategy.fx_breakout_pullback.event_filter.backtest_failure_mode = "warn_and_disable"
+    index = pd.date_range("2026-01-01 00:00:00", periods=60, freq="1min", tz="Asia/Tokyo")
+    mid_prices = np.linspace(100.0, 100.5, len(index))
+    spreads = np.full(len(index), 0.02)
+    frame_1m = _make_quote_frame(index, mid_prices, spreads)
+    frames = {
+        TimeFrame.MIN_1: frame_1m,
+        TimeFrame.MIN_15: resample_quote_bars(frame_1m, "15min"),
+        TimeFrame.HOUR_1: resample_quote_bars(frame_1m, "1h"),
+        TimeFrame.DAY_1: resample_quote_bars(frame_1m, "1D"),
+        TimeFrame.WEEK_1: resample_quote_bars(frame_1m, "1W"),
+        TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
+    }
+
+    caplog.set_level(logging.WARNING)
+    feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False)
+
+    assert not bool(feature_set.execution_frame["event_blackout"].iloc[-1])
+    assert "イベントフィルタを無効化します" in caplog.text
+
+
+def test_fx_engine_supports_short_entry_and_buy_to_cover_exit(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    config.risk.slippage_bps = 0.0
+    simulator = FxQuotePortfolioSimulator(config)
+    index = pd.date_range("2026-01-06 11:00:00", periods=3, freq="1min", tz="Asia/Tokyo")
+    frame = pd.DataFrame(
+        {
+            "ask_open": [100.04, 99.84, 99.24],
+            "ask_high": [100.10, 99.90, 99.30],
+            "ask_low": [99.98, 99.70, 99.10],
+            "ask_close": [100.02, 99.78, 99.18],
+            "bid_open": [100.00, 99.80, 99.20],
+            "bid_high": [100.06, 99.86, 99.26],
+            "bid_low": [99.94, 99.60, 99.00],
+            "bid_close": [99.98, 99.74, 99.14],
+            "open": [100.02, 99.82, 99.22],
+            "high": [100.08, 99.88, 99.28],
+            "low": [99.96, 99.65, 99.05],
+            "close": [100.00, 99.76, 99.16],
+            "volume": [220.0, 220.0, 220.0],
+            "entry_signal": [True, False, False],
+            "position_side": ["short", pd.NA, pd.NA],
+            "entry_order_side": ["sell", pd.NA, pd.NA],
+            "exit_order_side": ["buy", pd.NA, pd.NA],
+            "entry_trigger_price": [99.70, pd.NA, pd.NA],
+            "initial_stop_price": [100.50, pd.NA, pd.NA],
+            "initial_risk_price": [0.80, pd.NA, pd.NA],
+            "breakout_atr_15m": [0.4, 0.4, 0.4],
+            "breakout_level_15m": [99.80, 99.80, 99.80],
+            "atr_15m": [0.4, 0.4, 0.4],
+            "signal_score": [0.8, 0.0, 0.0],
+            "explanation_ja": ["short entry", "", ""],
+            "entry_context_ok": [True, True, True],
+            "exit_signal": [False, True, False],
+            "partial_exit_signal": [False, False, False],
+        },
+        index=index,
+    )
+
+    outputs = simulator.run({"USD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
+
+    trades = outputs["trades"]
+    assert len(trades.index) == 1
+    assert trades.iloc[0]["position_side"] == "short"
+    assert trades.iloc[0]["entry_order_side"] == "sell"
+    assert trades.iloc[0]["exit_order_side"] == "buy"
+    assert float(trades.iloc[0]["entry_price"]) == 99.7
+    assert float(trades.iloc[0]["exit_price"]) == 99.24
+    assert float(trades.iloc[0]["net_pnl"]) > 0.0

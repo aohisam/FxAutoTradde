@@ -138,6 +138,14 @@ def fit_fx_filter_model(dataset: pd.DataFrame, config: AppConfig) -> NumpyLogist
         "train_start": str(pd.Timestamp(dataset["signal_time"].min()).isoformat()),
         "train_end": str(pd.Timestamp(dataset["signal_time"].max()).isoformat()),
         "seed": ml_cfg.seed,
+        "hyperparameters": {
+            "learning_rate": ml_cfg.learning_rate,
+            "max_iter": ml_cfg.max_iter,
+            "l2_penalty": ml_cfg.l2_penalty,
+            "feature_clip": ml_cfg.feature_clip,
+            "decision_threshold": ml_cfg.decision_threshold,
+            "min_samples": ml_cfg.min_samples,
+        },
     }
     return NumpyLogisticRegression.fit(
         x,

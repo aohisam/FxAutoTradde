@@ -394,5 +394,6 @@ def train_fx_filter_model_run(
         "train_end": train_end.isoformat(),
         "positive_rate": float(dataset["binary_label"].mean()) if not dataset.empty else 0.0,
         "feature_names": list(model.feature_names),
+        "hyperparameters": dict(model.metadata.get("hyperparameters", {})),
         **paths,
     }
