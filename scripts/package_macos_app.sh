@@ -7,6 +7,9 @@ SOURCE_ICON_PATH="$ROOT_DIR/icon.png"
 SPEC_PATH="$ROOT_DIR/FXAutoTradeLab.spec"
 
 ensure_macos_icon() {
+  if [[ -f "$ICON_PATH" && ( ! -f "$SOURCE_ICON_PATH" || "$ICON_PATH" -nt "$SOURCE_ICON_PATH" ) ]]; then
+    return
+  fi
   if [[ ! -f "$SOURCE_ICON_PATH" ]]; then
     return
   fi
@@ -28,14 +31,15 @@ ensure_macos_icon() {
       return
     fi
   fi
-  for python_cmd in "$ROOT_DIR/.venv_gui/bin/python" "$ROOT_DIR/.venv/bin/python" python3; do
+  for python_cmd in "$ROOT_DIR/.venv/bin/python" python3 "$ROOT_DIR/.venv_gui/bin/python"; do
     if [[ -x "$python_cmd" ]] || command -v "$python_cmd" >/dev/null 2>&1; then
-      "$python_cmd" - <<'PY' && return
+      SOURCE_ICON_PATH="$SOURCE_ICON_PATH" ICON_PATH="$ICON_PATH" "$python_cmd" - <<'PY' && return
+import os
 from pathlib import Path
 from PIL import Image
 
-source = Path("icon.png")
-target = Path("resources/app_icon.icns")
+source = Path(os.environ["SOURCE_ICON_PATH"])
+target = Path(os.environ["ICON_PATH"])
 image = Image.open(source).convert("RGBA")
 sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)]
 image.save(target, format="ICNS", sizes=sizes)
@@ -55,17 +59,18 @@ fi
 
 run_pyinstaller() {
   local pyinstaller_cmd="$1"
-  PYINSTALLER_CONFIG_DIR="$ROOT_DIR/.pyinstaller" \
+  local pyinstaller_config_dir="${TMPDIR:-/tmp}/fxautotrade-pyinstaller"
+  mkdir -p "$pyinstaller_config_dir"
+  PYINSTALLER_CONFIG_DIR="$pyinstaller_config_dir" \
     "$pyinstaller_cmd" \
-      --clean \
       --noconfirm \
       "$SPEC_PATH"
 }
 
-if [[ -x "$ROOT_DIR/.venv_gui/bin/pyinstaller" ]]; then
-  run_pyinstaller "$ROOT_DIR/.venv_gui/bin/pyinstaller"
-elif [[ -x "$ROOT_DIR/.venv/bin/pyinstaller" ]]; then
+if [[ -x "$ROOT_DIR/.venv/bin/pyinstaller" ]]; then
   run_pyinstaller "$ROOT_DIR/.venv/bin/pyinstaller"
+elif [[ -x "$ROOT_DIR/.venv_gui/bin/pyinstaller" ]]; then
+  run_pyinstaller "$ROOT_DIR/.venv_gui/bin/pyinstaller"
 elif [[ -x "$ROOT_DIR/.venv_gui/bin/pyside6-deploy" ]]; then
   "$ROOT_DIR/.venv_gui/bin/pyside6-deploy" "$ROOT_DIR/scripts/desktop_entry.py" -f
 elif [[ -x "$ROOT_DIR/.venv/bin/pyside6-deploy" ]]; then
