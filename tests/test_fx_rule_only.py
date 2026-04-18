@@ -8,15 +8,17 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.context.economic_events import BaseEconomicEventProvider
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
 from fxautotrade_lab.data.cache import ParquetBarCache
-from fxautotrade_lab.data.jforex import JForexCsvImporter
+from fxautotrade_lab.data.jforex import JForexCsvImporter, resolve_bid_ask_csv_selection
 from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, resample_quote_bars
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
+from tests.conftest import write_config
 
 
 def _make_fx_config(tmp_path: Path) -> AppConfig:
@@ -162,6 +164,34 @@ def test_combined_quote_csv_import_preserves_bid_ask(tmp_path: Path) -> None:
     assert float(min1["spread_close"].median()) > 0.0
 
 
+def test_bid_ask_selection_requires_exactly_two_files(tmp_path: Path) -> None:
+    path = tmp_path / "USDJPY_1 Min_Bid_only.csv"
+    path.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="2 ファイル必須"):
+        resolve_bid_ask_csv_selection([path])
+
+
+def test_bid_ask_selection_rejects_mismatched_symbols(tmp_path: Path) -> None:
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_test.csv"
+    ask_path = tmp_path / "EURJPY_1 Min_Ask_test.csv"
+    bid_path.write_text("", encoding="utf-8")
+    ask_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="通貨ペア名が一致しません"):
+        resolve_bid_ask_csv_selection([bid_path, ask_path])
+
+
+def test_bid_ask_selection_requires_side_name_in_filename(tmp_path: Path) -> None:
+    bid_like = tmp_path / "USDJPY_1 Min_left.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_test.csv"
+    bid_like.write_text("", encoding="utf-8")
+    ask_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Bid または Ask"):
+        resolve_bid_ask_csv_selection([bid_like, ask_path])
+
+
 def test_bid_ask_import_skips_overlapping_rows_and_only_appends_new_range(tmp_path: Path) -> None:
     cache = ParquetBarCache(tmp_path / "cache")
     importer = JForexCsvImporter(cache)
@@ -222,6 +252,39 @@ def test_bid_ask_import_only_fills_gap_between_existing_csv_and_gmo_ranges(tmp_p
     assert len(gap_slice.index) == 10
     existing_gmo_row = min1.loc[trailing_index.min()]
     assert float(existing_gmo_row["spread_close"]) == pytest.approx(float(trailing_frame.loc[trailing_index.min(), "spread_close"]))
+
+
+def test_bid_ask_import_trims_to_common_period_when_ranges_differ(tmp_path: Path) -> None:
+    importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
+    bid_index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    ask_index = pd.date_range("2026-01-01 00:05:00", periods=10, freq="1min", tz="Asia/Tokyo")
+    bid_frame = _make_quote_frame(bid_index, np.linspace(100.0, 100.5, len(bid_index)), np.full(len(bid_index), 0.04))
+    ask_frame = _make_quote_frame(ask_index, np.linspace(100.1, 100.4, len(ask_index)), np.full(len(ask_index), 0.05))
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_trim.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_trim.csv"
+    _write_jforex_csv(bid_path, bid_frame, "bid")
+    _write_jforex_csv(ask_path, ask_frame, "ask")
+
+    result = importer.import_bid_ask_files(bid_path, ask_path)
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+
+    assert result.start == ask_index.min().isoformat()
+    assert result.end == ask_index.max().isoformat()
+    assert result.bid_start == bid_index.min().isoformat()
+    assert result.bid_end == bid_index.max().isoformat()
+    assert result.ask_start == ask_index.min().isoformat()
+    assert result.ask_end == ask_index.max().isoformat()
+    assert result.imported_rows == len(ask_index)
+    assert min1.index.min() == ask_index.min()
+    assert min1.index.max() == ask_index.max()
+    assert any("共通期間のみ" in message for message in result.messages)
+
+
+def test_application_rejects_single_csv_import(tmp_path: Path) -> None:
+    app = LabApplication(write_config(tmp_path))
+
+    with pytest.raises(RuntimeError, match="単一 CSV のインポートは無効"):
+        app.import_jforex_csv(str(tmp_path / "USDJPY_1 Min_Bid_only.csv"))
 
 
 def test_fx_strategy_requires_pullback_before_entry(tmp_path: Path) -> None:

@@ -445,20 +445,11 @@ class LabApplication:
         return False
 
     def import_jforex_csv(self, file_path: str, symbol: str | None = None) -> dict[str, object]:
-        result = JForexCsvImporter(MarketDataService(self.config, self.env).cache).import_file(file_path, symbol=symbol)
-        self._invalidate_chart_cache()
-        return {
-            "symbol": result.symbol,
-            "source_path": str(result.source_path),
-            "imported_rows": result.imported_rows,
-            "skipped_rows": result.skipped_rows,
-            "start": result.start,
-            "end": result.end,
-            "applied_start": result.applied_start,
-            "applied_end": result.applied_end,
-            "timeframes": sorted(result.cache_paths),
-            "cache_paths": result.cache_paths,
-        }
+        _ = file_path, symbol
+        raise RuntimeError(
+            "単一 CSV のインポートは無効です。\n"
+            "Bid / Ask の 2 ファイルを指定してください。"
+        )
 
     def import_jforex_bid_ask_csv(
         self,
@@ -482,6 +473,11 @@ class LabApplication:
             "end": result.end,
             "applied_start": result.applied_start,
             "applied_end": result.applied_end,
+            "bid_start": result.bid_start,
+            "bid_end": result.bid_end,
+            "ask_start": result.ask_start,
+            "ask_end": result.ask_end,
+            "messages": list(result.messages),
             "timeframes": sorted(result.cache_paths),
             "cache_paths": result.cache_paths,
         }

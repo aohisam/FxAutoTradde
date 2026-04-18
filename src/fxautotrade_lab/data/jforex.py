@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 import pandas as pd
 
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
-from fxautotrade_lab.core.symbols import infer_fx_symbol_from_filename, normalize_fx_symbol
+from fxautotrade_lab.core.symbols import display_fx_symbol, infer_fx_symbol_from_filename, normalize_fx_symbol
 from fxautotrade_lab.data.cache import ParquetBarCache, timeframe_coverage_delta
 from fxautotrade_lab.data.quote_bars import (
     build_quote_bar_frame,
@@ -37,6 +38,11 @@ TIMEFRAME_RULES: dict[TimeFrame, str] = {
     TimeFrame.MONTH_1: "1ME",
 }
 
+_SIDE_PATTERNS = {
+    "bid": re.compile(r"(^|[^a-z])bid([^a-z]|$)", re.IGNORECASE),
+    "ask": re.compile(r"(^|[^a-z])ask([^a-z]|$)", re.IGNORECASE),
+}
+
 
 @dataclass(slots=True)
 class JForexImportResult:
@@ -49,6 +55,7 @@ class JForexImportResult:
     end: str
     applied_start: str = ""
     applied_end: str = ""
+    messages: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -63,6 +70,90 @@ class JForexBidAskImportResult:
     end: str
     applied_start: str = ""
     applied_end: str = ""
+    bid_start: str = ""
+    bid_end: str = ""
+    ask_start: str = ""
+    ask_end: str = ""
+    messages: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, frozen=True)
+class JForexBidAskSelection:
+    symbol: str
+    bid_source_path: Path
+    ask_source_path: Path
+
+
+def detect_quote_side_from_filename(file_path: str | Path) -> str:
+    name = Path(file_path).name
+    matches = [side for side, pattern in _SIDE_PATTERNS.items() if pattern.search(name)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) >= 2:
+        raise ValueError(
+            f"CSV ファイル名に Bid と Ask の両方が含まれています: {name}\n"
+            "Bid 用と Ask 用は別ファイルに分けてください。"
+        )
+    raise ValueError(
+        f"CSV ファイル名に Bid または Ask が含まれていません: {name}\n"
+        "例: USDJPY_1 Min_Bid_....csv / USDJPY_1 Min_Ask_....csv"
+    )
+
+
+def resolve_bid_ask_csv_selection(
+    file_paths: list[str | Path],
+    symbol: str | None = None,
+) -> JForexBidAskSelection:
+    if len(file_paths) != 2:
+        raise ValueError(
+            f"CSV インポートは Bid / Ask の 2 ファイル必須です。現在の選択数: {len(file_paths)}\n"
+            "ファイル名に Bid / Ask を含む 2 ファイルを同時に選択してください。"
+        )
+    side_to_path: dict[str, Path] = {}
+    side_to_symbol: dict[str, str] = {}
+    for raw_path in file_paths:
+        path = Path(raw_path)
+        side = detect_quote_side_from_filename(path)
+        if side in side_to_path:
+            raise ValueError(
+                f"{side.upper()} 側の CSV が複数選択されています: {side_to_path[side].name}, {path.name}\n"
+                "Bid と Ask を 1 ファイルずつ選択してください。"
+            )
+        side_to_path[side] = path
+        try:
+            side_to_symbol[side] = infer_fx_symbol_from_filename(path)
+        except ValueError as exc:
+            raise ValueError(
+                f"CSV ファイル名から通貨ペアを判別できませんでした: {path.name}\n"
+                "例: USDJPY_1 Min_Bid_....csv のように通貨ペアをファイル名へ含めてください。"
+            ) from exc
+    missing = [side for side in ("bid", "ask") if side not in side_to_path]
+    if missing:
+        missing_labels = " / ".join(side.upper() for side in missing)
+        raise ValueError(
+            f"{missing_labels} 側の CSV が不足しています。\n"
+            "Bid と Ask を 1 ファイルずつ選択してください。"
+        )
+    bid_symbol = side_to_symbol["bid"]
+    ask_symbol = side_to_symbol["ask"]
+    if bid_symbol != ask_symbol:
+        raise ValueError(
+            "Bid / Ask CSV の通貨ペア名が一致しません。\n"
+            f"Bid: {display_fx_symbol(bid_symbol)} ({side_to_path['bid'].name})\n"
+            f"Ask: {display_fx_symbol(ask_symbol)} ({side_to_path['ask'].name})"
+        )
+    normalized_symbol = normalize_fx_symbol(symbol) if symbol else bid_symbol
+    if normalized_symbol != bid_symbol:
+        raise ValueError(
+            "指定した通貨ペアと CSV ファイル名の通貨ペアが一致しません。\n"
+            f"指定値: {display_fx_symbol(normalized_symbol)}\n"
+            f"CSV: {display_fx_symbol(bid_symbol)}"
+        )
+    return JForexBidAskSelection(
+        symbol=normalized_symbol,
+        bid_source_path=side_to_path["bid"],
+        ask_source_path=side_to_path["ask"],
+    )
 
 
 class JForexCsvImporter:
@@ -152,6 +243,7 @@ class JForexCsvImporter:
             end=base.index.max().isoformat(),
             applied_start=summary["applied_start"],
             applied_end=summary["applied_end"],
+            messages=[],
         )
 
     def import_bid_ask_files(
@@ -160,16 +252,24 @@ class JForexCsvImporter:
         ask_file_path: str | Path,
         symbol: str | None = None,
     ) -> JForexBidAskImportResult:
-        bid_source_path = Path(bid_file_path)
-        ask_source_path = Path(ask_file_path)
-        normalized_symbol = normalize_fx_symbol(symbol) if symbol else infer_fx_symbol_from_filename(bid_source_path)
-        bid_symbol = infer_fx_symbol_from_filename(bid_source_path)
-        ask_symbol = infer_fx_symbol_from_filename(ask_source_path)
-        if bid_symbol != ask_symbol and symbol is None:
-            raise ValueError("Bid/Ask CSV の通貨ペア名が一致しません。")
+        selection = resolve_bid_ask_csv_selection([bid_file_path, ask_file_path], symbol=symbol)
+        bid_source_path = selection.bid_source_path
+        ask_source_path = selection.ask_source_path
+        normalized_symbol = selection.symbol
         bid_frame = read_jforex_quote_csv(bid_source_path, "bid")
         ask_frame = read_jforex_quote_csv(ask_source_path, "ask")
-        base = build_quote_bar_frame(bid_frame, ask_frame, normalized_symbol)
+        bid_start, bid_end = self._raw_frame_bounds(bid_frame)
+        ask_start, ask_end = self._raw_frame_bounds(ask_frame)
+        trimmed_bid, trimmed_ask, messages = self._align_bid_ask_frames(bid_frame, ask_frame)
+        try:
+            base = build_quote_bar_frame(trimmed_bid, trimmed_ask, normalized_symbol)
+        except ValueError as exc:
+            if "Bid/Ask の結合結果が空です" in str(exc):
+                raise ValueError(
+                    "Bid / Ask CSV の共通期間では時刻が一致しません。\n"
+                    "夏時間切替や欠損により 1 分足の timestamp がずれていないか確認してください。"
+                ) from exc
+            raise
         summary = self._import_quote_base(
             symbol=normalized_symbol,
             base=base,
@@ -193,6 +293,11 @@ class JForexCsvImporter:
             end=base.index.max().isoformat(),
             applied_start=summary["applied_start"],
             applied_end=summary["applied_end"],
+            bid_start=bid_start.isoformat(),
+            bid_end=bid_end.isoformat(),
+            ask_start=ask_start.isoformat(),
+            ask_end=ask_end.isoformat(),
+            messages=messages,
         )
 
     def _import_quote_base(
@@ -310,6 +415,37 @@ class JForexCsvImporter:
         start = pd.Timestamp(frame.index.min())
         end = pd.Timestamp(frame.index.max()) + timeframe_coverage_delta(timeframe)
         return start, end
+
+    def _raw_frame_bounds(
+        self,
+        frame: pd.DataFrame,
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
+        return pd.Timestamp(frame.index.min()), pd.Timestamp(frame.index.max())
+
+    def _align_bid_ask_frames(
+        self,
+        bid_frame: pd.DataFrame,
+        ask_frame: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+        bid_start, bid_end = self._raw_frame_bounds(bid_frame)
+        ask_start, ask_end = self._raw_frame_bounds(ask_frame)
+        overlap_start = max(bid_start, ask_start)
+        overlap_end = min(bid_end, ask_end)
+        if overlap_start > overlap_end:
+            raise ValueError(
+                "Bid / Ask CSV の期間が重なっていません。\n"
+                f"Bid: {bid_start.isoformat()} - {bid_end.isoformat()}\n"
+                f"Ask: {ask_start.isoformat()} - {ask_end.isoformat()}"
+            )
+        trimmed_bid = bid_frame.loc[(bid_frame.index >= overlap_start) & (bid_frame.index <= overlap_end)].copy()
+        trimmed_ask = ask_frame.loc[(ask_frame.index >= overlap_start) & (ask_frame.index <= overlap_end)].copy()
+        messages: list[str] = []
+        if bid_start != overlap_start or bid_end != overlap_end or ask_start != overlap_start or ask_end != overlap_end:
+            messages.append(
+                "Bid / Ask の CSV 期間が一致しないため、共通期間のみを取り込みます。\n"
+                f"共通期間: {overlap_start.isoformat()} - {overlap_end.isoformat()}"
+            )
+        return trimmed_bid, trimmed_ask, messages
 
     def _slice_to_ranges(
         self,

@@ -42,14 +42,14 @@ def _typer_main() -> None:
     @app.command("import-csv")
     def import_csv(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
-        file_path: str = typer.Option(..., "--file", help="単一 CSV。bid_* / ask_* の結合 quote 形式にも対応"),
+        file_path: str = typer.Option(..., "--file", help="現在は未対応。Bid / Ask の 2 ファイルを import-bidask-csv で指定してください"),
         symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時はファイル名から推定"),
     ) -> None:
-        summary = LabApplication(Path(config)).import_jforex_csv(
-            file_path=file_path,
-            symbol=symbol or None,
+        _ = config, file_path, symbol
+        raise typer.BadParameter(
+            "単一 CSV のインポートは無効です。"
+            " import-bidask-csv で Bid / Ask の 2 ファイルを指定してください。"
         )
-        typer.echo(f"CSV 取込完了: {summary}")
 
     @app.command("import-bidask-csv")
     def import_bidask_csv(
@@ -149,11 +149,10 @@ def _argparse_main() -> None:
         summary = LabApplication(Path(args.config)).run_research(mode=args.mode or None)
         print(summary["output_dir"])
     elif args.command == "import-csv":
-        summary = LabApplication(Path(args.config)).import_jforex_csv(
-            file_path=args.file,
-            symbol=args.symbol or None,
+        raise SystemExit(
+            "単一 CSV のインポートは無効です。"
+            " import-bidask-csv で Bid / Ask の 2 ファイルを指定してください。"
         )
-        print(summary)
     elif args.command == "import-bidask-csv":
         summary = LabApplication(Path(args.config)).import_jforex_bid_ask_csv(
             bid_file_path=args.bid_file,

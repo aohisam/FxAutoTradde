@@ -100,6 +100,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled, set_button_role
+    from fxautotrade_lab.data.jforex import resolve_bid_ask_csv_selection
 
     DataFrameTableModel = load_dataframe_model_class()
 
@@ -111,7 +112,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     banner = QLabel(
         "JForex の CSV を取り込むと、通貨ペアごとに複数時間足のキャッシュを作成します。"
-        " Bid/Ask を分けた 2 ファイル、または bid_* / ask_* を含む 1 ファイル quote CSV を推奨します。"
+        " Bid / Ask を分けた 2 ファイルを必ず同時に選択してください。"
+        " ファイル名には Bid / Ask と通貨ペア名を含める必要があり、期間がずれる場合は共通期間だけを取り込みます。"
         " GMO を選ぶと、既存キャッシュは保持したまま、指定期間の未取得分だけを追加取得します。"
     )
     banner.setWordWrap(True)
@@ -265,40 +267,43 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         progress.setRange(0, 100)
         progress.setValue(100)
         refresh_summary()
+        detail_rows = [
+            {
+                "category": "watchlist",
+                "symbol": result["symbol"],
+                "timeframe": timeframe,
+                "rows": result["imported_rows"] if timeframe == "1Min" else "",
+                "start": result["start"],
+                "end": result["end"],
+                "source": "csv_cache",
+                "refreshed": True,
+                "cache_path": result["cache_paths"].get(timeframe, ""),
+            }
+            for timeframe in result.get("timeframes", [])
+        ]
         result_model.set_frame(
-            _detail_frame(
-                [
-                    {
-                        "category": "watchlist",
-                        "symbol": result["symbol"],
-                        "timeframe": timeframe,
-                        "rows": result["imported_rows"] if timeframe == "1Min" else "",
-                        "start": result["start"],
-                        "end": result["end"],
-                        "source": "csv_cache",
-                        "refreshed": True,
-                        "cache_path": result["cache_paths"].get(timeframe, ""),
-                    }
-                    for timeframe in result.get("timeframes", [])
-                ]
-            )
+            _detail_frame(detail_rows)
         )
         result_table.resizeColumnsToContents()
-        output.setPlainText(
-            "\n".join(
-                [
-                    "CSV インポート完了",
-                    f"通貨ペア: {result['symbol']}",
-                    f"行数: {result['imported_rows']:,}",
-                    f"期間: {result['start']} - {result['end']}",
-                    f"作成時間足: {', '.join(result.get('timeframes', []))}",
-                    f"元ファイル: {result['source_path']}",
-                ]
-            )
-        )
+        output_lines = [
+            "CSV インポート完了",
+            f"通貨ペア: {result['symbol']}",
+            f"新規反映行数: {result['imported_rows']:,}",
+            f"重複スキップ行数: {result['skipped_rows']:,}",
+            f"使用期間: {result['start']} - {result['end']}",
+            f"今回反映した期間: {result['applied_start'] or '-'} - {result['applied_end'] or '-'}",
+            f"Bid 元期間: {result.get('bid_start', '-') } - {result.get('bid_end', '-')}",
+            f"Ask 元期間: {result.get('ask_start', '-') } - {result.get('ask_end', '-')}",
+            f"作成時間足: {', '.join(result.get('timeframes', []))}",
+            f"Bid ファイル: {result['bid_source_path']}",
+            f"Ask ファイル: {result['ask_source_path']}",
+        ]
+        if result.get("messages"):
+            output_lines.extend(["", "補足"] + list(result["messages"]))
+        output.setPlainText("\n".join(output_lines))
         source_combo.setCurrentText("csv")
-        QMessageBox.information(page, "完了", f"{result['symbol']} の CSV を取り込みました。")
-        log_message(f"CSV を取り込みました: {result['symbol']}")
+        QMessageBox.information(page, "完了", f"{result['symbol']} の Bid / Ask CSV を取り込みました。")
+        log_message(f"Bid / Ask CSV を取り込みました: {result['symbol']}")
 
     def on_finished(result) -> None:
         set_busy(False)
@@ -363,32 +368,24 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         set_busy(True)
         progress.setRange(0, 0)
         result_model.set_frame(None)
-        if len(file_paths) == 1:
-            output.setPlainText(
-                "CSV を取り込み中...\n"
-                "bid_* / ask_* を含む quote CSV はそのまま使い、単純 OHLC の場合は mid 系列として取り込みます。"
-            )
-            submit_task(
-                lambda: app_state.import_jforex_csv(file_paths[0]),
-                on_import_finished,
-                on_error,
-            )
+        try:
+            selection = resolve_bid_ask_csv_selection(file_paths)
+        except ValueError as exc:
+            on_error(str(exc))
             return
-        if len(file_paths) == 2:
-            lowered = {path.lower(): path for path in file_paths}
-            bid_path = next((path for key, path in lowered.items() if "bid" in key), "")
-            ask_path = next((path for key, path in lowered.items() if "ask" in key), "")
-            if not bid_path or not ask_path:
-                on_error("2ファイル選択時はファイル名に Bid / Ask を含めてください。")
-                return
-            output.setPlainText("Bid/Ask CSV を取り込み中...\n1分足の quote bar から複数時間足キャッシュを作成しています。")
-            submit_task(
-                lambda: app_state.import_jforex_bid_ask_csv(bid_path, ask_path),
-                on_import_finished,
-                on_error,
-            )
-            return
-        on_error("CSV は 1ファイルまたは Bid/Ask の 2ファイルで選択してください。")
+        output.setPlainText(
+            "Bid / Ask CSV を取り込み中...\n"
+            "ファイル名・通貨ペア・期間を検証し、共通期間だけを 1 分足 quote bar として反映しています。"
+        )
+        submit_task(
+            lambda: app_state.import_jforex_bid_ask_csv(
+                str(selection.bid_source_path),
+                str(selection.ask_source_path),
+                symbol=selection.symbol,
+            ),
+            on_import_finished,
+            on_error,
+        )
 
     import_button.clicked.connect(import_csv)
     sync_button.clicked.connect(run_sync)
