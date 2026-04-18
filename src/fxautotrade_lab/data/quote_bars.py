@@ -45,30 +45,48 @@ def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
     for side in ("bid", "ask"):
         required.extend(f"{side}_{column}" for column in QUOTE_SIDE_COLUMNS)
     working = frame.copy()
+    has_base_ohlc = {"open", "high", "low", "close"}.issubset(working.columns)
     missing = [column for column in required if column not in working.columns]
-    if missing and {"open", "high", "low", "close"}.issubset(working.columns):
+    if missing and has_base_ohlc:
         base_volume = pd.to_numeric(working.get("volume", 0.0), errors="coerce").fillna(0.0)
         for price_column in ("open", "high", "low", "close"):
             numeric = pd.to_numeric(working[price_column], errors="coerce")
-            working[f"bid_{price_column}"] = numeric
-            working[f"ask_{price_column}"] = numeric
+            working[f"bid_{price_column}"] = pd.to_numeric(working.get(f"bid_{price_column}", numeric), errors="coerce")
+            working[f"ask_{price_column}"] = pd.to_numeric(working.get(f"ask_{price_column}", numeric), errors="coerce")
             working[f"mid_{price_column}"] = numeric
             working[f"spread_{price_column}"] = 0.0
-        working["bid_volume"] = base_volume
-        working["ask_volume"] = 0.0
+        working["bid_volume"] = pd.to_numeric(working.get("bid_volume", base_volume), errors="coerce").fillna(base_volume)
+        working["ask_volume"] = pd.to_numeric(working.get("ask_volume", 0.0), errors="coerce").fillna(0.0)
         missing = [column for column in required if column not in working.columns]
     if missing:
         raise ValueError(f"Missing quote columns: {missing}")
     for column in required:
         working[column] = pd.to_numeric(working[column], errors="coerce")
+    if has_base_ohlc:
+        base_volume = pd.to_numeric(working.get("volume", 0.0), errors="coerce").fillna(0.0)
+        for price_column in ("open", "high", "low", "close"):
+            base_numeric = pd.to_numeric(working[price_column], errors="coerce")
+            working[f"bid_{price_column}"] = working[f"bid_{price_column}"].fillna(base_numeric)
+            working[f"ask_{price_column}"] = working[f"ask_{price_column}"].fillna(base_numeric)
+        working["bid_volume"] = working["bid_volume"].fillna(base_volume)
+        working["ask_volume"] = working["ask_volume"].fillna(0.0)
     null_rows = int(working[required].isna().any(axis=1).sum())
     if null_rows:
         raise ValueError(f"Quote columns contain {null_rows} incomplete rows.")
-    working["open"] = pd.to_numeric(working.get("open", working["bid_open"]), errors="coerce")
-    working["high"] = pd.to_numeric(working.get("high", working["bid_high"]), errors="coerce")
-    working["low"] = pd.to_numeric(working.get("low", working["bid_low"]), errors="coerce")
-    working["close"] = pd.to_numeric(working.get("close", working["bid_close"]), errors="coerce")
-    working["volume"] = pd.to_numeric(working.get("volume", working["bid_volume"]), errors="coerce").fillna(0.0)
+    for price_column in ("open", "high", "low", "close"):
+        working[f"mid_{price_column}"] = (
+            pd.to_numeric(working[f"bid_{price_column}"], errors="coerce")
+            + pd.to_numeric(working[f"ask_{price_column}"], errors="coerce")
+        ) / 2.0
+        working[f"spread_{price_column}"] = (
+            pd.to_numeric(working[f"ask_{price_column}"], errors="coerce")
+            - pd.to_numeric(working[f"bid_{price_column}"], errors="coerce")
+        )
+        working[price_column] = working[f"mid_{price_column}"]
+    working["volume"] = (
+        pd.to_numeric(working["bid_volume"], errors="coerce").fillna(0.0)
+        + pd.to_numeric(working["ask_volume"], errors="coerce").fillna(0.0)
+    )
     working = validate_bar_frame(working)
     for price_column in ("open", "high", "low", "close"):
         spread = pd.to_numeric(working.get(f"spread_{price_column}"), errors="coerce")

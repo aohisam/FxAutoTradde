@@ -11,10 +11,11 @@ from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
-from fxautotrade_lab.data.cache import ParquetBarCache
+from fxautotrade_lab.data.cache import ParquetBarCache, timeframe_coverage_delta
 from fxautotrade_lab.data.fixture import FixtureDataLoader
 from fxautotrade_lab.data.gmo import GmoForexPublicClient
 from fxautotrade_lab.data.quality import validate_bar_frame
+from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, validate_quote_bar_frame
 
 
 SUPPORTED_DIRECT_TIMEFRAMES = set(TimeFrame)
@@ -313,10 +314,13 @@ class MarketDataService:
         cache_path = self.cache.path_for(normalized_symbol, timeframe)
         start_ts, end_ts = self._requested_window(start, end)
         cached = self.cache.load(normalized_symbol, timeframe)
-        merged = cached if cached is not None else self._empty_frame(start_ts)
+        quote_aware = True
+        if quote_aware and cached is not None and not cached.empty:
+            cached = validate_quote_bar_frame(cached)
+        merged = cached if cached is not None else (self._empty_quote_frame(start_ts) if quote_aware else self._empty_frame(start_ts))
         coverage = self.cache.load_coverage(normalized_symbol, timeframe)
         if not coverage and cached is not None and not cached.empty:
-            coverage = [self._coverage_seed_from_cached(cached)]
+            coverage = [self._coverage_seed_from_cached(cached, timeframe)]
         requested_start = max(start_ts, GMO_INTRADAY_START) if timeframe in {
             TimeFrame.MIN_1,
             TimeFrame.MIN_5,
@@ -340,19 +344,32 @@ class MarketDataService:
         for range_start, range_end in fetch_ranges:
             if range_start >= range_end:
                 continue
-            frame = self.gmo.fetch_bars(
-                normalized_symbol,
-                timeframe,
-                range_start.to_pydatetime(),
-                range_end.to_pydatetime(),
-                price_type=self.config.data.gmo_price_type,
+            frame = (
+                self._fetch_gmo_quote_bars(normalized_symbol, timeframe, range_start, range_end)
+                if quote_aware
+                else self.gmo.fetch_bars(
+                    normalized_symbol,
+                    timeframe,
+                    range_start.to_pydatetime(),
+                    range_end.to_pydatetime(),
+                    price_type=self.config.data.gmo_price_type,
+                )
             )
             frame = self._slice_frame(frame, range_start, range_end)
-            self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end)
+            if quote_aware:
+                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_bid")
+                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_ask")
+            else:
+                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_close")
             if not frame.empty:
                 fetched_frames.append(frame)
         if fetched_frames:
-            merged = self._merge_frames([merged, *fetched_frames], start_ts)
+            merged = self._merge_frames(
+                [merged, *fetched_frames],
+                start_ts,
+                quote_aware=quote_aware,
+                dedupe_keep="last",
+            )
             self.cache.save(normalized_symbol, timeframe, merged)
             self.cache.save_metadata(
                 normalized_symbol,
@@ -362,7 +379,10 @@ class MarketDataService:
                     "timeframe": timeframe.value,
                     "symbol": normalized_symbol,
                     "price_type": self.config.data.gmo_price_type,
-                    "version": 1,
+                    "price_types": ["BID", "ASK"] if quote_aware else [self.config.data.gmo_price_type],
+                    "quote_aware": quote_aware,
+                    "source_keys": ["gmo_bid", "gmo_ask"] if quote_aware else ["gmo_close"],
+                    "version": 2 if quote_aware else 1,
                 },
             )
         return MarketDataFrameLoad(
@@ -389,18 +409,55 @@ class MarketDataService:
             )
         )
 
-    def _merge_frames(self, frames: list[pd.DataFrame], start_ts: pd.Timestamp) -> pd.DataFrame:
+    def _empty_quote_frame(self, start: pd.Timestamp) -> pd.DataFrame:
+        return validate_quote_bar_frame(
+            pd.DataFrame(
+                columns=[
+                    "bid_open",
+                    "bid_high",
+                    "bid_low",
+                    "bid_close",
+                    "bid_volume",
+                    "ask_open",
+                    "ask_high",
+                    "ask_low",
+                    "ask_close",
+                    "ask_volume",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                ],
+                index=pd.DatetimeIndex([], tz=start.tz),
+            )
+        )
+
+    def _merge_frames(
+        self,
+        frames: list[pd.DataFrame],
+        start_ts: pd.Timestamp,
+        *,
+        quote_aware: bool = False,
+        dedupe_keep: str = "last",
+    ) -> pd.DataFrame:
         non_empty = [frame for frame in frames if frame is not None and not frame.empty]
         if not non_empty:
-            return self._empty_frame(start_ts)
+            return self._empty_quote_frame(start_ts) if quote_aware else self._empty_frame(start_ts)
         merged = pd.concat(non_empty).sort_index()
         if not isinstance(merged.index, pd.DatetimeIndex):
             merged.index = pd.to_datetime(merged.index, utc=True).tz_convert(ASIA_TOKYO)
-        merged = merged.loc[~merged.index.duplicated(keep="last")]
+        merged = merged.loc[~merged.index.duplicated(keep=dedupe_keep)]
+        if quote_aware or self._looks_like_quote_frame(merged):
+            return validate_quote_bar_frame(merged)
         return validate_bar_frame(merged)
 
-    def _coverage_seed_from_cached(self, cached: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp]:
-        return cached.index.min().normalize(), cached.index.max().normalize() + pd.Timedelta(days=1)
+    def _coverage_seed_from_cached(
+        self,
+        cached: pd.DataFrame,
+        timeframe: TimeFrame,
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
+        return pd.Timestamp(cached.index.min()), pd.Timestamp(cached.index.max()) + timeframe_coverage_delta(timeframe)
 
     def _coerce_window_timestamp(self, value: str | pd.Timestamp, *, is_end: bool) -> pd.Timestamp:
         timestamp = pd.Timestamp(value)
@@ -499,6 +556,34 @@ class MarketDataService:
         if len(frame.index) <= max_rows:
             return frame.copy()
         return frame.iloc[-max_rows:].copy()
+
+    def _looks_like_quote_frame(self, frame: pd.DataFrame) -> bool:
+        return {"bid_open", "bid_high", "bid_low", "bid_close", "ask_open", "ask_high", "ask_low", "ask_close"}.issubset(
+            set(frame.columns)
+        )
+
+    def _fetch_gmo_quote_bars(
+        self,
+        symbol: str,
+        timeframe: TimeFrame,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> pd.DataFrame:
+        bid = self.gmo.fetch_bars(symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="BID")
+        ask = self.gmo.fetch_bars(symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="ASK")
+        if self._looks_like_quote_frame(bid):
+            return validate_quote_bar_frame(bid)
+        if self._looks_like_quote_frame(ask):
+            return validate_quote_bar_frame(ask)
+        if bid.empty or ask.empty:
+            return self._empty_quote_frame(start)
+        bid_frame = bid.rename(columns={column: f"bid_{column}" for column in ("open", "high", "low", "close", "volume")})
+        ask_frame = ask.rename(columns={column: f"ask_{column}" for column in ("open", "high", "low", "close", "volume")})
+        return build_quote_bar_frame(
+            bid_frame[["bid_open", "bid_high", "bid_low", "bid_close", "bid_volume"]],
+            ask_frame[["ask_open", "ask_high", "ask_low", "ask_close", "ask_volume"]],
+            symbol,
+        )
 
     def _uses_gmo(self) -> bool:
         return self.config.data.source == "gmo" or self.config.broker.mode == BrokerMode.GMO_SIM

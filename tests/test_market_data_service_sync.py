@@ -42,7 +42,7 @@ def _make_quote_frame(symbol: str, start: str, periods: int, freq: str = "1min")
 
 def test_sync_refreshes_gmo_cache_and_reports_quote_details(tmp_path, monkeypatch):
     config = load_app_config(
-        write_config(tmp_path),
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
         overrides={
             "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": [], "sector_symbols": []},
             "data": {
@@ -120,6 +120,95 @@ def test_runtime_load_refreshes_recent_intraday_window(tmp_path, monkeypatch):
     assert calls
     assert len(frames[TimeFrame.MIN_15].index) == 3
     assert frames[TimeFrame.MIN_15].index.max() == refreshed.index.max()
+
+
+def test_gmo_load_only_fetches_missing_gap_between_existing_coverages(tmp_path, monkeypatch):
+    config = load_app_config(
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
+        overrides={
+            "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": [], "sector_symbols": []},
+            "data": {
+                "source": "gmo",
+                "cache_dir": str(tmp_path / "cache"),
+                "timeframes": ["1Min"],
+                "start_date": "2026-04-14",
+                "end_date": "2026-04-14",
+            },
+            "strategy": {"entry_timeframe": "1Min"},
+        },
+    )
+    service = MarketDataService(config, EnvironmentConfig())
+    leading = _make_quote_frame("USD_JPY", "2026-04-14 09:00:00", 10)
+    gap = _make_quote_frame("USD_JPY", "2026-04-14 09:10:00", 10)
+    trailing = _make_quote_frame("USD_JPY", "2026-04-14 09:20:00", 10)
+    service.cache.save("USD_JPY", TimeFrame.MIN_1, pd.concat([leading, trailing]).sort_index())
+    service.cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        leading.index.min(),
+        leading.index.max() + pd.Timedelta(minutes=1),
+        source_key="csv_bid",
+    )
+    service.cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        leading.index.min(),
+        leading.index.max() + pd.Timedelta(minutes=1),
+        source_key="csv_ask",
+    )
+    service.cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        trailing.index.min(),
+        trailing.index.max() + pd.Timedelta(minutes=1),
+        source_key="gmo_bid",
+    )
+    service.cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        trailing.index.min(),
+        trailing.index.max() + pd.Timedelta(minutes=1),
+        source_key="gmo_ask",
+    )
+
+    calls: list[tuple[pd.Timestamp, pd.Timestamp, str]] = []
+
+    def fake_fetch_bars(symbol, timeframe, start, end, price_type="ASK"):  # noqa: ANN001
+        _ = symbol, timeframe
+        calls.append((pd.Timestamp(start), pd.Timestamp(end), str(price_type)))
+        side = "ask" if str(price_type).upper() == "ASK" else "bid"
+        return pd.DataFrame(
+            {
+                "open": gap[f"{side}_open"],
+                "high": gap[f"{side}_high"],
+                "low": gap[f"{side}_low"],
+                "close": gap[f"{side}_close"],
+                "volume": gap[f"{side}_volume"],
+                "symbol": "USD_JPY",
+            },
+            index=gap.index,
+        )
+
+    monkeypatch.setattr(service.gmo, "fetch_bars", fake_fetch_bars)
+
+    frames = service.load_symbol_frames(
+        "USD_JPY",
+        timeframes=[TimeFrame.MIN_1],
+        start="2026-04-14T09:00:00+09:00",
+        end="2026-04-14T09:30:00+09:00",
+    )
+
+    gap_calls = [
+        (start, end, price_type)
+        for start, end, price_type in calls
+        if start == pd.Timestamp("2026-04-14 09:10:00", tz=ASIA_TOKYO)
+        and end == pd.Timestamp("2026-04-14 09:20:00", tz=ASIA_TOKYO)
+    ]
+    assert len(gap_calls) == 2
+    assert {price_type for _, _, price_type in gap_calls} == {"ASK", "BID"}
+    frame = frames[TimeFrame.MIN_1]
+    assert len(frame.index) == 30
+    assert {"bid_open", "ask_open", "spread_close"}.issubset(frame.columns)
 
 
 def test_quote_quality_summary_detects_abnormal_spread():

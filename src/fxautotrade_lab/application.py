@@ -451,8 +451,11 @@ class LabApplication:
             "symbol": result.symbol,
             "source_path": str(result.source_path),
             "imported_rows": result.imported_rows,
+            "skipped_rows": result.skipped_rows,
             "start": result.start,
             "end": result.end,
+            "applied_start": result.applied_start,
+            "applied_end": result.applied_end,
             "timeframes": sorted(result.cache_paths),
             "cache_paths": result.cache_paths,
         }
@@ -474,8 +477,11 @@ class LabApplication:
             "bid_source_path": str(result.bid_source_path),
             "ask_source_path": str(result.ask_source_path),
             "imported_rows": result.imported_rows,
+            "skipped_rows": result.skipped_rows,
             "start": result.start,
             "end": result.end,
+            "applied_start": result.applied_start,
+            "applied_end": result.applied_end,
             "timeframes": sorted(result.cache_paths),
             "cache_paths": result.cache_paths,
         }

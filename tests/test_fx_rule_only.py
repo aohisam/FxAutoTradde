@@ -162,6 +162,68 @@ def test_combined_quote_csv_import_preserves_bid_ask(tmp_path: Path) -> None:
     assert float(min1["spread_close"].median()) > 0.0
 
 
+def test_bid_ask_import_skips_overlapping_rows_and_only_appends_new_range(tmp_path: Path) -> None:
+    cache = ParquetBarCache(tmp_path / "cache")
+    importer = JForexCsvImporter(cache)
+    first_index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    second_index = pd.date_range("2026-01-01 00:10:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    first_frame = _make_quote_frame(first_index, np.linspace(100.0, 100.5, len(first_index)), np.full(len(first_index), 0.04))
+    second_frame = _make_quote_frame(second_index, np.linspace(100.3, 100.9, len(second_index)), np.full(len(second_index), 0.04))
+    bid_first = tmp_path / "USDJPY_1 Min_Bid_first.csv"
+    ask_first = tmp_path / "USDJPY_1 Min_Ask_first.csv"
+    bid_second = tmp_path / "USDJPY_1 Min_Bid_second.csv"
+    ask_second = tmp_path / "USDJPY_1 Min_Ask_second.csv"
+    _write_jforex_csv(bid_first, first_frame, "bid")
+    _write_jforex_csv(ask_first, first_frame, "ask")
+    _write_jforex_csv(bid_second, second_frame, "bid")
+    _write_jforex_csv(ask_second, second_frame, "ask")
+
+    first_result = importer.import_bid_ask_files(bid_first, ask_first)
+    second_result = importer.import_bid_ask_files(bid_second, ask_second)
+
+    assert first_result.imported_rows == 20
+    assert second_result.imported_rows == 10
+    assert second_result.skipped_rows == 10
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+    assert len(min1.index) == 30
+    assert min1.index.min() == first_index.min()
+    assert min1.index.max() == second_index.max()
+    coverage = cache.load_coverage("USD_JPY", TimeFrame.MIN_1)
+    assert coverage == [(first_index.min(), second_index.max() + pd.Timedelta(minutes=1))]
+
+
+def test_bid_ask_import_only_fills_gap_between_existing_csv_and_gmo_ranges(tmp_path: Path) -> None:
+    cache = ParquetBarCache(tmp_path / "cache")
+    importer = JForexCsvImporter(cache)
+    leading_index = pd.date_range("2026-01-01 00:00:00", periods=10, freq="1min", tz="Asia/Tokyo")
+    trailing_index = pd.date_range("2026-01-01 00:20:00", periods=10, freq="1min", tz="Asia/Tokyo")
+    full_index = pd.date_range("2026-01-01 00:00:00", periods=30, freq="1min", tz="Asia/Tokyo")
+    leading_frame = _make_quote_frame(leading_index, np.linspace(100.0, 100.2, len(leading_index)), np.full(len(leading_index), 0.04))
+    trailing_frame = _make_quote_frame(trailing_index, np.linspace(101.0, 101.2, len(trailing_index)), np.full(len(trailing_index), 0.06))
+    full_frame = _make_quote_frame(full_index, np.linspace(100.0, 101.2, len(full_index)), np.full(len(full_index), 0.05))
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_gapfill.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_gapfill.csv"
+    _write_jforex_csv(bid_path, full_frame, "bid")
+    _write_jforex_csv(ask_path, full_frame, "ask")
+
+    cache.save("USD_JPY", TimeFrame.MIN_1, pd.concat([leading_frame, trailing_frame]).sort_index())
+    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, leading_index.min(), leading_index.max() + pd.Timedelta(minutes=1), source_key="csv_bid")
+    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, leading_index.min(), leading_index.max() + pd.Timedelta(minutes=1), source_key="csv_ask")
+    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, trailing_index.min(), trailing_index.max() + pd.Timedelta(minutes=1), source_key="gmo_bid")
+    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, trailing_index.min(), trailing_index.max() + pd.Timedelta(minutes=1), source_key="gmo_ask")
+
+    result = importer.import_bid_ask_files(bid_path, ask_path)
+
+    assert result.imported_rows == 10
+    assert result.skipped_rows == 20
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+    assert len(min1.index) == 30
+    gap_slice = min1.loc[(min1.index >= pd.Timestamp("2026-01-01 00:10:00", tz="Asia/Tokyo")) & (min1.index < pd.Timestamp("2026-01-01 00:20:00", tz="Asia/Tokyo"))]
+    assert len(gap_slice.index) == 10
+    existing_gmo_row = min1.loc[trailing_index.min()]
+    assert float(existing_gmo_row["spread_close"]) == pytest.approx(float(trailing_frame.loc[trailing_index.min(), "spread_close"]))
+
+
 def test_fx_strategy_requires_pullback_before_entry(tmp_path: Path) -> None:
     config = _make_fx_config(tmp_path)
     strategy = FxBreakoutPullbackStrategy(config)
