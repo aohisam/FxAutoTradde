@@ -492,7 +492,6 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     from PySide6.QtWidgets import (
         QCheckBox,
         QComboBox,
-        QDoubleSpinBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -529,9 +528,29 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             "unset": "未設定",
         }.get(source, source)
 
+    def number_input(placeholder: str) -> QLineEdit:
+        editor = QLineEdit()
+        editor.setPlaceholderText(placeholder)
+        editor.setClearButtonEnabled(True)
+        editor.setAlignment(Qt.AlignRight)
+        return editor
+
+    def format_number(value: float, decimals: int = 2) -> str:
+        text = f"{float(value):,.{decimals}f}"
+        if decimals and "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text
+
+    def parse_number_input(editor: QLineEdit, default: float) -> float:
+        text_value = editor.text().strip()
+        if not text_value:
+            return default
+        return float(text_value.replace(",", "").replace("JPY", "").strip())
+
     page = QScrollArea()
     page.setWidgetResizable(True)
     page.setFrameShape(QFrame.NoFrame)
+    page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     page.last_test_result = None
     content = QWidget()
     layout = QVBoxLayout(content)
@@ -627,18 +646,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sizing_combo.addItem("定額", "fixed_amount")
     sizing_combo.addItem("資産比率", "equity_fraction")
     sizing_combo.addItem("リスク率", "risk_based")
-    fixed_amount_input = QLineEdit()
-    fixed_amount_input.setPlaceholderText("例: 300000")
-    equity_fraction_input = QLineEdit()
-    equity_fraction_input.setPlaceholderText("例: 0.10")
-    risk_fraction_input = QLineEdit()
-    risk_fraction_input.setPlaceholderText("例: 0.01")
-    starting_cash_input = QDoubleSpinBox()
-    starting_cash_input.setRange(100.0, 1_000_000_000.0)
-    starting_cash_input.setDecimals(2)
-    starting_cash_input.setSingleStep(1000.0)
-    starting_cash_input.setSuffix(" JPY")
-    starting_cash_input.setGroupSeparatorShown(True)
+    fixed_amount_input = number_input("例: 300000")
+    equity_fraction_input = number_input("例: 0.10")
+    risk_fraction_input = number_input("例: 0.01")
+    starting_cash_input = number_input("例: 5000000")
     sizing_status = QLabel()
     sizing_status.setWordWrap(True)
     sizing_status.setStyleSheet(
@@ -647,16 +658,18 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sizing_form = QGridLayout()
     sizing_form.setHorizontalSpacing(16)
     sizing_form.setVerticalSpacing(8)
-    sizing_form.addWidget(block_label("初期資産"), 0, 0)
+    sizing_form.addWidget(block_label("初期資産 (JPY)"), 0, 0)
     sizing_form.addWidget(block_label("数量モード"), 0, 1)
-    sizing_form.addWidget(block_label("定額 (JPY)"), 0, 2)
-    sizing_form.addWidget(block_label("資産比率"), 0, 3)
-    sizing_form.addWidget(block_label("リスク率"), 0, 4)
     sizing_form.addWidget(starting_cash_input, 1, 0)
     sizing_form.addWidget(sizing_combo, 1, 1)
-    sizing_form.addWidget(fixed_amount_input, 1, 2)
-    sizing_form.addWidget(equity_fraction_input, 1, 3)
-    sizing_form.addWidget(risk_fraction_input, 1, 4)
+    sizing_form.addWidget(block_label("定額 (JPY)"), 2, 0)
+    sizing_form.addWidget(block_label("資産比率"), 2, 1)
+    sizing_form.addWidget(fixed_amount_input, 3, 0)
+    sizing_form.addWidget(equity_fraction_input, 3, 1)
+    sizing_form.addWidget(block_label("リスク率"), 4, 0)
+    sizing_form.addWidget(risk_fraction_input, 5, 0, 1, 2)
+    sizing_form.setColumnStretch(0, 1)
+    sizing_form.setColumnStretch(1, 1)
     sizing_layout.addWidget(sizing_title)
     sizing_layout.addWidget(sizing_note)
     sizing_layout.addLayout(sizing_form)
@@ -892,26 +905,22 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             " バックテストと同じ考え方でフォワード検証できます。"
         )
 
-    def _parse_positive_float(editor: QLineEdit, default: float) -> float:
-        text_value = editor.text().strip()
-        if not text_value:
-            return default
-        return float(text_value)
-
     def save_order_sizing() -> None:
         try:
-            app_state.update_account_settings(starting_cash=float(starting_cash_input.value()))
+            app_state.update_account_settings(
+                starting_cash=parse_number_input(starting_cash_input, app_state.config.risk.starting_cash)
+            )
             app_state.update_order_sizing(
                 order_size_mode=str(sizing_combo.currentData() or "fixed_amount"),
-                fixed_order_amount=_parse_positive_float(
+                fixed_order_amount=parse_number_input(
                     fixed_amount_input,
                     app_state.config.risk.fixed_order_amount,
                 ),
-                equity_fraction_per_trade=_parse_positive_float(
+                equity_fraction_per_trade=parse_number_input(
                     equity_fraction_input,
                     app_state.config.risk.equity_fraction_per_trade,
                 ),
-                risk_per_trade=_parse_positive_float(
+                risk_per_trade=parse_number_input(
                     risk_fraction_input,
                     app_state.config.risk.risk_per_trade,
                 ),
@@ -1111,10 +1120,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         stream_box.setChecked(bool(app_state.config.data.stream_enabled))
         update_mode_status()
         _set_combo_value(sizing_combo, app_state.config.risk.order_size_mode.value)
-        starting_cash_input.setValue(float(app_state.config.risk.starting_cash))
-        fixed_amount_input.setText(f"{app_state.config.risk.fixed_order_amount:.2f}")
-        equity_fraction_input.setText(f"{app_state.config.risk.equity_fraction_per_trade:.4f}")
-        risk_fraction_input.setText(f"{app_state.config.risk.risk_per_trade:.4f}")
+        starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
+        fixed_amount_input.setText(format_number(app_state.config.risk.fixed_order_amount, 2))
+        equity_fraction_input.setText(format_number(app_state.config.risk.equity_fraction_per_trade, 4))
+        risk_fraction_input.setText(format_number(app_state.config.risk.risk_per_trade, 4))
         update_sizing_status()
         sound_name.setText(app_state.config.automation.notification_channels.sound_name)
         webhook_url.setText(app_state.config.automation.notification_channels.webhook_url)

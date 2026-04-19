@@ -86,12 +86,12 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         QFormLayout,
         QFrame,
         QGridLayout,
-        QHBoxLayout,
+        QHeaderView,
         QLabel,
         QMessageBox,
         QProgressBar,
         QPushButton,
-        QSplitter,
+        QScrollArea,
         QTableView,
         QTextEdit,
         QVBoxLayout,
@@ -104,8 +104,15 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     DataFrameTableModel = load_dataframe_model_class()
 
-    page = QWidget()
-    layout = QVBoxLayout(page)
+    page = QScrollArea()
+    page.setWidgetResizable(True)
+    page.setFrameShape(QFrame.NoFrame)
+    page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(16)
+    page.setWidget(content)
     title = QLabel("データ同期")
     title.setStyleSheet("font-size: 22px; font-weight: 700;")
     layout.addWidget(title)
@@ -120,6 +127,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     layout.addWidget(banner)
 
     grid = QGridLayout()
+    grid.setHorizontalSpacing(16)
+    grid.setVerticalSpacing(16)
+    grid.setColumnStretch(0, 1)
+    grid.setColumnStretch(1, 1)
     summary_card = QFrame()
     summary_card.setObjectName("dataSyncSummaryCard")
     summary_card.setStyleSheet(
@@ -158,17 +169,28 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     start_date.setDate(QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd"))
     end_date.setDate(QDate.currentDate() if default_sync_source == "gmo" else QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd"))
     timeframe_checks: dict[str, QCheckBox] = {}
-    timeframe_layout = QHBoxLayout()
+    timeframe_widget = QWidget()
+    timeframe_layout = QGridLayout(timeframe_widget)
+    timeframe_layout.setContentsMargins(0, 0, 0, 0)
+    timeframe_layout.setHorizontalSpacing(10)
+    timeframe_layout.setVerticalSpacing(6)
     for timeframe in SYNC_TIMEFRAMES:
         box = QCheckBox(timeframe.value)
         box.setChecked(timeframe in set(app_state.config.data.timeframes))
         timeframe_checks[timeframe.value] = box
-        timeframe_layout.addWidget(box)
-    timeframe_layout.addStretch(1)
+    timeframe_columns = 4
+    for index, timeframe in enumerate(SYNC_TIMEFRAMES):
+        timeframe_layout.addWidget(
+            timeframe_checks[timeframe.value],
+            index // timeframe_columns,
+            index % timeframe_columns,
+        )
+    for column in range(timeframe_columns):
+        timeframe_layout.setColumnStretch(column, 1)
     form.addRow("同期ソース", source_combo)
     form.addRow("同期開始日", start_date)
     form.addRow("同期終了日", end_date)
-    form.addRow("同期時間足", timeframe_layout)
+    form.addRow("同期時間足", timeframe_widget)
     control_layout.addLayout(form)
     helper_text = QLabel()
     helper_text.setWordWrap(True)
@@ -210,18 +232,36 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     import_layout.addWidget(import_button, alignment=Qt.AlignLeft)
     layout.addWidget(import_card)
 
-    result_splitter = QSplitter(Qt.Vertical)
+    output_card = QFrame()
+    output_card.setObjectName("dataSyncOutputCard")
+    output_card.setStyleSheet(
+        "QFrame#dataSyncOutputCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
+    )
+    output_layout = QVBoxLayout(output_card)
+    output_layout.addWidget(QLabel("同期ログ"))
     output = QTextEdit()
     output.setReadOnly(True)
+    output.setMinimumHeight(180)
+    output_layout.addWidget(output)
+    layout.addWidget(output_card)
+
+    result_card = QFrame()
+    result_card.setObjectName("dataSyncResultCard")
+    result_card.setStyleSheet(
+        "QFrame#dataSyncResultCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
+    )
+    result_layout = QVBoxLayout(result_card)
+    result_layout.addWidget(QLabel("同期結果一覧"))
     result_table = QTableView()
     result_table.setAlternatingRowColors(True)
+    result_table.horizontalHeader().setStretchLastSection(True)
+    result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+    result_table.setMinimumHeight(320)
     result_model = DataFrameTableModel()
     result_table.setModel(result_model)
-    result_splitter.addWidget(output)
-    result_splitter.addWidget(result_table)
-    result_splitter.setStretchFactor(0, 2)
-    result_splitter.setStretchFactor(1, 5)
-    layout.addWidget(result_splitter, 1)
+    result_layout.addWidget(result_table)
+    layout.addWidget(result_card)
+    layout.addStretch(1)
     page._busy = False
 
     def set_busy(is_busy: bool) -> None:

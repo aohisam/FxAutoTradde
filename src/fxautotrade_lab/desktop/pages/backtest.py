@@ -15,12 +15,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         QCheckBox,
         QComboBox,
         QDateEdit,
-        QDoubleSpinBox,
         QFormLayout,
         QFrame,
         QGridLayout,
         QHeaderView,
         QLabel,
+        QLineEdit,
         QPushButton,
         QScrollArea,
         QSizePolicy,
@@ -94,6 +94,28 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             section_layout.addWidget(helper_label)
         return section, section_layout
 
+    def number_input(placeholder: str) -> QLineEdit:
+        editor = QLineEdit()
+        editor.setPlaceholderText(placeholder)
+        editor.setClearButtonEnabled(True)
+        editor.setAlignment(Qt.AlignRight)
+        return editor
+
+    def format_number(value: float, decimals: int = 2) -> str:
+        text = f"{float(value):,.{decimals}f}"
+        if decimals and "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text
+
+    def parse_number_input(editor: QLineEdit, *, label: str) -> float:
+        text_value = editor.text().strip()
+        if not text_value:
+            raise ValueError(f"{label}を入力してください。")
+        try:
+            return float(text_value.replace(",", "").replace("JPY", "").strip())
+        except ValueError as exc:
+            raise ValueError(f"{label}は数値で入力してください。") from exc
+
     top_card, top_layout = build_section(
         "実行設定",
         "未チェックのときはデータ同期と同じ期間でバックテストします。"
@@ -106,13 +128,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     strategy_combo.setCurrentText(app_state.config.strategy.name)
     custom_window_box = QCheckBox("同期期間とは別にバックテスト期間を指定")
     custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
-    starting_cash_input = QDoubleSpinBox()
-    starting_cash_input.setRange(100.0, 1_000_000_000.0)
-    starting_cash_input.setDecimals(2)
-    starting_cash_input.setSingleStep(1000.0)
-    starting_cash_input.setSuffix(" JPY")
-    starting_cash_input.setGroupSeparatorShown(True)
-    starting_cash_input.setValue(float(app_state.config.risk.starting_cash))
+    starting_cash_input = number_input("例: 5000000")
+    starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
     start_date = QDateEdit()
     start_date.setCalendarPopup(True)
     start_date.setDisplayFormat("yyyy-MM-dd")
@@ -278,7 +295,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     def refresh_controls() -> None:
         strategy_combo.setCurrentText(app_state.config.strategy.name)
         custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
-        starting_cash_input.setValue(float(app_state.config.risk.starting_cash))
+        starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
         ml_enabled_box.setChecked(app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled)
         ml_mode_combo.setCurrentText(app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
         research_mode_combo.setCurrentText(app_state.config.research.mode)
@@ -468,7 +485,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         if selected_start > selected_end:
             on_error("開始日は終了日以前にしてください。")
             return
-        app_state.config.risk.starting_cash = float(starting_cash_input.value())
+        try:
+            app_state.config.risk.starting_cash = parse_number_input(starting_cash_input, label="初期資産")
+        except ValueError as exc:
+            on_error(str(exc))
+            return
         set_busy(True)
         app_state.config.strategy.name = strategy_combo.currentText()
         app_state.config.backtest.use_custom_window = custom_window_box.isChecked()
