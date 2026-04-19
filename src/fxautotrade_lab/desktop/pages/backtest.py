@@ -18,6 +18,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         QFormLayout,
         QFrame,
         QGridLayout,
+        QHBoxLayout,
         QHeaderView,
         QLabel,
         QLineEdit,
@@ -32,7 +33,10 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     from fxautotrade_lab.desktop.charts import render_backtest_dashboard_fallback_html, render_backtest_dashboard_html
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
-    from fxautotrade_lab.desktop.ui_controls import set_button_enabled, set_button_role
+    from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.chip import Chip
+    from fxautotrade_lab.desktop.widgets.kpi import KpiTile
 
     try:
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen" or getattr(sys, "frozen", False):
@@ -48,88 +52,69 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     page.setFrameShape(QFrame.NoFrame)
     content = QWidget()
     layout = QVBoxLayout(content)
-    layout.setContentsMargins(12, 12, 12, 12)
-    layout.setSpacing(12)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
     page.setWidget(content)
 
+    # Header -----------------------------------------------------------------
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("バックテスト")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    title.setProperty("role", "h1")
+    subtitle = QLabel("戦略と期間を選んで検証、ML 学習や Research もここから")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    run_button = QPushButton("バックテスト実行")
+    run_button.setProperty("variant", "primary")
+    header_row.addWidget(run_button)
+    layout.addLayout(header_row)
 
-    def card_style(name: str) -> str:
-        return f"QFrame#{name} {{ background: white; border: 1px solid #dbe3ee; border-radius: 16px; }}"
+    # KPI grid ---------------------------------------------------------------
+    kpi_specs = [
+        ("total_return", "総損益"),
+        ("annualized_return", "年率換算"),
+        ("max_drawdown", "最大ドローダウン"),
+        ("win_rate", "勝率"),
+        ("sharpe", "シャープ"),
+        ("trades", "取引回数"),
+        ("avg_hold", "平均保有"),
+        ("sample_split", "IS / OOS"),
+    ]
+    kpi_grid = QGridLayout()
+    kpi_grid.setHorizontalSpacing(12)
+    kpi_grid.setVerticalSpacing(12)
+    for column in range(4):
+        kpi_grid.setColumnStretch(column, 1)
+    metric_tiles: dict[str, KpiTile] = {}
+    metric_labels: dict[str, QLabel] = {}
+    for index, (key, label_text) in enumerate(kpi_specs):
+        tile = KpiTile(label=label_text, value="-")
+        kpi_grid.addWidget(tile, index // 4, index % 4)
+        metric_tiles[key] = tile
+        metric_labels[key] = tile.value
+    layout.addLayout(kpi_grid)
 
-    def build_metric_card(name: str, label_text: str) -> tuple[QFrame, QLabel]:
-        card = QFrame()
-        card.setObjectName(name)
-        card.setStyleSheet(card_style(name))
-        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(14, 12, 14, 12)
-        card_layout.setSpacing(6)
-        label = QLabel(label_text)
-        label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: 600;")
-        value = QLabel("-")
-        value.setWordWrap(True)
-        value.setStyleSheet("color: #0f172a; font-size: 22px; font-weight: 700;")
-        card_layout.addWidget(label)
-        card_layout.addWidget(value)
-        return card, value
-
-    def build_section(title_text: str, helper_text: str | None = None) -> tuple[QFrame, QVBoxLayout]:
-        section = QFrame()
-        object_name = f"backtestSection_{title_text}"
-        section.setObjectName(object_name)
-        section.setStyleSheet(card_style(object_name))
-        section_layout = QVBoxLayout(section)
-        section_layout.setContentsMargins(16, 14, 16, 14)
-        section_layout.setSpacing(10)
-        title_label = QLabel(title_text)
-        title_label.setStyleSheet("font-size: 17px; font-weight: 700; color: #0f172a;")
-        section_layout.addWidget(title_label)
-        if helper_text:
-            helper_label = QLabel(helper_text)
-            helper_label.setWordWrap(True)
-            helper_label.setStyleSheet("color: #475569;")
-            section_layout.addWidget(helper_label)
-        return section, section_layout
-
-    def number_input(placeholder: str) -> QLineEdit:
-        editor = QLineEdit()
-        editor.setPlaceholderText(placeholder)
-        editor.setClearButtonEnabled(True)
-        editor.setAlignment(Qt.AlignRight)
-        return editor
-
-    def format_number(value: float, decimals: int = 2) -> str:
-        text = f"{float(value):,.{decimals}f}"
-        if decimals and "." in text:
-            text = text.rstrip("0").rstrip(".")
-        return text
-
-    def parse_number_input(editor: QLineEdit, *, label: str) -> float:
-        text_value = editor.text().strip()
-        if not text_value:
-            raise ValueError(f"{label}を入力してください。")
-        try:
-            return float(text_value.replace(",", "").replace("JPY", "").strip())
-        except ValueError as exc:
-            raise ValueError(f"{label}は数値で入力してください。") from exc
-
-    top_card, top_layout = build_section(
-        "実行設定",
-        "未チェックのときはデータ同期と同じ期間でバックテストします。"
-        " チェックすると、同期済みキャッシュから指定期間だけを切り出して検証します。"
-        " 初期資産は JPY 基準です。",
+    # Config card ------------------------------------------------------------
+    config_card = Card(
+        title="実行設定",
+        subtitle="未チェック時はデータ同期期間を利用。初期資産は JPY 基準。",
     )
     form = QFormLayout()
+    form.setLabelAlignment(Qt.AlignRight)
+    form.setHorizontalSpacing(12)
+    form.setVerticalSpacing(10)
     strategy_combo = QComboBox()
     strategy_combo.addItems(["baseline_trend_pullback", "multi_timeframe_pattern_scoring", "fx_breakout_pullback"])
     strategy_combo.setCurrentText(app_state.config.strategy.name)
     custom_window_box = QCheckBox("同期期間とは別にバックテスト期間を指定")
     custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
-    starting_cash_input = number_input("例: 5000000")
-    starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
+    starting_cash_input = QLineEdit()
+    starting_cash_input.setPlaceholderText("例: 5000000")
+    starting_cash_input.setAlignment(Qt.AlignRight)
+    starting_cash_input.setProperty("align", "num")
     start_date = QDateEdit()
     start_date.setCalendarPopup(True)
     start_date.setDisplayFormat("yyyy-MM-dd")
@@ -141,17 +126,20 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     form.addRow("期間指定", custom_window_box)
     form.addRow("開始日", start_date)
     form.addRow("終了日", end_date)
-    top_layout.addLayout(form)
-    run_button = QPushButton("バックテスト実行")
-    set_button_role(run_button, "primary")
-    top_layout.addWidget(run_button)
-    layout.addWidget(top_card)
+    config_card.addBodyLayout(form)
+    layout.addWidget(config_card)
 
-    ml_card, ml_layout = build_section(
-        "ML / Research",
-        "FX breakout 戦略では、rule-only・学習済みモデル読込・学習後バックテスト・walk-forward 研究をここから操作できます。",
+    # ML / Research card -----------------------------------------------------
+    ml_chip = Chip("モデル状態: 未確認", "neutral")
+    ml_card = Card(
+        title="FX ML / Research",
+        subtitle="rule-only・学習・walk-forward を操作",
+        header_right=ml_chip,
     )
     ml_form = QFormLayout()
+    ml_form.setLabelAlignment(Qt.AlignRight)
+    ml_form.setHorizontalSpacing(12)
+    ml_form.setVerticalSpacing(10)
     ml_enabled_box = QCheckBox("ML 参加フィルタを有効化")
     ml_mode_combo = QComboBox()
     ml_mode_combo.addItems(["rule_only", "load_pretrained", "train_from_scratch", "walk_forward_train"])
@@ -160,57 +148,41 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     model_status_label = QLabel()
     model_status_label.setWordWrap(True)
     model_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    model_status_label.setProperty("role", "muted")
     research_status_label = QLabel("まだ research_run は実行していません。")
     research_status_label.setWordWrap(True)
     research_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    research_status_label.setProperty("role", "muted")
     ml_form.addRow("ML 有効化", ml_enabled_box)
-    ml_form.addRow("ML Backtest モード", ml_mode_combo)
+    ml_form.addRow("Backtest モード", ml_mode_combo)
     ml_form.addRow("Research モード", research_mode_combo)
     ml_form.addRow("モデル状態", model_status_label)
-    ml_layout.addLayout(ml_form)
-    ml_buttons = QGridLayout()
+    ml_card.addBodyLayout(ml_form)
+    ml_buttons = QHBoxLayout()
     train_button = QPushButton("FX ML 学習")
+    train_button.setProperty("variant", "primary")
     research_button = QPushButton("Research 実行")
-    set_button_role(train_button, "success")
-    set_button_role(research_button, "secondary")
-    ml_buttons.addWidget(train_button, 0, 0)
-    ml_buttons.addWidget(research_button, 0, 1)
-    ml_layout.addLayout(ml_buttons)
-    ml_layout.addWidget(research_status_label)
+    research_button.setProperty("variant", "ghost")
+    ml_buttons.addStretch(1)
+    ml_buttons.addWidget(research_button)
+    ml_buttons.addWidget(train_button)
+    ml_card.addBodyLayout(ml_buttons)
+    ml_card.addBodyWidget(research_status_label)
     layout.addWidget(ml_card)
 
-    summary_card, summary_layout = build_section("結果サマリー")
+    # Summary card -----------------------------------------------------------
+    summary_card = Card(title="結果サマリー", subtitle="実行ID / 期間 / IS/OOS の内訳")
     summary_meta = QLabel("まだバックテスト結果はありません。")
     summary_meta.setWordWrap(True)
     summary_meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
-    summary_meta.setStyleSheet("color: #334155; background: #f8fafc; border-radius: 12px; padding: 12px;")
-    summary_layout.addWidget(summary_meta)
-    summary_grid = QGridLayout()
-    summary_grid.setHorizontalSpacing(10)
-    summary_grid.setVerticalSpacing(10)
-    for column in range(4):
-        summary_grid.setColumnStretch(column, 1)
-    metric_specs = [
-        ("total_return", "総損益"),
-        ("annualized_return", "年率換算"),
-        ("max_drawdown", "最大ドローダウン"),
-        ("win_rate", "勝率"),
-        ("sharpe", "シャープレシオ"),
-        ("trades", "取引回数"),
-        ("avg_hold", "平均保有期間"),
-        ("sample_split", "IS / OOS"),
-    ]
-    metric_labels: dict[str, QLabel] = {}
-    for index, (key, label_text) in enumerate(metric_specs):
-        metric_card, metric_value = build_metric_card(f"backtestMetric_{key}", label_text)
-        summary_grid.addWidget(metric_card, index // 4, index % 4)
-        metric_labels[key] = metric_value
-    summary_layout.addLayout(summary_grid)
+    summary_meta.setProperty("role", "muted")
+    summary_card.addBodyWidget(summary_meta)
     layout.addWidget(summary_card)
 
-    dashboard_card, dashboard_layout = build_section(
-        "分析ダッシュボード",
-        "資産推移、通貨ペア別寄与、月次リターン、Walk-Forward をまとめて確認できます。",
+    # Dashboard card ---------------------------------------------------------
+    dashboard_card = Card(
+        title="分析ダッシュボード",
+        subtitle="資産推移・通貨ペア別寄与・月次・Walk-Forward",
     )
     dashboard_view = QWebEngineView() if QWebEngineView is not None else QTextBrowser()
     dashboard_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -219,11 +191,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         dashboard_view.setOpenExternalLinks(True)
         dashboard_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         dashboard_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-    dashboard_layout.addWidget(dashboard_view)
+    dashboard_card.addBodyWidget(dashboard_view)
     layout.addWidget(dashboard_card)
 
     def configure_table(view: QTableView) -> None:
-        view.setAlternatingRowColors(True)
+        view.setAlternatingRowColors(False)
         view.setSelectionBehavior(QAbstractItemView.SelectRows)
         view.setSelectionMode(QAbstractItemView.SingleSelection)
         view.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -236,6 +208,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setDefaultSectionSize(150)
         header.setMinimumSectionSize(90)
+        view.verticalHeader().setDefaultSectionSize(32)
 
     def fit_table_height(view: QTableView) -> None:
         model = view.model()
@@ -256,41 +229,59 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         view.setMinimumHeight(height)
         view.setMaximumHeight(height)
 
-    def build_table_section(title_text: str, helper_text: str) -> tuple[QTableView, DataFrameTableModel]:
-        card, card_layout = build_section(title_text, helper_text)
+    def build_table_card(title_text: str, subtitle_text: str) -> tuple[QTableView, DataFrameTableModel]:
+        card = Card(title=title_text, subtitle=subtitle_text)
         table = QTableView()
         configure_table(table)
         model = DataFrameTableModel()
         table.setModel(model)
-        card_layout.addWidget(table)
+        card.addBodyWidget(table)
         layout.addWidget(card)
         return table, model
 
-    trades_view, trades_model = build_table_section(
+    trades_view, trades_model = build_table_card(
         "取引一覧",
-        "直近 300 件の取引を上から順に確認できます。ページ全体を縦スクロールして閲覧します。",
+        "直近 300 件の取引",
     )
-    signals_view, signals_model = build_table_section(
+    signals_view, signals_model = build_table_card(
         "シグナル",
-        "バックテスト中に記録された直近 300 件のシグナルです。",
+        "バックテスト中の直近 300 件",
     )
-    attribution_view, attribution_model = build_table_section(
+    attribution_view, attribution_model = build_table_card(
         "通貨ペア別寄与",
-        "通貨ペアごとの純損益寄与をまとめています。",
+        "通貨ペア別の純損益",
     )
-    walk_forward_view, walk_forward_model = build_table_section(
+    walk_forward_view, walk_forward_model = build_table_card(
         "Walk-Forward",
-        "時間窓ごとの成績変化です。直近区間だけ良いかどうかも確認できます。",
+        "時間窓ごとの成績",
     )
 
     layout.addStretch(1)
     page._busy = False
+
+    # Logic helpers ----------------------------------------------------------
+    def parse_number_input(editor: QLineEdit, *, label: str) -> float:
+        text_value = editor.text().strip()
+        if not text_value:
+            raise ValueError(f"{label}を入力してください。")
+        try:
+            return float(text_value.replace(",", "").replace("JPY", "").strip())
+        except ValueError as exc:
+            raise ValueError(f"{label}は数値で入力してください。") from exc
+
+    def format_number(value: float, decimals: int = 2) -> str:
+        text = f"{float(value):,.{decimals}f}"
+        if decimals and "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return text
 
     def parse_qdate(value: str, fallback: str) -> QDate:
         parsed = QDate.fromString(value, "yyyy-MM-dd")
         if parsed.isValid():
             return parsed
         return QDate.fromString(fallback, "yyyy-MM-dd")
+
+    starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
 
     def refresh_controls() -> None:
         strategy_combo.setCurrentText(app_state.config.strategy.name)
@@ -313,15 +304,16 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         )
         model_status = app_state.model_status()
         model_status_label.setText(
-            "\n".join(
+            " / ".join(
                 [
                     f"ML 有効: {'はい' if model_status['enabled'] else 'いいえ'}",
                     f"Backtest モード: {model_status['backtest_mode']}",
-                    f"モデル保存先: {model_status['model_path']}",
-                    f"存在: {'あり' if model_status['exists'] else 'なし'}",
+                    f"モデル: {'あり' if model_status['exists'] else 'なし'}",
                 ]
             )
         )
+        ml_chip.set_text("モデル: あり" if model_status.get("exists") else "モデル: 未学習")
+        ml_chip.set_tone("running" if model_status.get("exists") else "warn")
         if app_state.last_research_result is not None:
             research_status_label.setText(
                 "\n".join(
@@ -378,17 +370,18 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         for view in (trades_view, signals_view, attribution_view, walk_forward_view):
             fit_table_height(view)
 
+    def tone_for(value: float) -> str | None:
+        if value > 0:
+            return "pos"
+        if value < 0:
+            return "neg"
+        return None
+
     def refresh_views() -> None:
         if app_state.last_result is None:
             summary_meta.setText("まだバックテスト結果はありません。")
-            metric_labels["total_return"].setText("-")
-            metric_labels["annualized_return"].setText("-")
-            metric_labels["max_drawdown"].setText("-")
-            metric_labels["win_rate"].setText("-")
-            metric_labels["sharpe"].setText("-")
-            metric_labels["trades"].setText("-")
-            metric_labels["avg_hold"].setText("-")
-            metric_labels["sample_split"].setText("-")
+            for tile in metric_tiles.values():
+                tile.set_value("-")
             trades_model.set_frame(None)
             signals_model.set_frame(None)
             attribution_model.set_frame(None)
@@ -398,25 +391,27 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             return
         result = app_state.last_result
         summary_meta.setText(
-            "\n".join(
+            "  •  ".join(
                 [
                     f"実行ID: {result.run_id}",
-                    f"出力先: {result.output_dir}",
                     f"検証期間: {result.backtest_start} - {result.backtest_end}",
-                    f"初期資産: {result.starting_cash:,.2f} JPY",
-                    f"In-Sample 総損益: {result.in_sample_metrics.get('total_return', 0):.2%}",
-                    f"Out-of-Sample 総損益: {result.out_of_sample_metrics.get('total_return', 0):.2%}",
+                    f"初期資産: {result.starting_cash:,.0f} JPY",
+                    f"IS: {result.in_sample_metrics.get('total_return', 0):.2%}",
+                    f"OOS: {result.out_of_sample_metrics.get('total_return', 0):.2%}",
                 ]
             )
         )
-        metric_labels["total_return"].setText(f"{result.metrics.get('total_return', 0):.2%}")
-        metric_labels["annualized_return"].setText(f"{result.metrics.get('annualized_return', 0):.2%}")
-        metric_labels["max_drawdown"].setText(f"{result.metrics.get('max_drawdown', 0):.2%}")
-        metric_labels["win_rate"].setText(f"{result.metrics.get('win_rate', 0):.2%}")
-        metric_labels["sharpe"].setText(f"{(result.metrics.get('sharpe') or 0):.2f}")
-        metric_labels["trades"].setText(str(result.metrics.get("number_of_trades", 0)))
-        metric_labels["avg_hold"].setText(f"{result.metrics.get('average_hold_bars', 0):.2f}")
-        metric_labels["sample_split"].setText(
+        total_return = result.metrics.get("total_return", 0)
+        metric_tiles["total_return"].set_value(f"{total_return:.2%}", tone=tone_for(total_return))
+        annualized = result.metrics.get("annualized_return", 0)
+        metric_tiles["annualized_return"].set_value(f"{annualized:.2%}", tone=tone_for(annualized))
+        drawdown = result.metrics.get("max_drawdown", 0)
+        metric_tiles["max_drawdown"].set_value(f"{drawdown:.2%}", tone="neg" if drawdown < 0 else None)
+        metric_tiles["win_rate"].set_value(f"{result.metrics.get('win_rate', 0):.2%}")
+        metric_tiles["sharpe"].set_value(f"{(result.metrics.get('sharpe') or 0):.2f}")
+        metric_tiles["trades"].set_value(str(result.metrics.get("number_of_trades", 0)))
+        metric_tiles["avg_hold"].set_value(f"{result.metrics.get('average_hold_bars', 0):.2f}")
+        metric_tiles["sample_split"].set_value(
             f"{result.in_sample_metrics.get('total_return', 0):.2%} / {result.out_of_sample_metrics.get('total_return', 0):.2%}"
         )
         trades_model.set_frame(result.trades.tail(300))
@@ -468,8 +463,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def on_error(message: str) -> None:
         set_busy(False)
-        summary_meta.setText(f"エラー\n{message}")
-        metric_labels["total_return"].setText("-")
+        summary_meta.setText(f"エラー: {message}")
+        metric_tiles["total_return"].set_value("-")
         set_dashboard_html(f"<h3>エラー</h3><p>{message}</p>")
         fit_all_tables()
         log_message(f"バックテストエラー: {message}")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -24,6 +23,8 @@ def _optional_web_view():  # pragma: no cover - UI helper
 
 
 def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
+    import re
+
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import (
         QCheckBox,
@@ -39,7 +40,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
     )
 
     from fxautotrade_lab.desktop.charts import load_native_symbol_chart_widget_class, render_symbol_chart_html
-    from fxautotrade_lab.desktop.ui_controls import set_button_enabled, set_button_role
+    from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.chip import Chip
 
     QWebEngineView = _optional_web_view()
     try:
@@ -52,73 +55,68 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
     page.setFrameShape(QFrame.NoFrame)
     content = QWidget()
     layout = QVBoxLayout(content)
-    layout.setContentsMargins(0, 0, 8, 12)
+    layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
     page.setWidget(content)
+
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("チャート")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    title.setProperty("role", "h1")
+    subtitle = QLabel("価格・出来高・RSI をまとめて確認")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    refresh_button = QPushButton("チャート更新")
+    refresh_button.setProperty("variant", "primary")
+    header_row.addWidget(refresh_button)
+    layout.addLayout(header_row)
+
+    banner = Card(sunken=True)
     helper = QLabel(
         "バックテスト結果、または GMO 実時間シミュレーション中の最新チャートを表示します。"
-        " 実時間シミュレーション中は最新バーと約定マーカーを表示できます。"
         " 負荷を抑えるため、自動更新は必要な時だけ有効化してください。"
     )
     helper.setWordWrap(True)
-    helper.setStyleSheet("background: #f3f7fb; border-radius: 12px; padding: 12px;")
-    layout.addWidget(helper)
+    helper.setProperty("role", "muted")
+    banner.addBodyWidget(helper)
+    layout.addWidget(banner)
 
-    controls_card = QFrame()
-    controls_card.setStyleSheet("background: white; border: 1px solid #dbe3ee; border-radius: 16px;")
-    controls_layout = QVBoxLayout(controls_card)
-    controls_layout.setContentsMargins(18, 18, 18, 18)
-    controls_layout.setSpacing(12)
-    controls_label = QLabel("表示設定")
-    controls_label.setStyleSheet("font-size: 16px; font-weight: 700;")
-    controls_hint = QLabel("通貨ペアと時間足を選び、必要な時だけ更新してください。チャート本体は下へスクロールして確認できます。")
-    controls_hint.setWordWrap(True)
-    controls_hint.setStyleSheet("color: #475569;")
+    controls_card = Card(title="表示設定", subtitle="通貨ペア / 足種 / オプション")
     symbol_combo = QComboBox()
     timeframe_combo = QComboBox()
-    refresh_button = QPushButton("チャート更新")
-    set_button_role(refresh_button, "primary")
     auto_refresh = QCheckBox("自動更新")
     auto_refresh.setChecked(False)
+    controls_row = QHBoxLayout()
+    controls_row.setSpacing(10)
+    controls_row.addWidget(symbol_combo, 1)
+    controls_row.addWidget(timeframe_combo)
+    controls_row.addWidget(auto_refresh)
+    controls_card.addBodyLayout(controls_row)
     source_note = QLabel()
     source_note.setWordWrap(True)
-    source_note.setStyleSheet("color: #475569;")
-    controls = QHBoxLayout()
-    controls.addWidget(symbol_combo, 1)
-    controls.addWidget(timeframe_combo)
-    controls.addWidget(refresh_button)
-    controls.addWidget(auto_refresh)
-    controls_layout.addWidget(controls_label)
-    controls_layout.addWidget(controls_hint)
-    controls_layout.addLayout(controls)
-    controls_layout.addWidget(source_note)
+    source_note.setProperty("role", "muted")
+    controls_card.addBodyWidget(source_note)
     layout.addWidget(controls_card)
 
-    chart_card = QFrame()
-    chart_card.setStyleSheet("background: white; border: 1px solid #dbe3ee; border-radius: 16px;")
-    chart_layout = QVBoxLayout(chart_card)
-    chart_layout.setContentsMargins(20, 20, 20, 20)
-    chart_layout.setSpacing(16)
-    chart_note = QLabel("価格チャート、出来高、RSI を縦に並べて表示します。")
-    chart_note.setWordWrap(True)
-    chart_note.setStyleSheet("color: #334155; font-weight: 600;")
-    chart_layout.addWidget(chart_note)
+    live_chip = Chip("静的", "neutral")
+    chart_card = Card(title="価格チャート", subtitle="OHLC / 指標 / 約定マーカー", header_right=live_chip)
     web = QWebEngineView() if QWebEngineView is not None else None
     native_chart = NativeSymbolChartWidget() if NativeSymbolChartWidget is not None else None
     fallback = QTextBrowser()
     if native_chart is not None:
-        chart_layout.addWidget(native_chart)
+        chart_card.addBodyWidget(native_chart)
     elif web is not None:
         web.setMinimumHeight(1280)
-        chart_layout.addWidget(web, 1)
+        chart_card.addBodyWidget(web, 1)
     else:
         fallback.setMinimumHeight(1280)
-        chart_layout.addWidget(fallback, 1)
+        chart_card.addBodyWidget(fallback, 1)
     layout.addWidget(chart_card)
     layout.addStretch(1)
+
     refresh_timer = QTimer(page)
     refresh_timer.setInterval(max(10000, app_state.config.automation.poll_interval_seconds * 1000))
     page._chart_request_id = 0
@@ -225,6 +223,8 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         if runtime:
             symbols = list(dict.fromkeys(app_state.config.watchlist.symbols))
             source_note.setText("表示ソース: GMO / ローカル実時間シミュレーションの runtime データ")
+            live_chip.set_tone("running")
+            live_chip.set_text("live")
             if symbols:
                 symbol_combo.addItems(symbols)
             else:
@@ -233,6 +233,8 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         elif app_state.last_result is None or not app_state.last_result.chart_frames:
             symbol_combo.addItem("データなし")
             source_note.setText("表示ソース: バックテスト結果")
+            live_chip.set_tone("neutral")
+            live_chip.set_text("未実行")
             content = "<h3>バックテスト後にチャートを表示できます。</h3>"
             set_content(content)
             symbol_combo.blockSignals(False)
@@ -244,6 +246,8 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
             symbols = list(app_state.last_result.chart_frames.keys())
             symbol_combo.addItems(symbols)
             source_note.setText("表示ソース: バックテスト結果")
+            live_chip.set_tone("info")
+            live_chip.set_text("backtest")
             content = "<h3>バックテストチャートを読み込み中です。</h3>"
         set_content(content)
         symbol_combo.blockSignals(False)
@@ -275,7 +279,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
 
     symbol_combo.currentTextChanged.connect(lambda _: render_current())
     timeframe_combo.currentTextChanged.connect(lambda _: render_current())
-    refresh_button.clicked.connect(lambda: request_runtime_render(force_refresh=True) if is_runtime_chart() else refresh())
+    refresh_button.clicked.connect(
+        lambda: request_runtime_render(force_refresh=True) if is_runtime_chart() else refresh()
+    )
     refresh_timer.timeout.connect(
         lambda: request_runtime_render(force_refresh=False)
         if auto_refresh.isChecked() and page.isVisible() and is_runtime_chart()
@@ -289,7 +295,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
 def build_history_page(app_state):  # pragma: no cover - UI helper
     from PySide6.QtWidgets import (
         QComboBox,
+        QGridLayout,
         QHBoxLayout,
+        QHeaderView,
         QLabel,
         QLineEdit,
         QTabWidget,
@@ -299,14 +307,46 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.kpi import KpiTile
 
     DataFrameTableModel = load_dataframe_model_class()
 
     page = QWidget()
     layout = QVBoxLayout(page)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("取引履歴")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    title.setProperty("role", "h1")
+    subtitle = QLabel("バックテスト / 実時間シミュレーションで採取した履歴")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    layout.addLayout(header_row)
+
+    kpi_grid = QGridLayout()
+    kpi_grid.setHorizontalSpacing(12)
+    kpi_grid.setVerticalSpacing(12)
+    kpi_specs = [
+        ("trade_count", "累計取引"),
+        ("total_pl", "累計損益"),
+        ("win_rate", "勝率"),
+        ("profit_factor", "Profit Factor"),
+    ]
+    kpi_tiles: dict[str, KpiTile] = {}
+    for index, (key, label_text) in enumerate(kpi_specs):
+        tile = KpiTile(label=label_text, value="-")
+        kpi_grid.addWidget(tile, 0, index)
+        kpi_tiles[key] = tile
+        kpi_grid.setColumnStretch(index, 1)
+    layout.addLayout(kpi_grid)
+
+    card = Card(title="取引ログ", subtitle="通貨ペア / 売買フィルタあり")
     filter_row = QHBoxLayout()
     symbol_filter = QLineEdit()
     symbol_filter.setPlaceholderText("通貨ペアフィルタ")
@@ -314,20 +354,27 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
     side_filter.addItems(["すべて", "buy", "sell"])
     filter_row.addWidget(symbol_filter, 1)
     filter_row.addWidget(side_filter)
-    layout.addLayout(filter_row)
+    card.addBodyLayout(filter_row)
+
     tabs = QTabWidget()
-    views = {}
-    models = {}
-    raw_frames = {}
+    views: dict[str, QTableView] = {}
+    models: dict[str, DataFrameTableModel] = {}
+    raw_frames: dict[str, pd.DataFrame] = {}
     for key, label in [("trades", "取引"), ("orders", "注文"), ("fills", "約定")]:
         table = QTableView()
+        table.setAlternatingRowColors(False)
+        table.setShowGrid(False)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        table.horizontalHeader().setStretchLastSection(True)
         model = DataFrameTableModel()
         table.setModel(model)
         tabs.addTab(table, label)
         views[key] = table
         models[key] = model
         raw_frames[key] = pd.DataFrame()
-    layout.addWidget(tabs, 1)
+    card.addBodyWidget(tabs, 1)
+    layout.addWidget(card, 1)
 
     def apply_filters() -> None:
         needle = symbol_filter.text().strip().upper()
@@ -347,11 +394,27 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
         if app_state.last_result is None:
             for key in raw_frames:
                 raw_frames[key] = pd.DataFrame()
+            for tile in kpi_tiles.values():
+                tile.set_value("-")
             apply_filters()
             return
         raw_frames["trades"] = app_state.last_result.trades.copy()
         raw_frames["orders"] = app_state.last_result.orders.copy()
         raw_frames["fills"] = app_state.last_result.fills.copy()
+        metrics = app_state.last_result.metrics
+        trades_count = metrics.get("number_of_trades", 0)
+        total_return = metrics.get("total_return", 0)
+        win_rate = metrics.get("win_rate", 0)
+        profit_factor = metrics.get("profit_factor")
+        kpi_tiles["trade_count"].set_value(str(trades_count))
+        kpi_tiles["total_pl"].set_value(
+            f"{total_return:.2%}",
+            tone="pos" if total_return >= 0 else "neg",
+        )
+        kpi_tiles["win_rate"].set_value(f"{win_rate:.2%}")
+        kpi_tiles["profit_factor"].set_value(
+            f"{profit_factor:.2f}" if profit_factor is not None else "-"
+        )
         apply_filters()
 
     symbol_filter.textChanged.connect(lambda _: apply_filters())
@@ -362,23 +425,55 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
 
 def build_reports_page(app_state):  # pragma: no cover - UI helper
     from PySide6.QtCore import QUrl, Qt
-    from PySide6.QtWidgets import QLabel, QSplitter, QTableView, QTextBrowser, QTextEdit, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import (
+        QFrame,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QPushButton,
+        QSplitter,
+        QTableView,
+        QTextBrowser,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.widgets.card import Card
 
     QWebEngineView = _optional_web_view()
     DataFrameTableModel = load_dataframe_model_class()
 
     page = QWidget()
     layout = QVBoxLayout(page)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("レポート")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    title.setProperty("role", "h1")
+    subtitle = QLabel("実行ごとの詳細サマリーとプレビュー")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    layout.addLayout(header_row)
+
+    list_card = Card(title="全ての実行", subtitle="直近の run を上から表示")
     splitter = QSplitter(Qt.Horizontal)
     table = QTableView()
+    table.setAlternatingRowColors(False)
+    table.setShowGrid(False)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+    table.horizontalHeader().setStretchLastSection(True)
     detail_splitter = QSplitter(Qt.Vertical)
     detail = QTextEdit()
     detail.setReadOnly(True)
+    detail.setProperty("role", "mono")
     preview = QWebEngineView() if QWebEngineView is not None else QTextBrowser()
     model = DataFrameTableModel()
     table.setModel(model)
@@ -390,15 +485,13 @@ def build_reports_page(app_state):  # pragma: no cover - UI helper
     splitter.addWidget(detail_splitter)
     splitter.setStretchFactor(0, 2)
     splitter.setStretchFactor(1, 5)
-    layout.addWidget(splitter, 1)
+    list_card.addBodyWidget(splitter, 1)
+    layout.addWidget(list_card, 1)
 
     def set_preview_content(report_dir: Path | None, run_id: str) -> None:
         if report_dir is None:
             content = "<h3>出力ディレクトリが見つかりません。</h3>"
-            if QWebEngineView is not None and isinstance(preview, QWebEngineView):
-                preview.setHtml(content)
-            else:
-                preview.setHtml(content)
+            preview.setHtml(content)
             return
         html_path = report_dir / "report.html"
         summary_path = report_dir / "summary.md"
@@ -411,10 +504,7 @@ def build_reports_page(app_state):  # pragma: no cover - UI helper
             return
         if summary_path.exists():
             markdown = summary_path.read_text(encoding="utf-8").replace("\n", "<br>")
-            if QWebEngineView is not None and isinstance(preview, QWebEngineView):
-                preview.setHtml(markdown)
-            else:
-                preview.setHtml(markdown)
+            preview.setHtml(markdown)
             return
         events = app_state.load_automation_events(run_id)
         if not events.empty:
@@ -505,15 +595,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         QWidget,
     )
 
-    from fxautotrade_lab.desktop.ui_controls import set_button_enabled, set_button_role
-
-    def card_style(name: str, border: str = "#dbe3ee", background: str = "white") -> str:
-        return f"QFrame#{name} {{ background: {background}; border: 1px solid {border}; border-radius: 16px; }}"
-
-    def block_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setStyleSheet("border: none; background: transparent; color: #334155; font-weight: 600;")
-        return label
+    from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.chip import Chip
 
     def _set_combo_value(combo: QComboBox, value: str) -> None:
         index = combo.findData(value)
@@ -533,6 +617,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         editor.setPlaceholderText(placeholder)
         editor.setClearButtonEnabled(True)
         editor.setAlignment(Qt.AlignRight)
+        editor.setProperty("align", "num")
         return editor
 
     def format_number(value: float, decimals: int = 2) -> str:
@@ -554,29 +639,37 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     page.last_test_result = None
     content = QWidget()
     layout = QVBoxLayout(content)
-    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
     page.setWidget(content)
 
+    # Header
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("設定")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
+    title.setProperty("role", "h1")
+    subtitle = QLabel("運用モード / 資金管理 / 通知 / GMO 接続")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    layout.addLayout(header_row)
+
+    # Banner
+    banner = Card(sunken=True)
     helper = QLabel(
         "FX 版では JForex CSV の履歴データと GMO の実時間データを切り替えて運用します。"
         " 現在の自動売買はすべてローカル約定で、バックテストとフォワード検証はローカルで完結します。"
     )
     helper.setWordWrap(True)
-    helper.setStyleSheet("background: #eef6ff; color: #0f3c78; border-radius: 14px; padding: 14px;")
+    helper.setProperty("role", "muted")
+    banner.addBodyWidget(helper)
     warning = QLabel()
     warning.setWordWrap(True)
-    warning.setStyleSheet("background: #fff7ed; color: #9a3412; border-radius: 14px; padding: 14px;")
-    layout.addWidget(title)
-    layout.addWidget(helper)
-    layout.addWidget(warning)
-
-    cards_layout = QVBoxLayout()
-    cards_layout.setContentsMargins(0, 0, 0, 0)
-    cards_layout.setSpacing(16)
-    layout.addLayout(cards_layout, 1)
+    warning.setProperty("tone", "warn")
+    banner.addBodyWidget(warning)
+    layout.addWidget(banner)
 
     def refresh_all_pages() -> None:
         window = page.window()
@@ -585,18 +678,11 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         else:
             refresh()
 
-    mode_card = QFrame()
-    mode_card.setObjectName("runtimeModeCard")
-    mode_card.setStyleSheet(card_style("runtimeModeCard"))
-    mode_layout = QVBoxLayout(mode_card)
-    mode_title = QLabel("運用モード")
-    mode_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-    mode_note = QLabel(
-        "発注はすべてローカルでシミュレーションします。"
-        " ここでは、価格ソースを JForex CSV / GMO / fixture から選びます。"
+    # Runtime mode card
+    mode_card = Card(
+        title="運用モード",
+        subtitle="発注はすべてローカルでシミュレーションします",
     )
-    mode_note.setWordWrap(True)
-    mode_note.setStyleSheet("color: #475569;")
     mode_combo = QComboBox()
     mode_combo.addItem("ローカルシミュレーション", "local_sim")
     mode_combo.addItem("GMO 実時間シミュレーション", "gmo_sim")
@@ -607,41 +693,33 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     stream_box = QCheckBox("実時間更新を有効化")
     mode_status = QLabel()
     mode_status.setWordWrap(True)
-    mode_status.setStyleSheet(
-        "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
-    )
+    mode_status.setProperty("role", "muted")
     mode_form = QGridLayout()
-    mode_form.setHorizontalSpacing(16)
+    mode_form.setHorizontalSpacing(14)
     mode_form.setVerticalSpacing(8)
-    mode_form.addWidget(block_label("運用モード"), 0, 0)
-    mode_form.addWidget(block_label("市場データ"), 0, 1)
+    label_mode = QLabel("運用モード")
+    label_mode.setProperty("role", "muted2")
+    label_source = QLabel("市場データ")
+    label_source.setProperty("role", "muted2")
+    mode_form.addWidget(label_mode, 0, 0)
+    mode_form.addWidget(label_source, 0, 1)
     mode_form.addWidget(mode_combo, 1, 0)
     mode_form.addWidget(source_combo, 1, 1)
     mode_form.setColumnStretch(0, 1)
     mode_form.setColumnStretch(1, 1)
-    mode_layout.addWidget(mode_title)
-    mode_layout.addWidget(mode_note)
-    mode_layout.addLayout(mode_form)
-    mode_layout.addWidget(stream_box)
-    mode_layout.addWidget(mode_status)
+    mode_card.addBodyLayout(mode_form)
+    mode_card.addBodyWidget(stream_box)
+    mode_card.addBodyWidget(mode_status)
+    mode_button_row = QHBoxLayout()
+    mode_button_row.addStretch(1)
     save_mode_button = QPushButton("運用モードを保存")
-    set_button_role(save_mode_button, "primary")
-    mode_layout.addWidget(save_mode_button, alignment=Qt.AlignLeft)
-    cards_layout.addWidget(mode_card)
+    save_mode_button.setProperty("variant", "primary")
+    mode_button_row.addWidget(save_mode_button)
+    mode_card.addBodyLayout(mode_button_row)
+    layout.addWidget(mode_card)
 
-    sizing_card = QFrame()
-    sizing_card.setObjectName("orderSizingCard")
-    sizing_card.setStyleSheet(card_style("orderSizingCard"))
-    sizing_layout = QVBoxLayout(sizing_card)
-    sizing_title = QLabel("資金 / 注文サイズ")
-    sizing_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-    sizing_note = QLabel(
-        "初期資産と注文サイズの両方をここで管理します。"
-        " JPY 建ての資金量とリスクから数量を計算します。"
-        " 実際の発注数量は最小数量と数量ステップに合わせて丸められます。"
-    )
-    sizing_note.setWordWrap(True)
-    sizing_note.setStyleSheet("color: #475569;")
+    # Sizing card
+    sizing_card = Card(title="資金 / 注文サイズ", subtitle="JPY 建ての資金量とリスク")
     sizing_combo = QComboBox()
     sizing_combo.addItem("定額", "fixed_amount")
     sizing_combo.addItem("資産比率", "equity_fraction")
@@ -652,44 +730,43 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     starting_cash_input = number_input("例: 5000000")
     sizing_status = QLabel()
     sizing_status.setWordWrap(True)
-    sizing_status.setStyleSheet(
-        "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
-    )
+    sizing_status.setProperty("role", "muted")
     sizing_form = QGridLayout()
-    sizing_form.setHorizontalSpacing(16)
+    sizing_form.setHorizontalSpacing(14)
     sizing_form.setVerticalSpacing(8)
-    sizing_form.addWidget(block_label("初期資産 (JPY)"), 0, 0)
-    sizing_form.addWidget(block_label("数量モード"), 0, 1)
+    labels = [
+        ("初期資産 (JPY)", 0, 0),
+        ("数量モード", 0, 1),
+        ("定額 (JPY)", 2, 0),
+        ("資産比率", 2, 1),
+        ("リスク率", 4, 0),
+    ]
+    for text, row, column in labels:
+        lbl = QLabel(text)
+        lbl.setProperty("role", "muted2")
+        sizing_form.addWidget(lbl, row, column)
     sizing_form.addWidget(starting_cash_input, 1, 0)
     sizing_form.addWidget(sizing_combo, 1, 1)
-    sizing_form.addWidget(block_label("定額 (JPY)"), 2, 0)
-    sizing_form.addWidget(block_label("資産比率"), 2, 1)
     sizing_form.addWidget(fixed_amount_input, 3, 0)
     sizing_form.addWidget(equity_fraction_input, 3, 1)
-    sizing_form.addWidget(block_label("リスク率"), 4, 0)
     sizing_form.addWidget(risk_fraction_input, 5, 0, 1, 2)
     sizing_form.setColumnStretch(0, 1)
     sizing_form.setColumnStretch(1, 1)
-    sizing_layout.addWidget(sizing_title)
-    sizing_layout.addWidget(sizing_note)
-    sizing_layout.addLayout(sizing_form)
-    sizing_layout.addWidget(sizing_status)
+    sizing_card.addBodyLayout(sizing_form)
+    sizing_card.addBodyWidget(sizing_status)
+    sizing_button_row = QHBoxLayout()
+    sizing_button_row.addStretch(1)
     save_sizing_button = QPushButton("資金 / 注文サイズを保存")
-    set_button_role(save_sizing_button, "primary")
-    sizing_layout.addWidget(save_sizing_button, alignment=Qt.AlignLeft)
-    cards_layout.addWidget(sizing_card)
+    save_sizing_button.setProperty("variant", "primary")
+    sizing_button_row.addWidget(save_sizing_button)
+    sizing_card.addBodyLayout(sizing_button_row)
+    layout.addWidget(sizing_card)
 
-    notifications_card = QFrame()
-    notifications_card.setObjectName("notificationsCard")
-    notifications_card.setStyleSheet(card_style("notificationsCard"))
-    notifications_layout = QVBoxLayout(notifications_card)
-    notifications_title = QLabel("通知チャネル")
-    notifications_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-    notifications_layout.addWidget(notifications_title)
-    notifications_note = QLabel("注文、エラー、再接続、停止理由の通知先を切り替えます。")
-    notifications_note.setWordWrap(True)
-    notifications_note.setStyleSheet("color: #475569;")
-    notifications_layout.addWidget(notifications_note)
+    # Notifications card
+    notifications_card = Card(
+        title="通知チャネル",
+        subtitle="注文・エラー・再接続・停止理由の通知先",
+    )
     notify_enabled = QCheckBox("通知を有効化")
     desktop_box = QCheckBox("デスクトップ通知")
     sound_box = QCheckBox("サウンド")
@@ -699,40 +776,46 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sound_name.setClearButtonEnabled(True)
     webhook_url = QLineEdit()
     webhook_url.setClearButtonEnabled(True)
+    webhook_url.setEchoMode(QLineEdit.Password)
     log_path_label = QLabel()
     log_path_label.setWordWrap(True)
-    log_path_label.setStyleSheet("background: #f8fafc; border: none; border-radius: 10px; padding: 10px;")
+    log_path_label.setProperty("role", "muted")
     channels_row = QHBoxLayout()
     for widget in (desktop_box, sound_box, log_box, webhook_box):
         channels_row.addWidget(widget)
     channels_row.addStretch(1)
-    notifications_layout.addWidget(block_label("通知全体"))
-    notifications_layout.addWidget(notify_enabled)
-    notifications_layout.addWidget(block_label("チャネル"))
-    notifications_layout.addLayout(channels_row)
-    notifications_layout.addWidget(block_label("サウンド名"))
-    notifications_layout.addWidget(sound_name)
-    notifications_layout.addWidget(block_label("Webhook URL"))
-    notifications_layout.addWidget(webhook_url)
-    notifications_layout.addWidget(block_label("ログ出力先"))
-    notifications_layout.addWidget(log_path_label)
+    notifications_card.addBodyWidget(notify_enabled)
+    label_channels = QLabel("チャネル")
+    label_channels.setProperty("role", "muted2")
+    notifications_card.addBodyWidget(label_channels)
+    notifications_card.addBodyLayout(channels_row)
+    label_sound = QLabel("サウンド名")
+    label_sound.setProperty("role", "muted2")
+    notifications_card.addBodyWidget(label_sound)
+    notifications_card.addBodyWidget(sound_name)
+    label_webhook = QLabel("Webhook URL")
+    label_webhook.setProperty("role", "muted2")
+    notifications_card.addBodyWidget(label_webhook)
+    notifications_card.addBodyWidget(webhook_url)
+    label_logpath = QLabel("ログ出力先")
+    label_logpath.setProperty("role", "muted2")
+    notifications_card.addBodyWidget(label_logpath)
+    notifications_card.addBodyWidget(log_path_label)
+    notif_button_row = QHBoxLayout()
+    notif_button_row.addStretch(1)
     save_notifications_button = QPushButton("通知設定を保存")
-    set_button_role(save_notifications_button, "primary")
-    notifications_layout.addWidget(save_notifications_button, alignment=Qt.AlignLeft)
-    cards_layout.addWidget(notifications_card)
+    save_notifications_button.setProperty("variant", "primary")
+    notif_button_row.addWidget(save_notifications_button)
+    notifications_card.addBodyLayout(notif_button_row)
+    layout.addWidget(notifications_card)
 
-    connection_card = QFrame()
-    connection_card.setObjectName("gmoConnectionCard")
-    connection_card.setStyleSheet(card_style("gmoConnectionCard", "#cbd5e1"))
-    connection_layout = QVBoxLayout(connection_card)
-    connection_title = QLabel("GMO 接続確認")
-    connection_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-    connection_note = QLabel(
-        "現在の接続テストは GMO の public API を使う read-only 確認なので API キーは不要です。"
-        " private API キーは将来の private API / 実売買拡張に備えて、macOS キーチェーンへ安全に保存できます。"
+    # Connection card
+    conn_chip = Chip("接続テスト未実行", "neutral")
+    connection_card = Card(
+        title="GMO 接続確認",
+        subtitle="public API の疎通確認 / private API キー管理",
+        header_right=conn_chip,
     )
-    connection_note.setWordWrap(True)
-    connection_note.setStyleSheet("color: #475569;")
     api_key_input = QLineEdit()
     api_key_input.setPlaceholderText("GMO private API Key")
     api_key_input.setClearButtonEnabled(True)
@@ -742,80 +825,61 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     api_secret_input.setEchoMode(QLineEdit.Password)
     credential_status = QLabel()
     credential_status.setWordWrap(True)
-    credential_status.setStyleSheet(
-        "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
-    )
+    credential_status.setProperty("role", "muted")
     connection_status = QLabel("接続テストは未実行です。")
     connection_status.setWordWrap(True)
-    connection_status.setStyleSheet(
-        "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
-    )
+    connection_status.setProperty("role", "muted")
     credential_form = QGridLayout()
-    credential_form.setHorizontalSpacing(16)
+    credential_form.setHorizontalSpacing(14)
     credential_form.setVerticalSpacing(8)
-    credential_form.addWidget(block_label("private API Key"), 0, 0)
-    credential_form.addWidget(block_label("private API Secret"), 0, 1)
+    label_key = QLabel("private API Key")
+    label_key.setProperty("role", "muted2")
+    label_secret = QLabel("private API Secret")
+    label_secret.setProperty("role", "muted2")
+    credential_form.addWidget(label_key, 0, 0)
+    credential_form.addWidget(label_secret, 0, 1)
     credential_form.addWidget(api_key_input, 1, 0)
     credential_form.addWidget(api_secret_input, 1, 1)
     credential_form.setColumnStretch(0, 1)
     credential_form.setColumnStretch(1, 1)
-    save_credentials_button = QPushButton("private API を保存")
-    set_button_role(save_credentials_button, "primary")
-    clear_credentials_button = QPushButton("保存済みキーを削除")
-    set_button_role(clear_credentials_button, "secondary")
-    test_connection_button = QPushButton("GMO 接続テスト")
-    set_button_role(test_connection_button, "secondary")
+    connection_card.addBodyLayout(credential_form)
+    connection_card.addBodyWidget(credential_status)
+    connection_card.addBodyWidget(connection_status)
     connection_buttons = QHBoxLayout()
-    connection_buttons.addWidget(save_credentials_button)
+    save_credentials_button = QPushButton("private API を保存")
+    save_credentials_button.setProperty("variant", "primary")
+    clear_credentials_button = QPushButton("保存済みキーを削除")
+    clear_credentials_button.setProperty("variant", "ghost")
+    test_connection_button = QPushButton("GMO 接続テスト")
+    test_connection_button.setProperty("variant", "ghost")
+    connection_buttons.addStretch(1)
     connection_buttons.addWidget(clear_credentials_button)
     connection_buttons.addWidget(test_connection_button)
-    connection_buttons.addStretch(1)
-    connection_layout.addWidget(connection_title)
-    connection_layout.addWidget(connection_note)
-    connection_layout.addLayout(credential_form)
-    connection_layout.addWidget(credential_status)
-    connection_layout.addWidget(connection_status)
-    connection_layout.addLayout(connection_buttons)
-    cards_layout.addWidget(connection_card)
+    connection_buttons.addWidget(save_credentials_button)
+    connection_card.addBodyLayout(connection_buttons)
 
-    summary_card = QFrame()
-    summary_card.setObjectName("settingsSummaryCard")
-    summary_card.setStyleSheet(card_style("settingsSummaryCard"))
-    summary_layout = QVBoxLayout(summary_card)
-    summary_title = QLabel("状態サマリー")
-    summary_title.setStyleSheet("font-size: 16px; font-weight: 700;")
-    summary_label = QLabel()
-    summary_label.setWordWrap(True)
-    summary_label.setStyleSheet("background: #f8fafc; border: none; border-radius: 10px; padding: 12px;")
-    summary_layout.addWidget(summary_title)
-    summary_layout.addWidget(summary_label)
-    cards_layout.addWidget(summary_card)
-
-    test_card = QFrame()
-    test_card.setObjectName("settingsTestCard")
-    test_card.setStyleSheet(card_style("settingsTestCard"))
-    test_layout = QVBoxLayout(test_card)
-    test_title = QLabel("接続テスト結果")
-    test_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+    # Test result area inline under connection card
     test_output = QTextEdit()
     test_output.setReadOnly(True)
-    test_output.setMinimumHeight(220)
-    test_layout.addWidget(test_title)
-    test_layout.addWidget(test_output)
-    cards_layout.addWidget(test_card)
+    test_output.setMinimumHeight(180)
+    test_output.setProperty("role", "mono")
+    connection_card.addBodyWidget(test_output)
+    layout.addWidget(connection_card)
 
-    config_card = QFrame()
-    config_card.setObjectName("settingsConfigCard")
-    config_card.setStyleSheet(card_style("settingsConfigCard"))
-    config_layout = QVBoxLayout(config_card)
-    config_title = QLabel("現在の設定スナップショット")
-    config_title.setStyleSheet("font-size: 16px; font-weight: 700;")
+    # Summary + config snapshot card
+    summary_card = Card(title="現在の設定スナップショット", subtitle="YAML 形式の全量表示")
+    summary_label = QLabel()
+    summary_label.setWordWrap(True)
+    summary_label.setProperty("role", "muted")
+    summary_card.addBodyWidget(summary_label)
     config_text = QTextEdit()
     config_text.setReadOnly(True)
     config_text.setMinimumHeight(260)
-    config_layout.addWidget(config_title)
-    config_layout.addWidget(config_text)
-    cards_layout.addWidget(config_card)
+    config_text.setProperty("role", "mono")
+    summary_card.addBodyWidget(config_text)
+    layout.addWidget(summary_card)
+
+    layout.addStretch(1)
 
     def update_mode_status() -> None:
         selected_mode = str(mode_combo.currentData() or "local_sim")
@@ -824,19 +888,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             _set_combo_value(source_combo, "gmo")
             source_combo.setEnabled(False)
             stream_box.setEnabled(True)
-            stream_box.setToolTip("GMO の価格を定期取得して実時間更新します。")
-            mode_status.setStyleSheet(
-                "background: #eef6ff; border: none; border-radius: 10px; padding: 10px; color: #0f3c78;"
-            )
             mode_status.setText(
-                "\n".join(
-                    [
-                        "現在の選択: GMO 実時間シミュレーション",
-                        "市場データ: GMO public API に固定されます。",
-                        "発注: すべてローカル約定です。",
-                        "用途: フォワード検証で実運用に近い損益推移を確認します。",
-                    ]
-                )
+                "GMO 実時間シミュレーション: 市場データは GMO public API に固定されます。"
+                " 発注はすべてローカル約定です。"
             )
             return
         source_combo.setEnabled(True)
@@ -849,17 +903,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             "gmo": "GMO の価格を取得しつつ、注文はローカルで約定させます。",
             "fixture": "fixture の生成データを使う軽量な検証モードです。",
         }.get(selected_source, selected_source)
-        mode_status.setStyleSheet(
-            "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
-        )
         mode_status.setText(
-            "\n".join(
-                [
-                    "現在の選択: ローカルシミュレーション",
-                    f"市場データ: {source_text}",
-                    f"実時間更新: {'有効化できます' if stream_allowed else 'このソースでは無効です'}",
-                ]
-            )
+            f"ローカルシミュレーション: {source_text}"
+            f"  実時間更新: {'有効化できます' if stream_allowed else 'このソースでは無効です'}"
         )
 
     def save_runtime_mode() -> None:
@@ -902,7 +948,6 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             return
         sizing_status.setText(
             "リスク率モード: ATR ベースのストップ距離と許容損失率から数量を計算します。"
-            " バックテストと同じ考え方でフォワード検証できます。"
         )
 
     def save_order_sizing() -> None:
@@ -999,6 +1044,8 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         set_button_enabled(test_connection_button, not is_busy, busy=is_busy)
         if is_busy:
             connection_status.setText("GMO public API の疎通確認を実行しています...")
+            conn_chip.set_tone("info")
+            conn_chip.set_text("確認中")
 
     def render_test_result(result: dict[str, object] | None = None, error: str = "") -> None:
         if error:
@@ -1032,8 +1079,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         set_test_busy(False)
         market_ok = "OK" if result.get("market_data_ok") else "要確認"
         connection_status.setText(
-            f"GMO public API: 接続成功\n市場データ: {market_ok}\n確認通貨ペア: {result.get('market_data_symbol', '-')}"
+            f"GMO public API: 接続成功  •  市場データ: {market_ok}  •  確認通貨ペア: {result.get('market_data_symbol', '-')}"
         )
+        conn_chip.set_tone("running")
+        conn_chip.set_text("接続OK")
         render_test_result(result=result)
         log_message("GMO 接続テストが完了しました。")
         if result.get("warnings_ja"):
@@ -1046,6 +1095,8 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     def on_test_error(message: str) -> None:
         set_test_busy(False)
         connection_status.setText(f"GMO 接続確認失敗\n{message}")
+        conn_chip.set_tone("neg")
+        conn_chip.set_text("失敗")
         render_test_result(error=message)
         QMessageBox.critical(page, "接続テスト失敗", message)
         log_message(f"GMO 接続テスト失敗: {message}")
@@ -1088,24 +1139,14 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             "config_path": str(app_state.config_path) if app_state.config_path is not None else "",
         }
         summary_label.setText(
-            "\n".join(
+            " • ".join(
                 [
                     f"設定ファイル: {app_state.config_path}",
                     f"運用モード: {app_state.config.broker.mode.value}",
                     f"市場データ: {app_state.config.data.source}",
-                    f"実時間更新: {'有効' if app_state.config.data.stream_enabled else '無効'}",
                     f"口座通貨: {app_state.config.risk.account_currency}",
-                    f"初期資産: {app_state.config.risk.starting_cash:,.0f} {app_state.config.risk.account_currency}",
-                    f"定額エントリー: {app_state.config.risk.fixed_order_amount:,.0f} {app_state.config.risk.account_currency}",
-                    f"監視通貨ペア: {len(app_state.config.watchlist.symbols)} ペア",
-                    f"インポート先: {app_state.config.data.import_dir}",
-                    f"キャッシュ先: {app_state.config.data.cache_dir}",
-                    (
-                        "GMO private API: 設定済み"
-                        f" ({credential_source_text(str(private_status['source']))})"
-                        if private_configured
-                        else "GMO private API: 未設定"
-                    ),
+                    f"初期資産: {app_state.config.risk.starting_cash:,.0f}",
+                    f"監視: {len(app_state.config.watchlist.symbols)} ペア",
                 ]
             )
         )
@@ -1131,38 +1172,34 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         api_key_input.setText(str(private_values.get("api_key", "")))
         api_secret_input.setText(str(private_values.get("api_secret", "")))
         credential_status.setText(
-            "\n".join(
+            " • ".join(
                 [
-                    "private API 資格情報",
                     f"保存状態: {'設定済み' if private_configured else '未設定'}",
                     f"保存元: {credential_source_text(str(private_status['source']))}",
-                    (
-                        "保存先: macOS キーチェーン"
-                        if private_status.get("keychain_available")
-                        else "保存先: この環境では macOS キーチェーンを利用できません"
-                    ),
                     f"API Key: {private_values.get('api_key_masked') or '未設定'}",
                 ]
             )
         )
         connection_status.setText(
-            "\n".join(
+            " • ".join(
                 [
                     "GMO public API: 認証不要",
                     (
                         f"GMO private API: {'設定済み' if private_configured else '未設定'}"
                         f" ({credential_source_text(str(private_status['source']))})"
                     ),
-                    (
-                        "最終テスト: 実行済み"
-                        if page.last_test_result and "error" not in page.last_test_result
-                        else "最終テスト: 未実行"
-                        if not page.last_test_result
-                        else "最終テスト: 失敗"
-                    ),
                 ]
             )
         )
+        if page.last_test_result and "error" not in page.last_test_result:
+            conn_chip.set_tone("running")
+            conn_chip.set_text("接続OK")
+        elif page.last_test_result:
+            conn_chip.set_tone("neg")
+            conn_chip.set_text("失敗")
+        else:
+            conn_chip.set_tone("neutral")
+            conn_chip.set_text("未テスト")
         config_text.setPlainText(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False))
         render_test_result()
 
@@ -1171,36 +1208,97 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
 
 
 def build_help_page():  # pragma: no cover - UI helper
-    from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
+    from fxautotrade_lab.desktop.widgets.card import Card
 
     page = QWidget()
     layout = QVBoxLayout(page)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("ヘルプ")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
-    text = QTextEdit()
-    text.setReadOnly(True)
-    text.setPlainText(
-        "\n".join(
-            [
-                "FXAutoTrade Lab ガイド",
-                "- JForex の CSV をインポートすると、1分足から複数時間足のキャッシュを作成できます。",
-                "- GMO の public API は実時間データ取得に使用します。現在の売買はすべてローカルシミュレーションです。",
-                "- バックテストとフォワード検証の損益計算はローカルで行います。",
-                "",
-                "おすすめの進め方",
-                "- まずは 3-8 通貨ペアほどをウォッチリストへ追加します。",
-                "- データ同期ページから JForex CSV を取り込み、必要な時間足キャッシュを作成します。",
-                "- その後にバックテストで期間別の成績を確認し、GMO 実時間シミュレーションで前向き検証します。",
-                "",
-                "現時点の制約",
-                "- UI からの実売買はまだ有効化していません。",
-                "- GMO private API キーは将来拡張用で、現段階では必須ではありません。",
-                "- 口座通貨は JPY 前提で損益計算しています。",
-                "",
-                "本アプリは投資助言ではありません。",
-            ]
-        )
+    title.setProperty("role", "h1")
+    subtitle = QLabel("進め方・用語・トラブルシュート")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    layout.addLayout(header_row)
+
+    grid = QGridLayout()
+    grid.setHorizontalSpacing(14)
+    grid.setVerticalSpacing(14)
+    for column in range(3):
+        grid.setColumnStretch(column, 1)
+
+    start_card = Card(title="はじめる", subtitle="初回の流れ")
+    steps_label = QLabel(
+        "1. 監視通貨ペアで 3-8 ペアを登録\n"
+        "2. データ同期ページで JForex CSV を取り込む\n"
+        "3. バックテストで期間別の成績を確認\n"
+        "4. 実時間シミュレーションで前向き検証"
     )
-    layout.addWidget(text, 1)
+    steps_label.setWordWrap(True)
+    steps_label.setProperty("role", "muted")
+    start_card.addBodyWidget(steps_label)
+    grid.addWidget(start_card, 0, 0)
+
+    terms_card = Card(title="用語", subtitle="よく使う言葉")
+    terms_label = QLabel(
+        "• バックテスト: 過去データで戦略を検証\n"
+        "• Walk-Forward: 期間を動かしながら逐次検証\n"
+        "• Uplift: ML 適用前後の期待差\n"
+        "• ローカル約定: UI からは実売買しません"
+    )
+    terms_label.setWordWrap(True)
+    terms_label.setProperty("role", "muted")
+    terms_card.addBodyWidget(terms_label)
+    grid.addWidget(terms_card, 0, 1)
+
+    trouble_card = Card(title="トラブル", subtitle="よくある対処")
+    trouble_label = QLabel(
+        "• 接続失敗: 設定 → GMO 接続テストで状態を確認\n"
+        "• チャートが空: バックテストを 1 回実行するか、\n"
+        "  実時間シミュレーションで通貨ペアを選び更新\n"
+        "• 取込失敗: Bid / Ask の 2 ファイルを同時選択"
+    )
+    trouble_label.setWordWrap(True)
+    trouble_label.setProperty("role", "muted")
+    trouble_card.addBodyWidget(trouble_label)
+    grid.addWidget(trouble_card, 0, 2)
+
+    layout.addLayout(grid)
+
+    shortcut_card = Card(title="ショートカット")
+    shortcut_grid = QGridLayout()
+    shortcut_grid.setHorizontalSpacing(18)
+    shortcut_grid.setVerticalSpacing(8)
+    shortcuts = [
+        ("⌘R", "現在のページを再読込"),
+        ("⌘⇧D", "デモ実行"),
+        ("⌘L", "ログの表示切替"),
+        ("⌃Tab", "次のページへ"),
+        ("⌃⇧Tab", "前のページへ"),
+        ("⌘F", "ページ内の検索"),
+    ]
+    for index, (key, description) in enumerate(shortcuts):
+        key_label = QLabel(key)
+        key_label.setProperty("role", "mono")
+        desc_label = QLabel(description)
+        desc_label.setProperty("role", "muted")
+        shortcut_grid.addWidget(key_label, index // 3, (index % 3) * 2)
+        shortcut_grid.addWidget(desc_label, index // 3, (index % 3) * 2 + 1)
+    shortcut_card.addBodyLayout(shortcut_grid)
+    layout.addWidget(shortcut_card)
+
+    disclaimer = QLabel("本アプリは投資助言ではありません。")
+    disclaimer.setProperty("role", "muted2")
+    disclaimer.setWordWrap(True)
+    layout.addWidget(disclaimer)
+
+    layout.addStretch(1)
     return page

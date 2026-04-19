@@ -8,6 +8,38 @@ import pandas as pd
 REQUIRED_BAR_COLUMNS = ["open", "high", "low", "close", "volume"]
 
 
+def repair_ohlc_relationships(
+    frame: pd.DataFrame,
+    *,
+    open_column: str = "open",
+    high_column: str = "high",
+    low_column: str = "low",
+    close_column: str = "close",
+) -> tuple[pd.DataFrame, dict[str, float | int]]:
+    working = frame.copy()
+    columns = [open_column, high_column, low_column, close_column]
+    for column in columns:
+        working[column] = pd.to_numeric(working[column], errors="coerce")
+    required_high = working[columns].max(axis=1)
+    required_low = working[columns].min(axis=1)
+    high_adjustment = (required_high - working[high_column]).clip(lower=0.0)
+    low_adjustment = (working[low_column] - required_low).clip(lower=0.0)
+    high_rows = high_adjustment > 0.0
+    low_rows = low_adjustment > 0.0
+    if high_rows.any():
+        working.loc[high_rows, high_column] = required_high.loc[high_rows]
+    if low_rows.any():
+        working.loc[low_rows, low_column] = required_low.loc[low_rows]
+    adjusted_rows = high_rows | low_rows
+    return working, {
+        "adjusted_rows": int(adjusted_rows.sum()),
+        "adjusted_high_rows": int(high_rows.sum()),
+        "adjusted_low_rows": int(low_rows.sum()),
+        "max_high_adjustment": float(high_adjustment.max()) if len(high_adjustment.index) else 0.0,
+        "max_low_adjustment": float(low_adjustment.max()) if len(low_adjustment.index) else 0.0,
+    }
+
+
 def validate_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
     working = frame.copy()
     missing = [column for column in REQUIRED_BAR_COLUMNS if column not in frame.columns]

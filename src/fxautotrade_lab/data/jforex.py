@@ -12,6 +12,7 @@ from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.core.symbols import display_fx_symbol, infer_fx_symbol_from_filename, normalize_fx_symbol
 from fxautotrade_lab.data.cache import ParquetBarCache, timeframe_coverage_delta
+from fxautotrade_lab.data.quality import repair_ohlc_relationships
 from fxautotrade_lab.data.quote_bars import (
     build_quote_bar_frame,
     is_combined_quote_csv,
@@ -160,6 +161,53 @@ class JForexCsvImporter:
     def __init__(self, cache: ParquetBarCache) -> None:
         self.cache = cache
 
+    def _repair_quote_side_source(self, frame: pd.DataFrame, side: str) -> tuple[pd.DataFrame, list[str]]:
+        repaired, stats = repair_ohlc_relationships(
+            frame,
+            open_column=f"{side}_open",
+            high_column=f"{side}_high",
+            low_column=f"{side}_low",
+            close_column=f"{side}_close",
+        )
+        if int(stats["adjusted_rows"]) <= 0:
+            return repaired, []
+        max_adjustment = max(float(stats["max_high_adjustment"]), float(stats["max_low_adjustment"]))
+        message = (
+            f"{side.upper()} CSV に OHLC の不整合が {int(stats['adjusted_rows']):,} 行あり、自動補正しました。"
+            f" high 補正 {int(stats['adjusted_high_rows']):,} 行 / low 補正 {int(stats['adjusted_low_rows']):,} 行"
+            f" / 最大補正幅 {max_adjustment:.6f}"
+        )
+        return repaired, [message]
+
+    def _repair_crossed_quote_prices(
+        self,
+        bid_frame: pd.DataFrame,
+        ask_frame: pd.DataFrame,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+        repaired_bid = bid_frame.copy()
+        repaired_ask = ask_frame.copy()
+        crossed_rows = 0
+        max_adjustment = 0.0
+        adjusted_columns: list[str] = []
+        for price_column in ("open", "high", "low", "close"):
+            bid_column = f"bid_{price_column}"
+            ask_column = f"ask_{price_column}"
+            adjustment = (repaired_bid[bid_column] - repaired_ask[ask_column]).clip(lower=0.0)
+            crossed = adjustment > 0.0
+            if not crossed.any():
+                continue
+            repaired_ask.loc[crossed, ask_column] = repaired_bid.loc[crossed, bid_column]
+            crossed_rows += int(crossed.sum())
+            max_adjustment = max(max_adjustment, float(adjustment.max()))
+            adjusted_columns.append(price_column)
+        if crossed_rows <= 0:
+            return repaired_bid, repaired_ask, []
+        labels = ", ".join(adjusted_columns)
+        return repaired_bid, repaired_ask, [
+            "Bid / Ask CSV に負のスプレッドがあり、自動補正しました。"
+            f" 対象列: {labels} / 補正行数: {crossed_rows:,} / 最大補正幅 {max_adjustment:.6f}"
+        ]
+
     def import_file(self, file_path: str | Path, symbol: str | None = None) -> JForexImportResult:
         source_path = Path(file_path)
         normalized_symbol = normalize_fx_symbol(symbol) if symbol else infer_fx_symbol_from_filename(source_path)
@@ -258,9 +306,13 @@ class JForexCsvImporter:
         normalized_symbol = selection.symbol
         bid_frame = read_jforex_quote_csv(bid_source_path, "bid")
         ask_frame = read_jforex_quote_csv(ask_source_path, "ask")
+        bid_frame, bid_messages = self._repair_quote_side_source(bid_frame, "bid")
+        ask_frame, ask_messages = self._repair_quote_side_source(ask_frame, "ask")
+        bid_frame, ask_frame, spread_messages = self._repair_crossed_quote_prices(bid_frame, ask_frame)
         bid_start, bid_end = self._raw_frame_bounds(bid_frame)
         ask_start, ask_end = self._raw_frame_bounds(ask_frame)
         trimmed_bid, trimmed_ask, messages = self._align_bid_ask_frames(bid_frame, ask_frame)
+        messages = [*bid_messages, *ask_messages, *spread_messages, *messages]
         try:
             base = build_quote_bar_frame(trimmed_bid, trimmed_ask, normalized_symbol)
         except ValueError as exc:

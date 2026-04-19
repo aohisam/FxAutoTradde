@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
 
 
 def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helper
     from PySide6.QtWidgets import (
-        QFormLayout,
-        QFrame,
         QGridLayout,
         QHBoxLayout,
         QLabel,
@@ -23,49 +19,81 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
         QWidget,
     )
 
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.chip import Chip
+
     page = QWidget()
     layout = QVBoxLayout(page)
-    title = QLabel("監視通貨ペア")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
 
-    helper = QLabel(
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
+    title = QLabel("監視通貨ペア")
+    title.setProperty("role", "h1")
+    subtitle = QLabel("例: USD_JPY / USD/JPY / USDJPY のいずれでも入力できます。")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+
+    reload_button = QPushButton("再読込")
+    reload_button.setProperty("variant", "ghost")
+    save_button = QPushButton("ウォッチリスト保存")
+    save_button.setProperty("variant", "primary")
+    header_row.addWidget(reload_button)
+    header_row.addWidget(save_button)
+    layout.addLayout(header_row)
+
+    banner = Card(sunken=True)
+    banner_label = QLabel(
         "運用通貨ペア、比較通貨ペア、補助通貨ペアを個別に管理します。"
-        " `USD_JPY` / `USD/JPY` / `USDJPY` のいずれでも入力できます。"
+        " まずは 3〜8 ペア程度から運用することを推奨します。"
     )
-    helper.setWordWrap(True)
-    helper.setStyleSheet("background: #f3f7fb; border-radius: 12px; padding: 12px;")
-    layout.addWidget(helper)
+    banner_label.setWordWrap(True)
+    banner_label.setProperty("role", "muted")
+    banner.addBodyWidget(banner_label)
+    layout.addWidget(banner)
 
     grid = QGridLayout()
+    grid.setHorizontalSpacing(14)
+    grid.setVerticalSpacing(14)
+    for column in range(3):
+        grid.setColumnStretch(column, 1)
+
     page_lists: dict[str, QListWidget] = {}
     page_inputs: dict[str, QLineEdit] = {}
-    titles = {
-        "symbols": "運用通貨ペア",
-        "benchmarks": "比較通貨ペア",
-        "sectors": "補助通貨ペア",
-    }
+    section_chips: dict[str, Chip] = {}
 
-    def build_section(key: str, caption: str) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName(f"watchlistSection_{key}")
-        frame.setStyleSheet(
-            f"QFrame#watchlistSection_{key} {{ background: white; border: 1px solid #dbe3ee; border-radius: 14px; }}"
-        )
-        section_layout = QVBoxLayout(frame)
-        section_layout.addWidget(QLabel(caption))
+    titles = [
+        ("symbols", "運用通貨ペア"),
+        ("benchmarks", "比較通貨ペア"),
+        ("sectors", "補助通貨ペア"),
+    ]
+
+    def build_section(key: str, caption: str, column: int) -> None:
+        chip = Chip("0 ペア", "info" if key == "symbols" else "neutral")
+        section_chips[key] = chip
+        card = Card(title=caption, header_right=chip)
+
         list_widget = QListWidget()
         list_widget.setSelectionMode(QListWidget.ExtendedSelection)
-        section_layout.addWidget(list_widget, 1)
+        list_widget.setMinimumHeight(220)
+        card.addBodyWidget(list_widget, 1)
+
         input_row = QHBoxLayout()
         editor = QLineEdit()
         editor.setPlaceholderText("例: USD_JPY")
         add_button = QPushButton("追加")
+        add_button.setProperty("variant", "primary")
         remove_button = QPushButton("削除")
+        remove_button.setProperty("variant", "ghost")
         input_row.addWidget(editor, 1)
         input_row.addWidget(add_button)
         input_row.addWidget(remove_button)
-        section_layout.addLayout(input_row)
+        card.addBodyLayout(input_row)
+
         page_lists[key] = list_widget
         page_inputs[key] = editor
 
@@ -94,25 +122,20 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
         add_button.clicked.connect(add_item)
         remove_button.clicked.connect(remove_selected)
         editor.returnPressed.connect(add_item)
-        return frame
 
-    for column, (key, caption) in enumerate(titles.items()):
-        grid.addWidget(build_section(key, caption), 0, column)
+        grid.addWidget(card, 0, column)
+
+    for column, (key, caption) in enumerate(titles):
+        build_section(key, caption, column)
     layout.addLayout(grid, 1)
 
-    lower = QFormLayout()
-    page.summary_label = QLabel()
-    page.summary_label.setWordWrap(True)
-    lower.addRow("現在の概要", page.summary_label)
-    layout.addLayout(lower)
-
-    action_row = QHBoxLayout()
-    reload_button = QPushButton("再読込")
-    save_button = QPushButton("ウォッチリスト保存")
-    action_row.addWidget(reload_button)
-    action_row.addStretch(1)
-    action_row.addWidget(save_button)
-    layout.addLayout(action_row)
+    summary_card = Card(title="現在の概要", subtitle="保存前のスナップショット")
+    summary_label = QLabel()
+    summary_label.setWordWrap(True)
+    summary_label.setProperty("role", "muted")
+    summary_card.addBodyWidget(summary_label)
+    page.summary_label = summary_label
+    layout.addWidget(summary_card)
 
     def list_values(key: str) -> list[str]:
         return [page_lists[key].item(index).text() for index in range(page_lists[key].count())]
@@ -134,7 +157,10 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
         symbols = list_values("symbols")
         benchmarks = list_values("benchmarks")
         sectors = list_values("sectors")
-        page.summary_label.setText(
+        section_chips["symbols"].set_text(f"{len(symbols)} ペア")
+        section_chips["benchmarks"].set_text(f"{len(benchmarks)} ペア")
+        section_chips["sectors"].set_text(f"{len(sectors)} ペア")
+        summary_label.setText(
             "\n".join(
                 [
                     f"運用通貨ペア: {len(symbols)} ペア",

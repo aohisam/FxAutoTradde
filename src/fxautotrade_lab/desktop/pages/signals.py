@@ -7,24 +7,69 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
     import pandas as pd
 
     from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QLabel, QHeaderView, QSplitter, QTableView, QTextEdit, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import (
+        QFrame,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QScrollArea,
+        QSplitter,
+        QTableView,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.segmented import SegmentedControl
 
     DataFrameTableModel = load_dataframe_model_class()
 
-    page = QWidget()
-    layout = QVBoxLayout(page)
+    page = QScrollArea()
+    page.setWidgetResizable(True)
+    page.setFrameShape(QFrame.NoFrame)
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+    page.setWidget(content)
+
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
     title = QLabel("シグナル分析")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
+    title.setProperty("role", "h1")
+    subtitle = QLabel("バックテスト / 実時間シミュレーションから採取したシグナル")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    layout.addLayout(header_row)
+
+    filter_row = QHBoxLayout()
+    filter_row.setSpacing(10)
+    symbol_filter = QLineEdit()
+    symbol_filter.setPlaceholderText("通貨ペアで絞り込み")
+    symbol_filter.setFixedWidth(220)
+    action_segment = SegmentedControl(
+        options=["全て", "買い", "売り", "様子見"],
+        current=0,
+        data=["all", "買い", "売り", "様子見"],
+    )
+    filter_row.addWidget(symbol_filter)
+    filter_row.addWidget(action_segment)
+    filter_row.addStretch(1)
+
     splitter = QSplitter(Qt.Vertical)
+    table_card = Card(title="シグナル一覧", subtitle="直近 300 件")
+    table_card.addBodyLayout(filter_row)
     table = QTableView()
-    detail = QTextEdit()
-    detail.setReadOnly(True)
     model = DataFrameTableModel()
     table.setModel(model)
-    table.setAlternatingRowColors(True)
+    table.setAlternatingRowColors(False)
+    table.setShowGrid(False)
     table.setSortingEnabled(False)
     table.verticalHeader().setVisible(False)
     header = table.horizontalHeader()
@@ -32,8 +77,15 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
     header.setSectionResizeMode(QHeaderView.Interactive)
     header.setDefaultSectionSize(170)
     header.setMinimumSectionSize(120)
-    splitter.addWidget(table)
-    splitter.addWidget(detail)
+    table_card.addBodyWidget(table)
+    splitter.addWidget(table_card)
+
+    detail_card = Card(title="選択シグナル詳細")
+    detail = QTextEdit()
+    detail.setReadOnly(True)
+    detail.setProperty("role", "mono")
+    detail_card.addBodyWidget(detail)
+    splitter.addWidget(detail_card)
     splitter.setStretchFactor(0, 3)
     splitter.setStretchFactor(1, 2)
     layout.addWidget(splitter, 1)
@@ -50,6 +102,8 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
     }
     action_labels = {"buy": "買い", "sell": "売り", "hold": "様子見"}
 
+    page._full_frame = pd.DataFrame()
+
     def table_frame(frame: pd.DataFrame) -> pd.DataFrame:
         if frame is None or frame.empty:
             return pd.DataFrame()
@@ -58,7 +112,9 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
             stamps = pd.to_datetime(localized["timestamp"], errors="coerce")
             localized["timestamp"] = stamps.dt.strftime("%Y-%m-%d %H:%M").fillna(localized["timestamp"].astype(str))
         if "signal_action" in localized.columns:
-            localized["signal_action"] = localized["signal_action"].map(lambda value: action_labels.get(str(value), str(value)))
+            localized["signal_action"] = localized["signal_action"].map(
+                lambda value: action_labels.get(str(value), str(value))
+            )
         return localized.rename(columns=column_labels)
 
     def resize_columns() -> None:
@@ -69,6 +125,31 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
         explanation_index = model.columnCount() - 1
         if explanation_index >= 0:
             table.setColumnWidth(explanation_index, max(table.columnWidth(explanation_index), 520))
+
+    def apply_filters() -> None:
+        if page._full_frame is None or page._full_frame.empty:
+            model.set_frame(None)
+            detail.setPlainText("まだシグナル分析結果はありません。")
+            return
+        frame = page._full_frame.copy()
+        if "signal_action" in frame.columns:
+            frame = frame.copy()
+            frame["signal_action"] = frame["signal_action"].map(
+                lambda value: action_labels.get(str(value), str(value))
+            )
+        needle = symbol_filter.text().strip().upper()
+        if needle and "symbol" in frame.columns:
+            frame = frame[frame["symbol"].astype(str).str.upper().str.contains(needle, na=False)]
+        selected_action = str(action_segment.currentData() or "all")
+        if selected_action != "all" and "signal_action" in frame.columns:
+            frame = frame[frame["signal_action"].astype(str) == selected_action]
+        if "timestamp" in frame.columns:
+            stamps = pd.to_datetime(frame["timestamp"], errors="coerce")
+            frame["timestamp"] = stamps.dt.strftime("%Y-%m-%d %H:%M").fillna(frame["timestamp"].astype(str))
+        frame = frame.rename(columns=column_labels)
+        model.set_frame(frame.tail(300))
+        resize_columns()
+        detail.setPlainText("行を選択すると詳細理由を表示します。")
 
     def on_clicked(index) -> None:  # noqa: ANN001
         if app_state.last_result is None or app_state.last_result.signals.empty:
@@ -94,9 +175,12 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
         )
 
     table.clicked.connect(on_clicked)
+    symbol_filter.textChanged.connect(lambda _: apply_filters())
+    action_segment.idClicked.connect(lambda _: apply_filters())
 
     def refresh() -> None:
         if app_state.last_result is None or app_state.last_result.signals.empty:
+            page._full_frame = pd.DataFrame()
             model.set_frame(None)
             detail.setPlainText("まだシグナル分析結果はありません。")
             return
@@ -111,9 +195,12 @@ def build_signals_page(app_state):  # pragma: no cover - UI helper
             "explanation_ja",
         ]
         available = [column for column in columns if column in app_state.last_result.signals.columns]
-        model.set_frame(table_frame(app_state.last_result.signals[available].tail(300)))
-        resize_columns()
-        detail.setPlainText("行を選択すると詳細理由を表示します。")
+        page._full_frame = (
+            app_state.last_result.signals[available].tail(300).copy()
+            if available
+            else pd.DataFrame()
+        )
+        apply_filters()
 
     page.refresh = refresh
     return page

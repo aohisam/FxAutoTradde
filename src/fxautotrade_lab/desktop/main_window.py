@@ -8,20 +8,63 @@ from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 
 
+NAV_GROUPS = [
+    ("ダッシュボード", [("概要", "overview")]),
+    ("リサーチ", [
+        ("監視通貨ペア", "watchlist"),
+        ("データ同期", "data_sync"),
+        ("バックテスト", "backtest"),
+        ("シグナル分析", "signals"),
+    ]),
+    ("実行", [
+        ("実時間シミュレーション", "automation"),
+        ("チャート", "chart"),
+        ("取引履歴", "history"),
+        ("レポート", "reports"),
+    ]),
+    ("システム", [
+        ("設定", "settings"),
+        ("ヘルプ", "help"),
+    ]),
+]
+
+PAGE_KEY_TO_LABEL = {
+    "overview": "概要",
+    "watchlist": "監視通貨ペア",
+    "data_sync": "データ同期",
+    "backtest": "バックテスト",
+    "signals": "シグナル分析",
+    "automation": "実時間シミュレーション",
+    "chart": "チャート",
+    "history": "取引履歴",
+    "reports": "レポート",
+    "settings": "設定",
+    "help": "ヘルプ",
+}
+
+PAGE_LABEL_TO_KEY = {label: key for key, label in PAGE_KEY_TO_LABEL.items()}
+
+
 def load_main_window_class():  # pragma: no cover - UI helper
     from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt
     from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtWidgets import (
+        QApplication,
         QDockWidget,
-        QListWidget,
-        QListWidgetItem,
+        QHBoxLayout,
+        QLabel,
+        QLineEdit,
         QMainWindow,
         QMessageBox,
+        QPushButton,
+        QSizePolicy,
         QSplitter,
         QStackedWidget,
         QStatusBar,
         QTextEdit,
         QToolBar,
+        QVBoxLayout,
+        QWidget,
     )
 
     from fxautotrade_lab.desktop.pages.automation import build_automation_page
@@ -37,6 +80,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
     from fxautotrade_lab.desktop.pages.overview import build_overview_page
     from fxautotrade_lab.desktop.pages.signals import build_signals_page
     from fxautotrade_lab.desktop.pages.watchlist import build_watchlist_page
+    from fxautotrade_lab.desktop.theme import load_theme_qss
+    from fxautotrade_lab.desktop.widgets.sidebar import GroupedNavList
+    from fxautotrade_lab.desktop.widgets.statusbar import AppStatusBar
     from fxautotrade_lab.desktop.workers import load_worker_classes
 
     FunctionWorker = load_worker_classes()
@@ -53,46 +99,61 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.resize(self.app_state.config.ui.width, self.app_state.config.ui.height)
             self.thread_pool = QThreadPool.globalInstance()
             self._active_workers: set[object] = set()
+
+            app_instance = QApplication.instance()
+            if app_instance is not None:
+                app_instance.setStyleSheet(load_theme_qss())
+
             self.log_output = QTextEdit()
+            self.log_output.setObjectName("logOutput")
             self.log_output.setReadOnly(True)
-            self.page_names = [
-                "概要",
-                "監視通貨ペア",
-                "データ同期",
-                "バックテスト",
-                "シグナル分析",
-                "実時間シミュレーション",
-                "チャート",
-                "取引履歴",
-                "レポート",
-                "設定",
-                "ヘルプ",
-            ]
-            self.sidebar = QListWidget()
-            self.sidebar.setMinimumWidth(210)
-            self.sidebar.setMaximumWidth(300)
-            self.sidebar.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            for name in self.page_names:
-                QListWidgetItem(name, self.sidebar)
+
+            self.page_names = [PAGE_KEY_TO_LABEL[key] for _, entries in NAV_GROUPS for _, key in entries]
+            self.page_keys = [key for _, entries in NAV_GROUPS for _, key in entries]
+
+            self.sidebar = GroupedNavList()
+            self._page_row_by_key: dict[str, int] = {}
+            self._build_sidebar()
+
             self.stack = QStackedWidget()
             splitter = QSplitter()
+            splitter.setHandleWidth(1)
             splitter.addWidget(self.sidebar)
             splitter.addWidget(self.stack)
             splitter.setStretchFactor(0, 0)
             splitter.setStretchFactor(1, 1)
-            splitter.setSizes([220, max(self.width() - 220, 980)])
-            self.setCentralWidget(splitter)
+            splitter.setSizes([230, max(self.width() - 230, 980)])
+
+            self.app_statusbar = AppStatusBar(self)
+            self.setStatusBar(self.app_statusbar)
+
+            central = QWidget()
+            central_layout = QVBoxLayout(central)
+            central_layout.setContentsMargins(0, 0, 0, 0)
+            central_layout.setSpacing(0)
+            central_layout.addWidget(splitter, 1)
+            self.setCentralWidget(central)
+
             self._build_pages(FunctionWorker)
             self._build_toolbar()
             self._build_log_dock()
-            self._apply_theme()
-            self.setStatusBar(QStatusBar())
-            self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
-            self.sidebar.currentRowChanged.connect(lambda _: self.refresh_current_page())
+
+            self.sidebar.currentRowChanged.connect(self._on_sidebar_row_changed)
             self.restore_geometry()
             if self.settings.value("page_index") is None:
-                self.sidebar.setCurrentRow(max(0, self.page_names.index(self.app_state.config.ui.default_page)))
+                default_label = self.app_state.config.ui.default_page
+                default_key = PAGE_LABEL_TO_KEY.get(default_label, "overview")
+                row = self._page_row_by_key.get(default_key, -1)
+                if row >= 0:
+                    self.sidebar.setCurrentRow(row)
             self.refresh_current_page()
+
+        def _build_sidebar(self) -> None:
+            for group_caption, entries in NAV_GROUPS:
+                self.sidebar.add_group(group_caption)
+                for label, key in entries:
+                    item = self.sidebar.add_page(label, key)
+                    self._page_row_by_key[key] = self.sidebar.row(item)
 
         def _build_pages(self, worker_class) -> None:
             self.pages = {
@@ -116,22 +177,40 @@ def load_main_window_class():  # pragma: no cover - UI helper
 
         def _build_toolbar(self) -> None:
             toolbar = QToolBar("メイン")
+            toolbar.setObjectName("topBar")
             toolbar.setMovable(False)
+            toolbar.setFloatable(False)
             self.addToolBar(toolbar)
-            sync_action = toolbar.addAction("再読込")
-            backtest_action = toolbar.addAction("バックテスト")
-            demo_action = toolbar.addAction("デモ実行")
-            verify_action = toolbar.addAction("ブローカー確認")
-            refresh_action = toolbar.addAction("ページ更新")
-            about_action = toolbar.addAction("About")
-            sync_action.triggered.connect(lambda: self.sidebar.setCurrentRow(self.page_names.index("データ同期")))
-            backtest_action.triggered.connect(lambda: self.sidebar.setCurrentRow(self.page_names.index("バックテスト")))
-            demo_action.triggered.connect(self._run_demo)
-            verify_action.triggered.connect(self._verify_broker)
-            refresh_action.triggered.connect(self.refresh_current_page)
-            about_action.triggered.connect(self._show_about)
+
+            self.crumb_root = QLabel("FXAutoTrade Lab")
+            self.crumb_root.setProperty("role", "breadcrumb")
+            crumb_sep = QLabel("/")
+            crumb_sep.setProperty("role", "breadcrumb")
+            self.crumb_page = QLabel("概要")
+            self.crumb_page.setProperty("role", "breadcrumb-current")
+            toolbar.addWidget(self.crumb_root)
+            toolbar.addWidget(crumb_sep)
+            toolbar.addWidget(self.crumb_page)
+
+            spacer = QWidget()
+            spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            toolbar.addWidget(spacer)
+
+            buttons = [
+                ("再読込", "ghost", self.refresh_current_page),
+                ("デモ実行", "ghost", self._run_demo),
+                ("ブローカー確認", "ghost", self._verify_broker),
+                ("バックテスト", "primary", lambda: self._goto_page("backtest")),
+                ("About", "ghost", self._show_about),
+            ]
+            for label, variant, callback in buttons:
+                btn = QPushButton(label)
+                btn.setProperty("variant", variant)
+                btn.clicked.connect(callback)
+                toolbar.addWidget(btn)
 
         def _build_log_dock(self) -> None:
+            from PySide6.QtCore import Qt
             dock = QDockWidget("ログ", self)
             dock.setObjectName("logDock")
             dock.setWidget(self.log_output)
@@ -140,103 +219,28 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.log_output.setMinimumHeight(96)
             QTimer.singleShot(0, lambda: self.resizeDocks([dock], [120], Qt.Vertical))
 
-        def _apply_theme(self) -> None:
-            self.setStyleSheet(
-                """
-                QMainWindow, QWidget {
-                    background: #f5f7fb;
-                    color: #10243f;
-                    font-size: 13px;
-                }
-                QLabel {
-                    border: none;
-                }
-                QListWidget {
-                    background: white;
-                    border: 1px solid #dbe3ee;
-                    border-radius: 16px;
-                    padding: 8px;
-                }
-                QListWidget::item {
-                    padding: 10px 12px;
-                    border-radius: 10px;
-                    margin: 2px 0;
-                }
-                QListWidget::item:selected {
-                    background: #dcecff;
-                    color: #0f172a;
-                }
-                QToolBar {
-                    background: white;
-                    spacing: 8px;
-                    border: 1px solid #dbe3ee;
-                    border-radius: 14px;
-                    padding: 8px;
-                }
-                QPushButton {
-                    background: #1d4ed8;
-                    color: white;
-                    border: none;
-                    border-radius: 10px;
-                    padding: 8px 14px;
-                    min-height: 34px;
-                    font-weight: 700;
-                }
-                QPushButton:hover:enabled {
-                    background: #1e40af;
-                }
-                QPushButton[role="secondary"] {
-                    background: #475569;
-                }
-                QPushButton[role="secondary"]:hover:enabled {
-                    background: #334155;
-                }
-                QPushButton[role="success"] {
-                    background: #0f766e;
-                }
-                QPushButton[role="success"]:hover:enabled {
-                    background: #115e59;
-                }
-                QPushButton[role="danger"] {
-                    background: #b91c1c;
-                }
-                QPushButton[role="danger"]:hover:enabled {
-                    background: #991b1b;
-                }
-                QPushButton[role="neutral"] {
-                    background: #64748b;
-                }
-                QPushButton[role="neutral"]:hover:enabled {
-                    background: #475569;
-                }
-                QPushButton:disabled {
-                    background: #d7e0eb;
-                    color: #7b8797;
-                    border: 1px solid #c2ccd8;
-                }
-                QPushButton[busyDisabled="true"]:disabled {
-                    background: #e5ebf3;
-                    color: #728094;
-                    border: 1px dashed #b6c2d2;
-                }
-                QTextEdit, QTextBrowser, QTableView, QComboBox, QLineEdit, QDateEdit {
-                    background: white;
-                    border: 1px solid #dbe3ee;
-                    border-radius: 10px;
-                    padding: 8px 10px;
-                }
-                QComboBox, QLineEdit, QDateEdit {
-                    min-width: 260px;
-                    min-height: 24px;
-                }
-                QHeaderView::section {
-                    background: #edf2f7;
-                    padding: 8px;
-                    border: none;
-                }
-                """
-            )
+        # navigation ---------------------------------------------------------
+        def _on_sidebar_row_changed(self, row: int) -> None:
+            item = self.sidebar.item(row) if row >= 0 else None
+            if item is None:
+                return
+            key = item.data(0x0100)  # Qt.UserRole
+            if key in (None, "__group__"):
+                return
+            try:
+                page_index = self.page_keys.index(key)
+            except ValueError:
+                return
+            self.stack.setCurrentIndex(page_index)
+            self.crumb_page.setText(self.page_names[page_index])
+            self.refresh_current_page()
 
+        def _goto_page(self, key: str) -> None:
+            row = self._page_row_by_key.get(key, -1)
+            if row >= 0:
+                self.sidebar.setCurrentRow(row)
+
+        # toolbar handlers ---------------------------------------------------
         def _show_about(self) -> None:
             QMessageBox.information(
                 self,
@@ -274,11 +278,16 @@ def load_main_window_class():  # pragma: no cover - UI helper
             )
             self.refresh_all_pages()
 
+        # page helpers -------------------------------------------------------
         def refresh_current_page(self) -> None:
             page = self.stack.currentWidget()
             if hasattr(page, "refresh"):
                 page.refresh()
-            self.statusBar().showMessage(self.page_names[self.stack.currentIndex()])
+            index = self.stack.currentIndex()
+            if 0 <= index < len(self.page_names):
+                name = self.page_names[index]
+                self.app_statusbar.show_page(name)
+                self.crumb_page.setText(name)
 
         def refresh_all_pages(self) -> None:
             for page in self.pages.values():
@@ -287,7 +296,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
 
         def log_message(self, message: str) -> None:
             self.log_output.append(message)
-            self.statusBar().showMessage(message, 5000)
+            self.app_statusbar.showMessage(message, 5000)
 
         def submit_background_task(self, fn, on_finished, on_error) -> None:  # noqa: ANN001
             worker = self.worker_class(fn)
@@ -321,7 +330,14 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 self.restoreGeometry(geometry)
             page_index = self.settings.value("page_index")
             if page_index is not None:
-                self.sidebar.setCurrentRow(int(page_index))
+                try:
+                    idx = int(page_index)
+                except (TypeError, ValueError):
+                    idx = 0
+                if 0 <= idx < len(self.page_keys):
+                    row = self._page_row_by_key.get(self.page_keys[idx], -1)
+                    if row >= 0:
+                        self.sidebar.setCurrentRow(row)
             self._normalize_window_geometry()
 
         def _normalize_window_geometry(self) -> None:
@@ -342,7 +358,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
 
         def closeEvent(self, event) -> None:  # noqa: N802
             self.settings.setValue("geometry", self.saveGeometry())
-            self.settings.setValue("page_index", self.sidebar.currentRow())
+            self.settings.setValue("page_index", self.stack.currentIndex())
             self.app_state.shutdown()
             self.thread_pool.clear()
             self.thread_pool.waitForDone(3000)

@@ -147,6 +147,32 @@ def test_bid_ask_import_and_resample(tmp_path: Path) -> None:
     assert float(min1["spread_close"].min()) > 0
 
 
+def test_bid_ask_import_repairs_minor_ohlc_inconsistencies(tmp_path: Path) -> None:
+    index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    mid_prices = np.linspace(100.0, 100.5, len(index))
+    spreads = np.full(len(index), 0.04)
+    quote_frame = _make_quote_frame(index, mid_prices, spreads).copy()
+    quote_frame.loc[index[5], "bid_high"] = quote_frame.loc[index[5], "bid_open"] - 0.001
+    quote_frame.loc[index[8], "ask_low"] = quote_frame.loc[index[8], "ask_close"] + 0.002
+    quote_frame.loc[index[10], "ask_low"] = quote_frame.loc[index[10], "bid_low"] - 0.002
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_invalid.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_invalid.csv"
+    _write_jforex_csv(bid_path, quote_frame, "bid")
+    _write_jforex_csv(ask_path, quote_frame, "ask")
+
+    importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
+    result = importer.import_bid_ask_files(bid_path, ask_path)
+
+    assert result.imported_rows == 20
+    assert any("BID CSV に OHLC の不整合" in message for message in result.messages)
+    assert any("ASK CSV に OHLC の不整合" in message for message in result.messages)
+    assert any("負のスプレッド" in message for message in result.messages)
+    min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
+    assert float(min1.loc[index[5], "bid_high"]) >= float(min1.loc[index[5], "bid_open"])
+    assert float(min1.loc[index[8], "ask_low"]) <= float(min1.loc[index[8], "ask_close"])
+    assert float(min1.loc[index[10], "ask_low"]) >= float(min1.loc[index[10], "bid_low"])
+
+
 def test_combined_quote_csv_import_preserves_bid_ask(tmp_path: Path) -> None:
     index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
     mid_prices = np.linspace(100.0, 100.5, len(index))

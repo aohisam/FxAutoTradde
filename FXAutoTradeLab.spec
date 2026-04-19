@@ -8,13 +8,18 @@ SRC_DIR = ROOT_DIR / "src"
 SCRIPT_PATH = ROOT_DIR / "scripts" / "desktop_entry.py"
 CONFIGS_DIR = ROOT_DIR / "configs"
 RESOURCES_DIR = ROOT_DIR / "resources"
+DESKTOP_ASSETS_DIR = SRC_DIR / "fxautotrade_lab" / "desktop" / "assets"
 ICON_PATH = RESOURCES_DIR / "app_icon.icns"
 
 a = Analysis(
     [str(SCRIPT_PATH)],
     pathex=[str(SRC_DIR)],
     binaries=[],
-    datas=[(str(CONFIGS_DIR), 'configs'), (str(RESOURCES_DIR), 'resources')],
+    datas=[
+        (str(CONFIGS_DIR), 'configs'),
+        (str(RESOURCES_DIR), 'resources'),
+        (str(DESKTOP_ASSETS_DIR), 'fxautotrade_lab/desktop/assets'),
+    ],
     hiddenimports=['pytz', 'fxautotrade_lab.desktop.pages.automation', 'fxautotrade_lab.desktop.pages.backtest', 'fxautotrade_lab.desktop.pages.data_sync', 'fxautotrade_lab.desktop.pages.misc', 'fxautotrade_lab.desktop.pages.overview', 'fxautotrade_lab.desktop.pages.signals', 'fxautotrade_lab.desktop.pages.watchlist', 'fxautotrade_lab.desktop.charts', 'fxautotrade_lab.desktop.models', 'fxautotrade_lab.desktop.workers', 'PySide6.QtCharts'],
     hookspath=[],
     hooksconfig={},

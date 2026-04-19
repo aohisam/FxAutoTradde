@@ -86,6 +86,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         QFormLayout,
         QFrame,
         QGridLayout,
+        QHBoxLayout,
         QHeaderView,
         QLabel,
         QMessageBox,
@@ -99,7 +100,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
-    from fxautotrade_lab.desktop.ui_controls import set_button_enabled, set_button_role
+    from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.card import Card
+    from fxautotrade_lab.desktop.widgets.chip import Chip
     from fxautotrade_lab.data.jforex import resolve_bid_ask_csv_selection
 
     DataFrameTableModel = load_dataframe_model_class()
@@ -110,51 +113,52 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     page.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     content = QWidget()
     layout = QVBoxLayout(content)
-    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
     page.setWidget(content)
-    title = QLabel("データ同期")
-    title.setStyleSheet("font-size: 22px; font-weight: 700;")
-    layout.addWidget(title)
 
-    banner = QLabel(
+    header_row = QHBoxLayout()
+    header_left = QVBoxLayout()
+    header_left.setSpacing(2)
+    title = QLabel("データ同期")
+    title.setProperty("role", "h1")
+    subtitle = QLabel("CSV インポート / GMO 空白補完 / fixture 生成")
+    subtitle.setProperty("role", "muted")
+    header_left.addWidget(title)
+    header_left.addWidget(subtitle)
+    header_row.addLayout(header_left, 1)
+    import_button = QPushButton("Bid / Ask CSV をインポート")
+    import_button.setProperty("variant", "ghost")
+    sync_button = QPushButton("同期を実行")
+    sync_button.setProperty("variant", "primary")
+    header_row.addWidget(import_button)
+    header_row.addWidget(sync_button)
+    layout.addLayout(header_row)
+
+    banner = Card(sunken=True)
+    banner_label = QLabel(
         "CSV は長期履歴の母体として使い、GMO は既存キャッシュとの空白期間だけを追加取得する運用を前提にしています。"
-        " CSV インポートはファイル内の共通期間で反映し、同期期間 UI は使いません。"
+        " CSV インポートはファイル内の共通期間で反映します。"
         " GMO は選択した期間内で未取得分だけを補完し、現在時刻まで追いつかせる用途に向いています。"
     )
-    banner.setWordWrap(True)
-    banner.setStyleSheet("background: #f3f7fb; border-radius: 12px; padding: 12px;")
+    banner_label.setWordWrap(True)
+    banner_label.setProperty("role", "muted")
+    banner.addBodyWidget(banner_label)
     layout.addWidget(banner)
 
     grid = QGridLayout()
-    grid.setHorizontalSpacing(16)
-    grid.setVerticalSpacing(16)
+    grid.setHorizontalSpacing(14)
+    grid.setVerticalSpacing(14)
     grid.setColumnStretch(0, 1)
     grid.setColumnStretch(1, 1)
-    summary_card = QFrame()
-    summary_card.setObjectName("dataSyncSummaryCard")
-    summary_card.setStyleSheet(
-        "QFrame#dataSyncSummaryCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
-    )
-    summary_layout = QVBoxLayout(summary_card)
-    watchlist_summary = QLabel()
-    watchlist_summary.setWordWrap(True)
-    cache_summary = QLabel()
-    cache_summary.setWordWrap(True)
-    summary_layout.addWidget(QLabel("対象一覧"))
-    summary_layout.addWidget(watchlist_summary)
-    summary_layout.addWidget(QLabel("キャッシュ状態"))
-    summary_layout.addWidget(cache_summary)
-    grid.addWidget(summary_card, 0, 0)
 
-    sync_card = QFrame()
-    sync_card.setObjectName("dataSyncControlCard")
-    sync_card.setStyleSheet(
-        "QFrame#dataSyncControlCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
-    )
-    control_layout = QVBoxLayout(sync_card)
-    control_layout.addWidget(QLabel("GMO / fixture 同期"))
+    # Sync card
+    sync_card = Card(title="GMO / fixture 同期", subtitle="対象範囲と足種を指定")
     form = QFormLayout()
+    form.setLabelAlignment(Qt.AlignRight)
+    form.setFormAlignment(Qt.AlignTop)
+    form.setHorizontalSpacing(12)
+    form.setVerticalSpacing(10)
     source_combo = QComboBox()
     source_combo.addItem("GMO 空白補完", "gmo")
     source_combo.addItem("fixture 生成", "fixture")
@@ -167,7 +171,11 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     end_date.setCalendarPopup(True)
     end_date.setDisplayFormat("yyyy-MM-dd")
     start_date.setDate(QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd"))
-    end_date.setDate(QDate.currentDate() if default_sync_source == "gmo" else QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd"))
+    end_date.setDate(
+        QDate.currentDate()
+        if default_sync_source == "gmo"
+        else QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd")
+    )
     timeframe_checks: dict[str, QCheckBox] = {}
     timeframe_widget = QWidget()
     timeframe_layout = QGridLayout(timeframe_widget)
@@ -191,85 +199,106 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     form.addRow("同期開始日", start_date)
     form.addRow("同期終了日", end_date)
     form.addRow("同期時間足", timeframe_widget)
-    control_layout.addLayout(form)
+    sync_card.addBodyLayout(form)
     helper_text = QLabel()
     helper_text.setWordWrap(True)
-    helper_text.setStyleSheet("color: #4d647d;")
-    control_layout.addWidget(helper_text)
+    helper_text.setProperty("role", "muted")
+    sync_card.addBodyWidget(helper_text)
     progress = QProgressBar()
     progress.setAlignment(Qt.AlignCenter)
     progress.setValue(0)
-    control_layout.addWidget(progress)
-    button_row = QHBoxLayout()
-    sync_button = QPushButton("実行")
+    sync_card.addBodyWidget(progress)
+    sync_button_row = QHBoxLayout()
     reload_button = QPushButton("再読込")
-    set_button_role(sync_button, "primary")
-    set_button_role(reload_button, "secondary")
-    button_row.addWidget(sync_button)
-    button_row.addWidget(reload_button)
-    button_row.addStretch(1)
-    control_layout.addLayout(button_row)
-    grid.addWidget(sync_card, 0, 1)
-    layout.addLayout(grid)
+    reload_button.setProperty("variant", "ghost")
+    sync_button_row.addStretch(1)
+    sync_button_row.addWidget(reload_button)
+    sync_card.addBodyLayout(sync_button_row)
+    grid.addWidget(sync_card, 0, 0)
 
-    import_card = QFrame()
-    import_card.setObjectName("dataSyncImportCard")
-    import_card.setStyleSheet(
-        "QFrame#dataSyncImportCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
-    )
-    import_layout = QVBoxLayout(import_card)
-    import_layout.addWidget(QLabel("CSV 履歴インポート"))
+    # CSV import card
+    import_card = Card(title="CSV 履歴インポート", subtitle="JForex Bid / Ask を同時取り込み")
     import_help = QLabel(
         "JForex の Bid / Ask 2ファイルを同時に選択して、履歴キャッシュを作成します。"
-        " CSV インポートでは開始日・終了日は使わず、Bid / Ask の共通期間だけを反映します。"
-        " まず CSV で長期履歴を入れ、その後に GMO 同期で空白だけを補完する使い方を推奨します。"
+        " Bid / Ask の共通期間だけを反映します。"
     )
     import_help.setWordWrap(True)
-    import_help.setStyleSheet("color: #4d647d;")
-    import_layout.addWidget(import_help)
-    import_button = QPushButton("Bid / Ask CSV をインポート")
-    set_button_role(import_button, "success")
-    import_layout.addWidget(import_button, alignment=Qt.AlignLeft)
-    layout.addWidget(import_card)
+    import_help.setProperty("role", "muted")
+    import_card.addBodyWidget(import_help)
+    overwrite_box = QCheckBox("同一期間を上書き（推奨: OFF）")
+    overwrite_box.setChecked(False)
+    overwrite_box.setEnabled(False)
+    import_card.addBodyWidget(overwrite_box)
+    import_card.addBodyWidget(QLabel(" "))  # spacer
+    import_button_row = QHBoxLayout()
+    preview_button = QPushButton("プレビュー")
+    preview_button.setProperty("variant", "ghost")
+    preview_button.setEnabled(False)
+    run_import_button = QPushButton("インポート実行")
+    run_import_button.setProperty("variant", "primary")
+    import_button_row.addStretch(1)
+    import_button_row.addWidget(preview_button)
+    import_button_row.addWidget(run_import_button)
+    import_card.addBodyLayout(import_button_row)
+    grid.addWidget(import_card, 0, 1)
+    layout.addLayout(grid)
 
-    output_card = QFrame()
-    output_card.setObjectName("dataSyncOutputCard")
-    output_card.setStyleSheet(
-        "QFrame#dataSyncOutputCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
+    # Result table card
+    last_run_chip = Chip("直近実行: 未実行", "neutral")
+    result_card = Card(
+        title="対象一覧 / キャッシュ状態",
+        subtitle="各ペアの取得状況",
+        header_right=last_run_chip,
     )
-    output_layout = QVBoxLayout(output_card)
-    output_layout.addWidget(QLabel("同期ログ"))
-    output = QTextEdit()
-    output.setReadOnly(True)
-    output.setMinimumHeight(180)
-    output_layout.addWidget(output)
-    layout.addWidget(output_card)
-
-    result_card = QFrame()
-    result_card.setObjectName("dataSyncResultCard")
-    result_card.setStyleSheet(
-        "QFrame#dataSyncResultCard { background: white; border: 1px solid #dbe3ee; border-radius: 14px; }"
-    )
-    result_layout = QVBoxLayout(result_card)
-    result_layout.addWidget(QLabel("同期結果一覧"))
+    summary_label = QLabel()
+    summary_label.setWordWrap(True)
+    summary_label.setProperty("role", "muted")
+    result_card.addBodyWidget(summary_label)
     result_table = QTableView()
-    result_table.setAlternatingRowColors(True)
+    result_table.setAlternatingRowColors(False)
+    result_table.setShowGrid(False)
+    result_table.verticalHeader().setVisible(False)
     result_table.horizontalHeader().setStretchLastSection(True)
     result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
     result_table.setMinimumHeight(320)
     result_model = DataFrameTableModel()
     result_table.setModel(result_model)
-    result_layout.addWidget(result_table)
+    result_card.addBodyWidget(result_table)
     layout.addWidget(result_card)
+
+    # Log card
+    log_card = Card(title="同期ログ", subtitle="最新の実行結果")
+    output = QTextEdit()
+    output.setReadOnly(True)
+    output.setMinimumHeight(180)
+    output.setProperty("role", "mono")
+    log_card.addBodyWidget(output)
+    layout.addWidget(log_card)
+
     layout.addStretch(1)
     page._busy = False
 
+    # Wire up the two header action buttons to the internal buttons
+    def invoke_sync() -> None:
+        run_sync()
+
+    def invoke_import() -> None:
+        import_csv()
+
+    sync_button.clicked.connect(invoke_sync)
+    import_button.clicked.connect(invoke_import)
+
+    # Provide a hidden primary sync button for layout (keep existing API)
+    primary_sync_button = QPushButton()
+    primary_sync_button.hide()
+
     def set_busy(is_busy: bool) -> None:
         page._busy = is_busy
-        sync_button.setText("同期実行中..." if is_busy else "実行")
+        sync_button.setText("同期実行中..." if is_busy else "同期を実行")
         set_button_enabled(sync_button, not is_busy, busy=is_busy)
         set_button_enabled(reload_button, not is_busy, busy=is_busy)
         set_button_enabled(import_button, not is_busy, busy=is_busy)
+        set_button_enabled(run_import_button, not is_busy, busy=is_busy)
         source_combo.setEnabled(not is_busy)
         start_date.setEnabled(not is_busy)
         end_date.setEnabled(not is_busy)
@@ -277,28 +306,17 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             checkbox.setEnabled(not is_busy)
 
     def refresh_summary() -> None:
-        watchlist_summary.setText(
-            "\n".join(
-                [
-                    f"運用通貨ペア: {', '.join(app_state.config.watchlist.symbols)}",
-                    f"比較通貨ペア: {', '.join(app_state.config.watchlist.benchmark_symbols) if app_state.config.watchlist.benchmark_symbols else '未設定'}",
-                    (
-                        "補助通貨ペア: "
-                        f"{', '.join(app_state.config.watchlist.sector_symbols) if app_state.config.watchlist.sector_symbols else '未設定'}"
-                    ),
-                ]
-            )
-        )
         cache_dir = Path(app_state.config.data.cache_dir)
         files = list(cache_dir.rglob("*.parquet")) if cache_dir.exists() else []
         total_bytes = sum(path.stat().st_size for path in files) if files else 0
-        cache_summary.setText(
-            "\n".join(
+        summary_label.setText(
+            "  •  ".join(
                 [
-                    f"キャッシュディレクトリ: {cache_dir}",
-                    f"ファイル数: {len(files)}",
-                    f"合計サイズ: {total_bytes / (1024 * 1024):.2f} MB",
-                    f"現在の分析用データソース: {app_state.config.data.source}",
+                    f"運用: {len(app_state.config.watchlist.symbols)} ペア",
+                    f"比較: {len(app_state.config.watchlist.benchmark_symbols)} ペア",
+                    f"補助: {len(app_state.config.watchlist.sector_symbols)} ペア",
+                    f"キャッシュ {len(files)} ファイル / {total_bytes / (1024 * 1024):.2f} MB",
+                    f"アナリシスソース: {app_state.config.data.source}",
                 ]
             )
         )
@@ -316,7 +334,6 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         helper_text.setText(
             "GMO は選択期間のうち既存キャッシュにない区間だけを補完します。"
             " 1分〜1時間足の GMO 取得は 2023-10-28 以降のみです。"
-            " まず CSV で履歴を入れ、その後に現在時刻までの空白を GMO で埋める運用を推奨します。"
             " 未選択でも解析に必要な 1Day と "
             f"{app_state.config.strategy.entry_timeframe.value} は自動で含めます。"
         )
@@ -349,10 +366,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             }
             for timeframe in result.get("timeframes", [])
         ]
-        result_model.set_frame(
-            _detail_frame(detail_rows)
-        )
+        result_model.set_frame(_detail_frame(detail_rows))
         result_table.resizeColumnsToContents()
+        last_run_chip.set_text(f"CSV: {result['symbol']}")
+        last_run_chip.set_tone("info")
         output_lines = [
             "CSV インポート完了",
             f"通貨ペア: {result['symbol']}",
@@ -360,8 +377,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             f"重複スキップ行数: {result['skipped_rows']:,}",
             f"使用期間: {result['start']} - {result['end']}",
             f"今回反映した期間: {result['applied_start'] or '-'} - {result['applied_end'] or '-'}",
-            f"Bid 元期間: {result.get('bid_start', '-') } - {result.get('bid_end', '-')}",
-            f"Ask 元期間: {result.get('ask_start', '-') } - {result.get('ask_end', '-')}",
+            f"Bid 元期間: {result.get('bid_start', '-')} - {result.get('bid_end', '-')}",
+            f"Ask 元期間: {result.get('ask_start', '-')} - {result.get('ask_end', '-')}",
             f"作成時間足: {', '.join(result.get('timeframes', []))}",
             f"Bid ファイル: {result['bid_source_path']}",
             f"Ask ファイル: {result['ask_source_path']}",
@@ -380,6 +397,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         details = result.get("details", [])
         result_model.set_frame(_detail_frame(details))
         result_table.resizeColumnsToContents()
+        last_run_chip.set_text(
+            f"同期: {result.get('start_date', '-')} - {result.get('end_date', '-')}"
+        )
+        last_run_chip.set_tone("running")
         output.setPlainText(
             "\n".join(
                 [
@@ -405,6 +426,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         progress.setRange(0, 100)
         progress.setValue(0)
         result_model.set_frame(None)
+        last_run_chip.set_text("エラー")
+        last_run_chip.set_tone("neg")
         output.setPlainText(f"エラー\n{message}")
         log_message(f"データ同期エラー: {message}")
 
@@ -462,8 +485,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             on_error,
         )
 
-    import_button.clicked.connect(import_csv)
-    sync_button.clicked.connect(run_sync)
+    run_import_button.clicked.connect(import_csv)
     reload_button.clicked.connect(refresh_summary)
     source_combo.currentIndexChanged.connect(update_sync_source_hint)
     page.refresh = refresh_summary

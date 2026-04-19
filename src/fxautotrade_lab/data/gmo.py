@@ -156,13 +156,17 @@ class GmoForexPublicClient:
         if not rows:
             return self._empty_frame()
         frame = pd.DataFrame(rows).copy()
-        timestamps = pd.to_datetime(frame["openTime"], unit="ms", utc=True).dt.tz_convert(ASIA_TOKYO)
+        open_times = pd.to_numeric(frame["openTime"], errors="coerce")
+        invalid_rows = int(open_times.isna().sum())
+        if invalid_rows:
+            raise ValueError(f"GMO の kline openTime に不正な値が {invalid_rows} 件あります。")
+        timestamps = pd.to_datetime(open_times.astype("int64"), unit="ms", utc=True).dt.tz_convert(ASIA_TOKYO)
         normalized = pd.DataFrame(
             {
-                "open": frame["open"].astype(float),
-                "high": frame["high"].astype(float),
-                "low": frame["low"].astype(float),
-                "close": frame["close"].astype(float),
+                "open": frame["open"].astype(float).to_numpy(),
+                "high": frame["high"].astype(float).to_numpy(),
+                "low": frame["low"].astype(float).to_numpy(),
+                "close": frame["close"].astype(float).to_numpy(),
                 "volume": 0.0,
                 "symbol": symbol,
             },

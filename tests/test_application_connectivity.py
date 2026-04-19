@@ -8,6 +8,7 @@ from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
+from fxautotrade_lab.data.gmo import GmoForexPublicClient
 from fxautotrade_lab.security.keychain import GmoPrivateCredentialRecord
 
 from tests.conftest import write_config
@@ -46,6 +47,29 @@ def test_application_test_gmo_connection_success(monkeypatch, tmp_path):
     assert result["ticker_count"] == 1
     assert result["symbol_count"] == 1
     assert app.connection_test_results["public"]["ok"] is True
+
+
+def test_gmo_client_normalizes_string_epoch_open_time() -> None:
+    client = GmoForexPublicClient(EnvironmentConfig())
+
+    frame = client._normalize_klines(
+        {
+            "data": [
+                {
+                    "openTime": "1776286800000",
+                    "open": "150.0",
+                    "high": "150.2",
+                    "low": "149.9",
+                    "close": "150.1",
+                }
+            ]
+        },
+        "USD_JPY",
+    )
+
+    assert len(frame.index) == 1
+    assert frame.index[0] == pd.Timestamp("2026-04-16 06:00:00", tz=ASIA_TOKYO)
+    assert float(frame.iloc[0]["close"]) == 150.1
 
 
 def test_application_load_credential_values_masks_private_credentials(tmp_path):
