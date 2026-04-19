@@ -22,6 +22,11 @@ class Tokens:
     HAIRLINE: Final = "#e6e8ee"
     HAIRLINE_SOFT: Final = "#eff1f5"
 
+    # Additional surface tones (kept for future dark-mode work)
+    SURFACE_ALT: Final = "#fafbfc"
+    HEADER_BG: Final = "#f7f8fa"
+    INK_EMPHASIS: Final = "#334155"
+
     # Semantic
     POS: Final = "#0f766e"
     NEG: Final = "#b91c1c"

@@ -27,6 +27,11 @@ class AppStatusBar(QStatusBar):
             layout.addWidget(widget)
         self.addPermanentWidget(right)
 
+        self.setContentsMargins(12, 0, 12, 0)
+        layout.setContentsMargins(0, 0, 0, 0)
+        for widget in (self.cycle, self.lag, self.equity, self.daily):
+            widget.setContentsMargins(0, 0, 0, 0)
+
     def show_page(self, name: str) -> None:
         self.message.setText(name)
 

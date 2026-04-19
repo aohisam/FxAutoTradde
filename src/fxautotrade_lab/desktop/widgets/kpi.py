@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QWidget
 
 from .card import Card
@@ -22,6 +23,8 @@ class KpiTile(Card):
         eyebrow.setProperty("role", "eyebrow")
         self.value = QLabel(value)
         self.value.setProperty("role", "kpi-value")
+        self.value.setWordWrap(False)
+        self.value.setTextInteractionFlags(Qt.TextSelectableByMouse)
         if tone:
             self.value.setProperty("tone", tone)
         self.note = QLabel(note)

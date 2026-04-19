@@ -26,7 +26,7 @@ class Card(QFrame):
             head = QWidget()
             head.setObjectName("cardHead")
             hl = QHBoxLayout(head)
-            hl.setContentsMargins(14, 12, 14, 12)
+            hl.setContentsMargins(16, 12, 16, 12)
             hl.setSpacing(10)
             title_label = QLabel(title)
             title_label.setProperty("role", "h2")
@@ -46,7 +46,7 @@ class Card(QFrame):
         self.body = QWidget()
         self.body.setObjectName("cardBody")
         self.body_layout = QVBoxLayout(self.body)
-        self.body_layout.setContentsMargins(14, 14, 14, 14)
+        self.body_layout.setContentsMargins(16, 14, 16, 16)
         self.body_layout.setSpacing(10)
         outer.addWidget(self.body, 1)
 

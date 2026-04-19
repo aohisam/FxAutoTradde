@@ -434,8 +434,9 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
             layout.setSpacing(18)
             self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
             self.status_label = QLabel("チャートデータを表示します。")
+            self.status_label.setObjectName("nativeChartStatus")
+            self.status_label.setProperty("role", "muted")
             self.status_label.setWordWrap(True)
-            self.status_label.setStyleSheet("color: #475569; padding: 6px 2px 2px 2px; font-size: 13px;")
             layout.addWidget(self.status_label)
 
             self.price_chart = QChart()
@@ -456,9 +457,9 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
 
         def _build_view(self, chart: QChart) -> QChartView:
             view = QChartView(chart)
+            view.setObjectName("nativeChartView")
             view.setRenderHint(QPainter.Antialiasing, True)
             view.setRubberBand(QChartView.RectangleRubberBand)
-            view.setStyleSheet("background: white; border: 1px solid #dbe3ee; border-radius: 10px;")
             chart.legend().setVisible(True)
             chart.legend().setAlignment(Qt.AlignBottom)
             chart.setMargins(QMargins(8, 8, 8, 8))
