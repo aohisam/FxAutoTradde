@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -43,6 +44,25 @@ SOURCE_LABELS = {
 }
 
 
+SEG_SOURCE_LABELS = ["GMO 実時間", "fixture", "JForex CSV"]
+SEG_SOURCE_KEYS = ["gmo", "fixture", "csv"]
+
+SEG_TF_LABELS = ["1m", "5m", "15m", "1h", "4h"]
+SEG_TF_MAP = {
+    "1m": TimeFrame.MIN_1,
+    "5m": TimeFrame.MIN_5,
+    "15m": TimeFrame.MIN_15,
+    "1h": TimeFrame.HOUR_1,
+    "4h": TimeFrame.HOUR_4,
+}
+
+SOURCE_HINTS = {
+    "gmo":     "GMO は選択期間のうち既存キャッシュにない区間だけを補完します。1分〜1時間足は 2023-10-28 以降のみ。",
+    "fixture": "fixture は疑似データを再生成します。CSV や GMO キャッシュは埋めません。",
+    "csv":     "CSV 履歴は右の CSV 履歴インポートから取り込みます。",
+}
+
+
 def _detail_frame(details: list[dict[str, object]]) -> pd.DataFrame:
     if not details:
         return pd.DataFrame(
@@ -80,7 +100,6 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     from PySide6.QtCore import QDate, Qt
     from PySide6.QtWidgets import (
         QCheckBox,
-        QComboBox,
         QDateEdit,
         QFileDialog,
         QFormLayout,
@@ -89,24 +108,30 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         QHBoxLayout,
         QHeaderView,
         QLabel,
+        QLineEdit,
         QMessageBox,
         QProgressBar,
         QPushButton,
         QScrollArea,
         QTableView,
-        QTextEdit,
+        QTextBrowser,
         QVBoxLayout,
         QWidget,
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.theme import Tokens
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.banner import Banner
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
+    from fxautotrade_lab.desktop.widgets.segmented import SegmentedControl
+    from fxautotrade_lab.desktop.widgets.suffix_input import LabeledSuffixInput
     from fxautotrade_lab.data.jforex import resolve_bid_ask_csv_selection
 
     DataFrameTableModel = load_dataframe_model_class()
 
+    # ---- Scroll container ----
     page = QScrollArea()
     page.setWidgetResizable(True)
     page.setFrameShape(QFrame.NoFrame)
@@ -117,53 +142,59 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     layout.setSpacing(16)
     page.setWidget(content)
 
-    header_row = QHBoxLayout()
-    header_left = QVBoxLayout()
-    header_left.setSpacing(2)
+    # ---- Header ----
+    header = QHBoxLayout()
+    header.setSpacing(12)
+    header_text = QVBoxLayout()
+    header_text.setSpacing(2)
     title = QLabel("データ同期")
     title.setProperty("role", "h1")
-    subtitle = QLabel("CSV インポート / GMO 空白補完 / fixture 生成")
+    subtitle = QLabel(
+        "GMO / fixture / JForex CSV から対象ペアの履歴を取得・キャッシュします。"
+    )
     subtitle.setProperty("role", "muted")
-    header_left.addWidget(title)
-    header_left.addWidget(subtitle)
-    header_row.addLayout(header_left, 1)
-    import_button = QPushButton("Bid / Ask CSV をインポート")
+    subtitle.setWordWrap(True)
+    header_text.addWidget(title)
+    header_text.addWidget(subtitle)
+    header.addLayout(header_text, 1)
+    import_button = QPushButton("CSV インポート")
     import_button.setProperty("variant", "ghost")
     sync_button = QPushButton("同期を実行")
     sync_button.setProperty("variant", "primary")
-    header_row.addWidget(import_button)
-    header_row.addWidget(sync_button)
-    layout.addLayout(header_row)
+    header.addWidget(import_button)
+    header.addWidget(sync_button)
+    layout.addLayout(header)
 
-    banner = Card(sunken=True)
-    banner_label = QLabel(
-        "CSV は長期履歴の母体として使い、GMO は既存キャッシュとの空白期間だけを追加取得する運用を前提にしています。"
-        " CSV インポートはファイル内の共通期間で反映します。"
-        " GMO は選択した期間内で未取得分だけを補完し、現在時刻まで追いつかせる用途に向いています。"
+    # ---- Banner ----
+    layout.addWidget(
+        Banner(
+            "CSV は長期履歴の母体、GMO は空白期間の追加取得、fixture はテスト用疑似データです。"
+        )
     )
-    banner_label.setWordWrap(True)
-    banner_label.setProperty("role", "muted")
-    banner.addBodyWidget(banner_label)
-    layout.addWidget(banner)
 
+    # ---- grid-2 cards ----
     grid = QGridLayout()
     grid.setHorizontalSpacing(14)
     grid.setVerticalSpacing(14)
     grid.setColumnStretch(0, 1)
     grid.setColumnStretch(1, 1)
 
-    # Sync card
-    sync_card = Card(title="GMO / fixture 同期", subtitle="対象範囲と足種を指定")
+    # --- Sync card (LEFT) ---
+    sync_card = Card(title="GMO / fixture 同期")
     form = QFormLayout()
-    form.setLabelAlignment(Qt.AlignRight)
-    form.setFormAlignment(Qt.AlignTop)
     form.setHorizontalSpacing(12)
     form.setVerticalSpacing(10)
-    source_combo = QComboBox()
-    source_combo.addItem("GMO 空白補完", "gmo")
-    source_combo.addItem("fixture 生成", "fixture")
-    default_sync_source = "fixture" if app_state.config.data.source == "fixture" else "gmo"
-    source_combo.setCurrentIndex(0 if default_sync_source == "gmo" else 1)
+    form.setLabelAlignment(Qt.AlignLeft)
+
+    default_source_key = app_state.config.data.source
+    if default_source_key not in SEG_SOURCE_KEYS:
+        default_source_key = "gmo"
+    source_seg = SegmentedControl(
+        SEG_SOURCE_LABELS,
+        current=SEG_SOURCE_KEYS.index(default_source_key),
+        data=SEG_SOURCE_KEYS,
+    )
+
     start_date = QDateEdit()
     start_date.setCalendarPopup(True)
     start_date.setDisplayFormat("yyyy-MM-dd")
@@ -171,85 +202,101 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     end_date.setCalendarPopup(True)
     end_date.setDisplayFormat("yyyy-MM-dd")
     start_date.setDate(QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd"))
-    end_date.setDate(
-        QDate.currentDate()
-        if default_sync_source == "gmo"
-        else QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd")
-    )
-    timeframe_checks: dict[str, QCheckBox] = {}
-    timeframe_widget = QWidget()
-    timeframe_layout = QGridLayout(timeframe_widget)
-    timeframe_layout.setContentsMargins(0, 0, 0, 0)
-    timeframe_layout.setHorizontalSpacing(10)
-    timeframe_layout.setVerticalSpacing(6)
-    for timeframe in SYNC_TIMEFRAMES:
-        box = QCheckBox(timeframe.value)
-        box.setChecked(timeframe in set(app_state.config.data.timeframes))
-        timeframe_checks[timeframe.value] = box
-    timeframe_columns = 4
-    for index, timeframe in enumerate(SYNC_TIMEFRAMES):
-        timeframe_layout.addWidget(
-            timeframe_checks[timeframe.value],
-            index // timeframe_columns,
-            index % timeframe_columns,
-        )
-    for column in range(timeframe_columns):
-        timeframe_layout.setColumnStretch(column, 1)
-    form.addRow("同期ソース", source_combo)
-    form.addRow("同期開始日", start_date)
-    form.addRow("同期終了日", end_date)
-    form.addRow("同期時間足", timeframe_widget)
+    end_date.setDate(QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd"))
+
+    tf_seg = SegmentedControl(SEG_TF_LABELS, current=2, data=SEG_TF_LABELS)
+    try:
+        entry_tf = app_state.config.strategy.entry_timeframe.value
+        for index, label in enumerate(SEG_TF_LABELS):
+            if SEG_TF_MAP[label].value == entry_tf:
+                tf_seg.set_current(index)
+                break
+    except Exception:  # noqa: BLE001
+        pass
+
+    parallel = LabeledSuffixInput(value="4", suffix="並列")
+    parallel.setFixedWidth(160)
+
+    form.addRow("データソース", source_seg)
+    form.addRow("開始日", start_date)
+    form.addRow("終了日", end_date)
+    form.addRow("足種", tf_seg)
+    form.addRow("並列度", parallel)
     sync_card.addBodyLayout(form)
+
     helper_text = QLabel()
     helper_text.setWordWrap(True)
     helper_text.setProperty("role", "muted")
     sync_card.addBodyWidget(helper_text)
+
     progress = QProgressBar()
     progress.setAlignment(Qt.AlignCenter)
     progress.setValue(0)
     sync_card.addBodyWidget(progress)
-    sync_button_row = QHBoxLayout()
+
+    reload_row = QHBoxLayout()
     reload_button = QPushButton("再読込")
     reload_button.setProperty("variant", "ghost")
-    sync_button_row.addStretch(1)
-    sync_button_row.addWidget(reload_button)
-    sync_card.addBodyLayout(sync_button_row)
+    reload_row.addStretch(1)
+    reload_row.addWidget(reload_button)
+    sync_card.addBodyLayout(reload_row)
     grid.addWidget(sync_card, 0, 0)
 
-    # CSV import card
-    import_card = Card(title="CSV 履歴インポート", subtitle="JForex Bid / Ask を同時取り込み")
-    import_help = QLabel(
-        "JForex の Bid / Ask 2ファイルを同時に選択して、履歴キャッシュを作成します。"
-        " Bid / Ask の共通期間だけを反映します。"
-    )
-    import_help.setWordWrap(True)
-    import_help.setProperty("role", "muted")
-    import_card.addBodyWidget(import_help)
+    # --- CSV import card (RIGHT) ---
+    import_card = Card(title="CSV 履歴インポート")
+    import_form = QFormLayout()
+    import_form.setHorizontalSpacing(12)
+    import_form.setVerticalSpacing(10)
+    import_form.setLabelAlignment(Qt.AlignLeft)
+
+    file_row = QHBoxLayout()
+    file_row.setSpacing(6)
+    file_edit = QLineEdit()
+    file_edit.setReadOnly(True)
+    file_edit.setPlaceholderText("Bid と Ask の 2 ファイルを選択")
+    choose_btn = QPushButton("選択…")
+    choose_btn.setProperty("variant", "ghost")
+    file_row.addWidget(file_edit, 1)
+    file_row.addWidget(choose_btn)
+
+    symbols_edit = QLineEdit()
+    symbols_edit.setPlaceholderText("例: USD/JPY, EUR/USD")
+
     overwrite_box = QCheckBox("同一期間を上書き（推奨: OFF）")
     overwrite_box.setChecked(False)
     overwrite_box.setEnabled(False)
-    import_card.addBodyWidget(overwrite_box)
-    import_card.addBodyWidget(QLabel(" "))  # spacer
-    import_button_row = QHBoxLayout()
+
+    import_form.addRow("対象ファイル", file_row)
+    import_form.addRow("対象ペア", symbols_edit)
+    import_form.addRow("既存キャッシュ", overwrite_box)
+    import_card.addBodyLayout(import_form)
+
+    import_btns = QHBoxLayout()
+    import_btns.addStretch(1)
     preview_button = QPushButton("プレビュー")
     preview_button.setProperty("variant", "ghost")
     preview_button.setEnabled(False)
     run_import_button = QPushButton("インポート実行")
     run_import_button.setProperty("variant", "primary")
-    import_button_row.addStretch(1)
-    import_button_row.addWidget(preview_button)
-    import_button_row.addWidget(run_import_button)
-    import_card.addBodyLayout(import_button_row)
+    import_btns.addWidget(preview_button)
+    import_btns.addWidget(run_import_button)
+    import_card.addBodyLayout(import_btns)
     grid.addWidget(import_card, 0, 1)
     layout.addLayout(grid)
 
-    # Result table card
+    # ---- Result table card ----
     last_run_chip = Chip("直近実行: 未実行", "neutral")
-    result_card = Card(
-        title="対象一覧 / キャッシュ状態",
-        subtitle="各ペアの取得状況",
-        header_right=last_run_chip,
-    )
+    refresh_icon_btn = QPushButton("↻")
+    refresh_icon_btn.setProperty("variant", "ghost")
+    refresh_icon_btn.setFixedWidth(32)
+    refresh_icon_btn.setToolTip("再読込")
+    head_right = QWidget()
+    hr = QHBoxLayout(head_right)
+    hr.setContentsMargins(0, 0, 0, 0)
+    hr.setSpacing(8)
+    hr.addWidget(last_run_chip)
+    hr.addWidget(refresh_icon_btn)
+    result_card = Card(title="対象一覧 / キャッシュ状態", header_right=head_right)
     summary_label = QLabel()
     summary_label.setWordWrap(True)
     summary_label.setProperty("role", "muted")
@@ -266,44 +313,64 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     result_card.addBodyWidget(result_table)
     layout.addWidget(result_card)
 
-    # Log card
-    log_card = Card(title="同期ログ", subtitle="最新の実行結果")
-    output = QTextEdit()
-    output.setReadOnly(True)
+    # ---- Log card ----
+    log_card = Card(title="同期ログ")
+    output = QTextBrowser()
+    output.setProperty("role", "logdock")
+    output.setOpenExternalLinks(False)
     output.setMinimumHeight(180)
-    output.setProperty("role", "mono")
     log_card.addBodyWidget(output)
     layout.addWidget(log_card)
 
     layout.addStretch(1)
     page._busy = False
+    page._selected_files: list[str] = []
 
-    # Wire up the two header action buttons to the internal buttons
-    def invoke_sync() -> None:
-        run_sync()
+    # ---- Helpers ----
+    def current_source_key() -> str:
+        index = source_seg.current()
+        if 0 <= index < len(SEG_SOURCE_KEYS):
+            return SEG_SOURCE_KEYS[index]
+        return SEG_SOURCE_KEYS[0]
 
-    def invoke_import() -> None:
-        import_csv()
+    def selected_timeframes() -> list[TimeFrame]:
+        label = SEG_TF_LABELS[tf_seg.current()] if 0 <= tf_seg.current() < len(SEG_TF_LABELS) else "15m"
+        chosen = SEG_TF_MAP[label]
+        required = [app_state.config.strategy.entry_timeframe, TimeFrame.DAY_1]
+        ordered: list[TimeFrame] = [chosen]
+        for timeframe in required:
+            if timeframe not in ordered:
+                ordered.append(timeframe)
+        return ordered
 
-    sync_button.clicked.connect(invoke_sync)
-    import_button.clicked.connect(invoke_import)
+    _LOG_COLORS = {
+        "INFO": Tokens.INFO,
+        "WARN": Tokens.WARN,
+        "OK": Tokens.POS,
+        "ERR": Tokens.NEG,
+    }
 
-    # Provide a hidden primary sync button for layout (keep existing API)
-    primary_sync_button = QPushButton()
-    primary_sync_button.hide()
+    def append_log(level: str, message: str) -> None:
+        color = _LOG_COLORS.get(level, Tokens.MUTED)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        html = (
+            f'<div><span style="color:{Tokens.MUTED_2};">{timestamp}</span> '
+            f'<span style="color:{color};font-weight:600;">[{level}]</span> '
+            f'{message}</div>'
+        )
+        output.append(html)
 
     def set_busy(is_busy: bool) -> None:
         page._busy = is_busy
         sync_button.setText("同期実行中..." if is_busy else "同期を実行")
-        set_button_enabled(sync_button, not is_busy, busy=is_busy)
-        set_button_enabled(reload_button, not is_busy, busy=is_busy)
-        set_button_enabled(import_button, not is_busy, busy=is_busy)
-        set_button_enabled(run_import_button, not is_busy, busy=is_busy)
-        source_combo.setEnabled(not is_busy)
+        for button in (sync_button, reload_button, import_button, run_import_button, choose_btn):
+            set_button_enabled(button, not is_busy, busy=is_busy)
+        source_seg.setEnabled(not is_busy)
+        tf_seg.setEnabled(not is_busy)
         start_date.setEnabled(not is_busy)
         end_date.setEnabled(not is_busy)
-        for checkbox in timeframe_checks.values():
-            checkbox.setEnabled(not is_busy)
+        parallel.setEnabled(not is_busy)
+        symbols_edit.setEnabled(not is_busy)
 
     def refresh_summary() -> None:
         cache_dir = Path(app_state.config.data.cache_dir)
@@ -315,38 +382,16 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
                     f"運用: {len(app_state.config.watchlist.symbols)} ペア",
                     f"比較: {len(app_state.config.watchlist.benchmark_symbols)} ペア",
                     f"補助: {len(app_state.config.watchlist.sector_symbols)} ペア",
-                    f"キャッシュ {len(files)} ファイル / {total_bytes / (1024 * 1024):.2f} MB",
-                    f"アナリシスソース: {app_state.config.data.source}",
+                    f"キャッシュ {len(files)} / {total_bytes / (1024 * 1024):.2f} MB",
+                    f"ソース: {app_state.config.data.source}",
                 ]
             )
         )
 
-    def update_sync_source_hint() -> None:
-        selected_source = str(source_combo.currentData() or source_combo.currentText())
-        if selected_source == "fixture":
-            helper_text.setText(
-                "fixture はテスト用の疑似データを再生成します。"
-                " CSV や GMO の既存キャッシュは埋めず、指定期間のテスト用データを作る用途です。"
-                " 未選択でも解析に必要な 1Day と "
-                f"{app_state.config.strategy.entry_timeframe.value} は自動で含めます。"
-            )
-            return
-        helper_text.setText(
-            "GMO は選択期間のうち既存キャッシュにない区間だけを補完します。"
-            " 1分〜1時間足の GMO 取得は 2023-10-28 以降のみです。"
-            " 未選択でも解析に必要な 1Day と "
-            f"{app_state.config.strategy.entry_timeframe.value} は自動で含めます。"
-        )
+    def update_hint() -> None:
+        helper_text.setText(SOURCE_HINTS.get(current_source_key(), ""))
 
-    def selected_timeframes() -> list[TimeFrame]:
-        selected = [TimeFrame(value) for value, checkbox in timeframe_checks.items() if checkbox.isChecked()]
-        required = [app_state.config.strategy.entry_timeframe, TimeFrame.DAY_1]
-        ordered: list[TimeFrame] = []
-        for timeframe in [*selected, *required]:
-            if timeframe not in ordered:
-                ordered.append(timeframe)
-        return ordered
-
+    # ---- callbacks ----
     def on_import_finished(result) -> None:  # noqa: ANN001
         set_busy(False)
         progress.setRange(0, 100)
@@ -370,26 +415,25 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         result_table.resizeColumnsToContents()
         last_run_chip.set_text(f"CSV: {result['symbol']}")
         last_run_chip.set_tone("info")
-        output_lines = [
-            "CSV インポート完了",
-            f"通貨ペア: {result['symbol']}",
-            f"新規反映行数: {result['imported_rows']:,}",
-            f"重複スキップ行数: {result['skipped_rows']:,}",
-            f"使用期間: {result['start']} - {result['end']}",
-            f"今回反映した期間: {result['applied_start'] or '-'} - {result['applied_end'] or '-'}",
-            f"Bid 元期間: {result.get('bid_start', '-')} - {result.get('bid_end', '-')}",
-            f"Ask 元期間: {result.get('ask_start', '-')} - {result.get('ask_end', '-')}",
-            f"作成時間足: {', '.join(result.get('timeframes', []))}",
-            f"Bid ファイル: {result['bid_source_path']}",
-            f"Ask ファイル: {result['ask_source_path']}",
-        ]
-        if result.get("messages"):
-            output_lines.extend(["", "補足"] + list(result["messages"]))
-        output.setPlainText("\n".join(output_lines))
+        append_log("OK", f"CSV インポート完了: {result['symbol']}")
+        append_log("INFO", f"新規反映行数: {result['imported_rows']:,}")
+        append_log("INFO", f"重複スキップ: {result['skipped_rows']:,}")
+        append_log("INFO", f"使用期間: {result['start']} - {result['end']}")
+        applied_start = result.get("applied_start") or "-"
+        applied_end = result.get("applied_end") or "-"
+        append_log("INFO", f"今回反映: {applied_start} - {applied_end}")
+        append_log(
+            "INFO",
+            f"Bid: {result.get('bid_start', '-')} - {result.get('bid_end', '-')} / "
+            f"Ask: {result.get('ask_start', '-')} - {result.get('ask_end', '-')}",
+        )
+        append_log("INFO", f"作成時間足: {', '.join(result.get('timeframes', []))}")
+        for message in result.get("messages", []) or []:
+            append_log("WARN", str(message))
         QMessageBox.information(page, "完了", f"{result['symbol']} の Bid / Ask CSV を取り込みました。")
         log_message(f"Bid / Ask CSV を取り込みました: {result['symbol']}")
 
-    def on_finished(result) -> None:
+    def on_finished(result) -> None:  # noqa: ANN001
         set_busy(False)
         progress.setRange(0, 100)
         progress.setValue(100)
@@ -397,28 +441,24 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         details = result.get("details", [])
         result_model.set_frame(_detail_frame(details))
         result_table.resizeColumnsToContents()
-        last_run_chip.set_text(
-            f"同期: {result.get('start_date', '-')} - {result.get('end_date', '-')}"
-        )
+        start = result.get("start_date", app_state.config.data.start_date)
+        end = result.get("end_date", app_state.config.data.end_date)
+        last_run_chip.set_text(f"同期: {start} - {end}")
         last_run_chip.set_tone("running")
-        output.setPlainText(
-            "\n".join(
-                [
-                    "完了",
-                    f"同期した監視通貨ペア数: {result.get('symbols', 0)}",
-                    f"比較通貨ペア数: {result.get('benchmarks', 0)}",
-                    f"補助通貨ペア数: {result.get('sectors', 0)}",
-                    f"期間: {result.get('start_date', app_state.config.data.start_date)} - {result.get('end_date', app_state.config.data.end_date)}",
-                    f"時間足: {', '.join(result.get('timeframes', []))}",
-                    f"同期ソース: {result.get('source', app_state.config.data.source)}",
-                    (
-                        "同期方法: 未取得期間のみ追加取得"
-                        if result.get("sync_mode") == "incremental"
-                        else "同期方法: fixture を使用"
-                    ),
-                ]
-            )
+        append_log("OK", "同期完了")
+        append_log(
+            "INFO",
+            f"監視 {result.get('symbols', 0)} / 比較 {result.get('benchmarks', 0)} / 補助 {result.get('sectors', 0)} ペア",
         )
+        append_log("INFO", f"期間: {start} - {end}")
+        append_log("INFO", f"時間足: {', '.join(result.get('timeframes', []))}")
+        append_log("INFO", f"同期ソース: {result.get('source', app_state.config.data.source)}")
+        mode_line = (
+            "同期方法: 未取得期間のみ追加取得"
+            if result.get("sync_mode") == "incremental"
+            else "同期方法: fixture を使用"
+        )
+        append_log("INFO", mode_line)
         log_message("データ同期が完了しました。")
 
     def on_error(message: str) -> None:
@@ -428,21 +468,18 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         result_model.set_frame(None)
         last_run_chip.set_text("エラー")
         last_run_chip.set_tone("neg")
-        output.setPlainText(f"エラー\n{message}")
+        append_log("ERR", message)
         log_message(f"データ同期エラー: {message}")
 
     def run_sync() -> None:
         set_busy(True)
-        sync_source = str(source_combo.currentData() or source_combo.currentText())
+        sync_source = current_source_key()
         sync_start = start_date.date().toString("yyyy-MM-dd")
         sync_end = end_date.date().toString("yyyy-MM-dd")
         sync_timeframes = selected_timeframes()
         progress.setRange(0, 0)
         result_model.set_frame(None)
-        output.setPlainText(
-            "バックグラウンドで同期中...\n"
-            "GMO / fixture から選択期間の空白区間だけを取得し、通貨ペア別のキャッシュ結果を更新しています。"
-        )
+        append_log("INFO", f"同期開始: {sync_source} / {sync_start} → {sync_end}")
         submit_task(
             lambda: app_state.sync_market_data(
                 source=sync_source,
@@ -454,27 +491,39 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             on_error,
         )
 
-    def import_csv() -> None:
-        file_paths, _ = QFileDialog.getOpenFileNames(
+    def _open_file_dialog() -> list[str]:
+        paths, _ = QFileDialog.getOpenFileNames(
             page,
             "JForex CSV を選択",
             str(Path.home()),
             "CSV Files (*.csv)",
         )
-        if not file_paths:
+        return list(paths)
+
+    def choose_files() -> None:
+        paths = _open_file_dialog()
+        if not paths:
             return
+        page._selected_files = paths
+        file_edit.setText(", ".join(Path(p).name for p in paths))
+
+    def import_csv() -> None:
+        paths = list(page._selected_files) if page._selected_files else []
+        if not paths:
+            paths = _open_file_dialog()
+            if not paths:
+                return
+            page._selected_files = paths
+            file_edit.setText(", ".join(Path(p).name for p in paths))
         set_busy(True)
         progress.setRange(0, 0)
         result_model.set_frame(None)
         try:
-            selection = resolve_bid_ask_csv_selection(file_paths)
+            selection = resolve_bid_ask_csv_selection(paths)
         except ValueError as exc:
             on_error(str(exc))
             return
-        output.setPlainText(
-            "Bid / Ask CSV を取り込み中...\n"
-            "ファイル名・通貨ペア・期間を検証し、共通期間だけを 1 分足 quote bar として反映しています。"
-        )
+        append_log("INFO", "Bid / Ask CSV を取り込み中…")
         submit_task(
             lambda: app_state.import_jforex_bid_ask_csv(
                 str(selection.bid_source_path),
@@ -485,10 +534,15 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             on_error,
         )
 
+    sync_button.clicked.connect(run_sync)
+    import_button.clicked.connect(import_csv)
     run_import_button.clicked.connect(import_csv)
+    choose_btn.clicked.connect(choose_files)
     reload_button.clicked.connect(refresh_summary)
-    source_combo.currentIndexChanged.connect(update_sync_source_hint)
+    refresh_icon_btn.clicked.connect(refresh_summary)
+    source_seg.currentChanged.connect(lambda _: update_hint())
+
     page.refresh = refresh_summary
-    update_sync_source_hint()
+    update_hint()
     refresh_summary()
     return page

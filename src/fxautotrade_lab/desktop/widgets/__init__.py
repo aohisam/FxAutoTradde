@@ -8,9 +8,13 @@ headless).
 from __future__ import annotations
 
 __all__ = [
+    "Banner",
     "Card",
     "Chip",
+    "ChipField",
+    "LabeledSuffixInput",
     "SegmentedControl",
+    "SymbolChip",
     "KpiTile",
     "GroupedNavList",
     "AppStatusBar",
@@ -18,12 +22,21 @@ __all__ = [
 
 
 def __getattr__(name: str):  # pragma: no cover - thin import proxy
+    if name == "Banner":
+        from .banner import Banner
+        return Banner
     if name == "Card":
         from .card import Card
         return Card
     if name == "Chip":
         from .chip import Chip
         return Chip
+    if name in {"ChipField", "SymbolChip"}:
+        from . import chip_field
+        return getattr(chip_field, name)
+    if name == "LabeledSuffixInput":
+        from .suffix_input import LabeledSuffixInput
+        return LabeledSuffixInput
     if name == "SegmentedControl":
         from .segmented import SegmentedControl
         return SegmentedControl

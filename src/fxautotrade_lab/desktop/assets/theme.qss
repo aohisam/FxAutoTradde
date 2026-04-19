@@ -19,7 +19,16 @@ QLabel[role="eyebrow"]   { color: #64748b; font-size: 11px; font-weight: 600;
                            letter-spacing: 0.08em; text-transform: uppercase; }
 QLabel[role="kpi-value"] { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
                            font-size: 28px; font-weight: 600; color: #0f172a; }
+QLabel[role="kpi-value"][variant="code-md"] {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 16px; font-weight: 600;
+}
 QLabel[role="kpi-note"]  { color: #64748b; font-size: 11.5px; }
+QLabel[role="kpi-trend"] {
+    font-size: 11.5px; font-weight: 600; color: #475569;
+}
+QLabel[role="kpi-trend"][tone="pos"] { color: #0f766e; }
+QLabel[role="kpi-trend"][tone="neg"] { color: #b91c1c; }
 QLabel[role="mono"]      { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; }
 QLabel[role="detail-value"] {
     font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
@@ -381,4 +390,80 @@ QProgressBar::chunk { background: #14b8a6; border-radius: 4px; }
 QToolTip {
     background: #0f172a; color: #ffffff; padding: 4px 8px;
     border: none; border-radius: 4px; font-size: 11.5px;
+}
+
+/* ---------- Banner ---------- */
+QFrame#banner {
+    background: rgba(20,184,166,0.06);
+    border: 1px solid rgba(20,184,166,0.20);
+    border-radius: 8px;
+}
+QFrame#banner[tone="warn"] {
+    background: rgba(146,64,14,0.06);
+    border-color: rgba(146,64,14,0.20);
+}
+QLabel#bannerIcon {
+    color: #14b8a6;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 18px;
+}
+QFrame#banner[tone="warn"] QLabel#bannerIcon { color: #92400e; }
+QFrame#banner QLabel[role="muted"] { color: #0f172a; }
+
+/* ---------- Symbol chip (in ChipField) ---------- */
+QFrame#chip_symbol {
+    background: #ffffff;
+    border: 1px solid #e6e8ee;
+    border-radius: 999px;
+    min-height: 24px;
+    max-height: 28px;
+}
+QFrame#chip_symbol QLabel {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: #0f172a;
+}
+QPushButton#chipRemove {
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 11px;
+    padding: 0;
+    min-height: 0;
+    min-width: 0;
+}
+QPushButton#chipRemove:hover { color: #b91c1c; }
+
+/* ---------- Suffix input ---------- */
+QFrame#suffixInput {
+    background: #ffffff;
+    border: 1px solid #e6e8ee;
+    border-radius: 6px;
+    min-height: 28px;
+    max-height: 32px;
+}
+QFrame#suffixInput:focus-within { border-color: #14b8a6; }
+QFrame#suffixInput QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
+    color: #0f172a;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+QFrame#suffixInput QLabel {
+    color: #64748b;
+    font-size: 11.5px;
+}
+
+/* ---------- Log dock-like view ---------- */
+QTextBrowser[role="logdock"] {
+    background: #ffffff;
+    border: 1px solid #e6e8ee;
+    border-radius: 8px;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: #0f172a;
+    padding: 10px 14px;
 }

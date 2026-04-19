@@ -114,26 +114,27 @@ def read_jforex_quote_csv(file_path: str | Path, side: str) -> pd.DataFrame:
     side_name = side.strip().lower()
     if side_name not in {"bid", "ask"}:
         raise ValueError(f"Unsupported quote side: {side}")
-    raw = pd.read_csv(Path(file_path))
-    raw.columns = [str(column).strip() for column in raw.columns]
-    renamed = raw.rename(
+    frame = pd.read_csv(
+        Path(file_path),
+        usecols=lambda column: str(column).strip() in {"Time (EET)", "Open", "High", "Low", "Close", "Volume"},
+        dtype={
+            "Open": "float64",
+            "High": "float64",
+            "Low": "float64",
+            "Close": "float64",
+            "Volume": "float64",
+        },
+        memory_map=True,
+    )
+    frame.columns = [str(column).strip() for column in frame.columns]
+    timestamps = pd.to_datetime(frame.pop("Time (EET)"), format="%Y.%m.%d %H:%M:%S", errors="raise")
+    frame = frame.rename(
         columns={
-            "Time (EET)": "timestamp",
             "Open": f"{side_name}_open",
             "High": f"{side_name}_high",
             "Low": f"{side_name}_low",
             "Close": f"{side_name}_close",
             "Volume": f"{side_name}_volume",
-        }
-    )
-    timestamps = pd.to_datetime(renamed["timestamp"], format="%Y.%m.%d %H:%M:%S", errors="raise")
-    frame = pd.DataFrame(
-        {
-            f"{side_name}_open": renamed[f"{side_name}_open"].astype(float),
-            f"{side_name}_high": renamed[f"{side_name}_high"].astype(float),
-            f"{side_name}_low": renamed[f"{side_name}_low"].astype(float),
-            f"{side_name}_close": renamed[f"{side_name}_close"].astype(float),
-            f"{side_name}_volume": renamed[f"{side_name}_volume"].astype(float),
         }
     )
     frame.index = (

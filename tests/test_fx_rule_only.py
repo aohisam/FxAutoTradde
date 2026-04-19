@@ -280,6 +280,31 @@ def test_bid_ask_import_only_fills_gap_between_existing_csv_and_gmo_ranges(tmp_p
     assert float(existing_gmo_row["spread_close"]) == pytest.approx(float(trailing_frame.loc[trailing_index.min(), "spread_close"]))
 
 
+def test_bid_ask_reimport_skips_fully_covered_period_without_reloading_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache = ParquetBarCache(tmp_path / "cache")
+    importer = JForexCsvImporter(cache)
+    index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
+    frame = _make_quote_frame(index, np.linspace(100.0, 100.5, len(index)), np.full(len(index), 0.04))
+    bid_path = tmp_path / "USDJPY_1 Min_Bid_reimport.csv"
+    ask_path = tmp_path / "USDJPY_1 Min_Ask_reimport.csv"
+    _write_jforex_csv(bid_path, frame, "bid")
+    _write_jforex_csv(ask_path, frame, "ask")
+
+    first = importer.import_bid_ask_files(bid_path, ask_path)
+
+    def fail_load(symbol: str, timeframe: TimeFrame):  # noqa: ANN001
+        raise AssertionError(f"cache.load should not be called for fully covered re-import: {symbol} {timeframe.value}")
+
+    monkeypatch.setattr(cache, "load", fail_load)
+
+    second = importer.import_bid_ask_files(bid_path, ask_path)
+
+    assert first.imported_rows == 20
+    assert second.imported_rows == 0
+    assert second.skipped_rows == 20
+    assert any("既存キャッシュで期間が埋まっている" in message for message in second.messages)
+
+
 def test_bid_ask_import_trims_to_common_period_when_ranges_differ(tmp_path: Path) -> None:
     importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
     bid_index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")

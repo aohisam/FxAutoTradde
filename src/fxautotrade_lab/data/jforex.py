@@ -161,6 +161,31 @@ class JForexCsvImporter:
     def __init__(self, cache: ParquetBarCache) -> None:
         self.cache = cache
 
+    def _existing_cache_paths(self, symbol: str) -> dict[str, str]:
+        paths: dict[str, str] = {}
+        for timeframe in TIMEFRAME_RULES:
+            path = self.cache.path_for(symbol, timeframe)
+            if path.exists():
+                paths[timeframe.value] = str(path)
+        return paths
+
+    def _read_jforex_source_timestamps(self, file_path: str | Path) -> pd.DatetimeIndex:
+        raw = pd.read_csv(
+            Path(file_path),
+            usecols=lambda column: str(column).strip() == "Time (EET)",
+            dtype="string",
+            memory_map=True,
+        )
+        timestamp_column = next((column for column in raw.columns if str(column).strip() == "Time (EET)"), "")
+        if not timestamp_column:
+            raise ValueError("JForex CSV に Time (EET) 列がありません。")
+        timestamps = pd.to_datetime(raw[timestamp_column], format="%Y.%m.%d %H:%M:%S", errors="raise")
+        return (
+            pd.DatetimeIndex(timestamps)
+            .tz_localize("Europe/Helsinki", ambiguous="infer", nonexistent="shift_forward")
+            .tz_convert(ASIA_TOKYO)
+        )
+
     def _repair_quote_side_source(self, frame: pd.DataFrame, side: str) -> tuple[pd.DataFrame, list[str]]:
         repaired, stats = repair_ohlc_relationships(
             frame,
@@ -304,15 +329,71 @@ class JForexCsvImporter:
         bid_source_path = selection.bid_source_path
         ask_source_path = selection.ask_source_path
         normalized_symbol = selection.symbol
+        bid_timestamps = self._read_jforex_source_timestamps(bid_source_path)
+        ask_timestamps = self._read_jforex_source_timestamps(ask_source_path)
+        bid_start, bid_end = pd.Timestamp(bid_timestamps.min()), pd.Timestamp(bid_timestamps.max())
+        ask_start, ask_end = pd.Timestamp(ask_timestamps.min()), pd.Timestamp(ask_timestamps.max())
+        overlap_start = max(bid_start, ask_start)
+        overlap_end = min(bid_end, ask_end)
+        if overlap_start > overlap_end:
+            raise ValueError(
+                "Bid / Ask CSV の期間が重なっていません。\n"
+                f"Bid: {bid_start.isoformat()} - {bid_end.isoformat()}\n"
+                f"Ask: {ask_start.isoformat()} - {ask_end.isoformat()}"
+            )
+        preflight_messages: list[str] = []
+        if bid_start != overlap_start or bid_end != overlap_end or ask_start != overlap_start or ask_end != overlap_end:
+            preflight_messages.append(
+                "Bid / Ask の CSV 期間が一致しないため、共通期間のみを取り込みます。\n"
+                f"共通期間: {overlap_start.isoformat()} - {overlap_end.isoformat()}"
+            )
+        common_index = bid_timestamps[(bid_timestamps >= overlap_start) & (bid_timestamps <= overlap_end)].intersection(
+            ask_timestamps[(ask_timestamps >= overlap_start) & (ask_timestamps <= overlap_end)],
+            sort=False,
+        )
+        if common_index.empty:
+            raise ValueError(
+                "Bid / Ask CSV の共通期間では時刻が一致しません。\n"
+                "夏時間切替や欠損により 1 分足の timestamp がずれていないか確認してください。"
+            )
+        common_row_count = int(len(common_index))
+        common_start = pd.Timestamp(common_index.min())
+        common_end = pd.Timestamp(common_index.max())
+        common_window_end = common_end + timeframe_coverage_delta(TimeFrame.MIN_1)
+        current_coverage = self.cache.load_coverage(normalized_symbol, TimeFrame.MIN_1)
+        missing_ranges = self._missing_ranges(common_start, common_window_end, current_coverage)
+        if not missing_ranges:
+            cache_paths = self._existing_cache_paths(normalized_symbol)
+            messages = [
+                *preflight_messages,
+                "既存キャッシュで期間が埋まっているため、新規の取り込みはありませんでした。",
+            ]
+            return JForexBidAskImportResult(
+                symbol=normalized_symbol,
+                imported_rows=0,
+                skipped_rows=common_row_count,
+                bid_source_path=bid_source_path,
+                ask_source_path=ask_source_path,
+                cache_paths=cache_paths,
+                start=common_start.isoformat(),
+                end=common_end.isoformat(),
+                applied_start="",
+                applied_end="",
+                bid_start=bid_start.isoformat(),
+                bid_end=bid_end.isoformat(),
+                ask_start=ask_start.isoformat(),
+                ask_end=ask_end.isoformat(),
+                messages=messages,
+            )
         bid_frame = read_jforex_quote_csv(bid_source_path, "bid")
         ask_frame = read_jforex_quote_csv(ask_source_path, "ask")
         bid_frame, bid_messages = self._repair_quote_side_source(bid_frame, "bid")
         ask_frame, ask_messages = self._repair_quote_side_source(ask_frame, "ask")
         bid_frame, ask_frame, spread_messages = self._repair_crossed_quote_prices(bid_frame, ask_frame)
-        bid_start, bid_end = self._raw_frame_bounds(bid_frame)
-        ask_start, ask_end = self._raw_frame_bounds(ask_frame)
         trimmed_bid, trimmed_ask, messages = self._align_bid_ask_frames(bid_frame, ask_frame)
         messages = [*bid_messages, *ask_messages, *spread_messages, *messages]
+        trimmed_bid = self._slice_to_ranges(trimmed_bid, missing_ranges)
+        trimmed_ask = self._slice_to_ranges(trimmed_ask, missing_ranges)
         try:
             base = build_quote_bar_frame(trimmed_bid, trimmed_ask, normalized_symbol)
         except ValueError as exc:
@@ -337,12 +418,12 @@ class JForexCsvImporter:
         return JForexBidAskImportResult(
             symbol=normalized_symbol,
             imported_rows=summary["imported_rows"],
-            skipped_rows=summary["skipped_rows"],
+            skipped_rows=max(0, common_row_count - int(summary["imported_rows"])),
             bid_source_path=bid_source_path,
             ask_source_path=ask_source_path,
             cache_paths=summary["cache_paths"],
-            start=base.index.min().isoformat(),
-            end=base.index.max().isoformat(),
+            start=common_start.isoformat(),
+            end=common_end.isoformat(),
             applied_start=summary["applied_start"],
             applied_end=summary["applied_end"],
             bid_start=bid_start.isoformat(),
@@ -361,13 +442,8 @@ class JForexCsvImporter:
         metadata: dict[str, object],
     ) -> dict[str, object]:
         base = validate_quote_bar_frame(base)
-        min1_existing = self.cache.load(symbol, TimeFrame.MIN_1)
-        min1_existing = validate_quote_bar_frame(min1_existing) if min1_existing is not None and not min1_existing.empty else None
         base_window = self._frame_coverage_range(base, TimeFrame.MIN_1)
         current_coverage = self.cache.load_coverage(symbol, TimeFrame.MIN_1)
-        if not current_coverage and min1_existing is not None and not min1_existing.empty:
-            seed = self._frame_coverage_range(min1_existing, TimeFrame.MIN_1)
-            current_coverage = [seed] if seed is not None else []
         missing_ranges = (
             self._missing_ranges(base_window[0], base_window[1], current_coverage)
             if base_window is not None
@@ -376,6 +452,19 @@ class JForexCsvImporter:
         accepted_base = self._slice_to_ranges(base, missing_ranges)
         imported_rows = int(len(accepted_base.index))
         skipped_rows = int(len(base.index) - imported_rows)
+        if imported_rows <= 0:
+            return {
+                "imported_rows": 0,
+                "skipped_rows": skipped_rows,
+                "cache_paths": self._existing_cache_paths(symbol),
+                "applied_start": "",
+                "applied_end": "",
+            }
+        min1_existing = self.cache.load(symbol, TimeFrame.MIN_1)
+        min1_existing = validate_quote_bar_frame(min1_existing) if min1_existing is not None and not min1_existing.empty else None
+        if not current_coverage and min1_existing is not None and not min1_existing.empty:
+            seed = self._frame_coverage_range(min1_existing, TimeFrame.MIN_1)
+            current_coverage = [seed] if seed is not None else []
         merged_min1 = self._merge_frames(min1_existing, accepted_base, dedupe_keep="first")
         cache_paths: dict[str, str] = {}
         if merged_min1 is not None and not merged_min1.empty:

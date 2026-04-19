@@ -46,9 +46,18 @@ class SegmentedControl(QFrame):
     def idToggled(self):
         return self.group.idToggled
 
+    @property
+    def currentChanged(self):
+        """Alias of ``idClicked`` emitted with the newly selected index."""
+        return self.group.idClicked
+
     # state access ----------------------------------------------------------
     def currentIndex(self) -> int:
         return max(0, self.group.checkedId())
+
+    def current(self) -> int:
+        """Shorthand for ``currentIndex()``."""
+        return self.currentIndex()
 
     def currentData(self) -> object:
         index = self.currentIndex()
@@ -59,6 +68,9 @@ class SegmentedControl(QFrame):
     def setCurrentIndex(self, index: int) -> None:
         if 0 <= index < len(self.buttons):
             self.buttons[index].setChecked(True)
+
+    def set_current(self, index: int) -> None:
+        self.setCurrentIndex(index)
 
     def setCurrentData(self, value: object) -> None:
         for index, payload in enumerate(self._data):
