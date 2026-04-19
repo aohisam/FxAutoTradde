@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 
 import pandas as pd
@@ -70,6 +71,54 @@ def test_gmo_client_normalizes_string_epoch_open_time() -> None:
     assert len(frame.index) == 1
     assert frame.index[0] == pd.Timestamp("2026-04-16 06:00:00", tz=ASIA_TOKYO)
     assert float(frame.iloc[0]["close"]) == 150.1
+
+
+def test_gmo_client_fetch_bars_keeps_end_date_exclusive_for_intraday(monkeypatch) -> None:
+    client = GmoForexPublicClient(EnvironmentConfig())
+    requested_dates: list[str] = []
+
+    def fake_get_json(path: str, query: dict[str, str] | None = None) -> dict[str, object]:
+        assert path == "/v1/klines"
+        assert query is not None
+        requested_dates.append(str(query["date"]))
+        return {"status": 0, "data": []}
+
+    monkeypatch.setattr(client, "_get_json", fake_get_json)
+
+    frame = client.fetch_bars(
+        "USD_JPY",
+        TimeFrame.HOUR_1,
+        datetime(2026, 4, 15, 0, 0, tzinfo=ASIA_TOKYO),
+        datetime(2026, 4, 19, 0, 0, tzinfo=ASIA_TOKYO),
+        price_type="BID",
+    )
+
+    assert frame.empty is True
+    assert requested_dates == ["20260415", "20260416", "20260417", "20260418"]
+
+
+def test_gmo_client_fetch_bars_keeps_end_year_exclusive_for_long_intervals(monkeypatch) -> None:
+    client = GmoForexPublicClient(EnvironmentConfig())
+    requested_years: list[str] = []
+
+    def fake_get_json(path: str, query: dict[str, str] | None = None) -> dict[str, object]:
+        assert path == "/v1/klines"
+        assert query is not None
+        requested_years.append(str(query["date"]))
+        return {"status": 0, "data": []}
+
+    monkeypatch.setattr(client, "_get_json", fake_get_json)
+
+    frame = client.fetch_bars(
+        "USD_JPY",
+        TimeFrame.DAY_1,
+        datetime(2025, 12, 1, 0, 0, tzinfo=ASIA_TOKYO),
+        datetime(2026, 1, 1, 0, 0, tzinfo=ASIA_TOKYO),
+        price_type="ASK",
+    )
+
+    assert frame.empty is True
+    assert requested_years == ["2025"]
 
 
 def test_application_load_credential_values_masks_private_credentials(tmp_path):

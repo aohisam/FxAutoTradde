@@ -7,7 +7,7 @@ from fxautotrade_lab.config.loader import load_app_config
 from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
-from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, summarize_quote_bar_quality
+from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, summarize_quote_bar_quality, validate_quote_bar_frame
 from fxautotrade_lab.data.service import MarketDataService
 
 from tests.conftest import write_config
@@ -221,3 +221,74 @@ def test_quote_quality_summary_detects_abnormal_spread():
     assert summary["negative_spread_rows"] == 0
     assert summary["abnormal_spread_rows"] == 1
     assert summary["spread_max"] >= 0.8
+
+
+def test_validate_quote_bar_frame_accepts_legacy_ohlcv_without_side_volumes():
+    index = pd.date_range("2026-04-14 09:00:00", periods=2, freq="1h", tz=ASIA_TOKYO)
+    legacy = pd.DataFrame(
+        {
+            "open": [150.0, 150.1],
+            "high": [150.2, 150.3],
+            "low": [149.9, 150.0],
+            "close": [150.1, 150.2],
+            "volume": [1000.0, 1100.0],
+        },
+        index=index,
+    )
+
+    normalized = validate_quote_bar_frame(legacy)
+
+    assert {"bid_volume", "ask_volume", "spread_close"}.issubset(normalized.columns)
+    assert normalized["bid_volume"].tolist() == [1000.0, 1100.0]
+    assert normalized["ask_volume"].tolist() == [0.0, 0.0]
+    assert normalized["spread_close"].tolist() == [0.0, 0.0]
+
+
+def test_gmo_sync_recovers_from_invalid_cached_frame(tmp_path, monkeypatch):
+    config = load_app_config(
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
+        overrides={
+            "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": [], "sector_symbols": []},
+            "data": {
+                "source": "gmo",
+                "cache_dir": str(tmp_path / "cache"),
+                "timeframes": ["1Min"],
+                "start_date": "2026-04-14",
+                "end_date": "2026-04-14",
+            },
+            "strategy": {"entry_timeframe": "1Min"},
+        },
+    )
+    service = MarketDataService(config, EnvironmentConfig())
+    invalid = pd.DataFrame(
+        {
+            "open": [150.0],
+            "high": [149.8],
+            "low": [149.9],
+            "close": [150.1],
+            "volume": [1000.0],
+            "symbol": ["USD_JPY"],
+        },
+        index=pd.date_range("2026-04-14 09:00:00", periods=1, freq="1min", tz=ASIA_TOKYO),
+    )
+    cache_path = service.cache.path_for("USD_JPY", TimeFrame.MIN_1)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    invalid.to_parquet(cache_path)
+
+    refreshed = _make_quote_frame("USD_JPY", "2026-04-14 09:00:00", 5)
+    calls: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+
+    def fake_fetch_quote(symbol, timeframe, start, end):  # noqa: ANN001
+        _ = symbol, timeframe
+        calls.append((pd.Timestamp(start), pd.Timestamp(end)))
+        return refreshed
+
+    monkeypatch.setattr(service, "_fetch_gmo_quote_bars", fake_fetch_quote)
+
+    summary = service.sync()
+    recovered = service.cache.load("USD_JPY", TimeFrame.MIN_1)
+
+    assert calls
+    assert summary["details"][0]["source"] == "gmo"
+    assert recovered is not None
+    assert recovered.index.max() == refreshed.index.max()

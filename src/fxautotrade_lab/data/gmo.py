@@ -103,9 +103,10 @@ class GmoForexPublicClient:
         if start_ts >= end_ts:
             return self._empty_frame()
         frames: list[pd.DataFrame] = []
+        inclusive_end = self._inclusive_fetch_end(end_ts)
         if timeframe in INTRADAY_INTERVALS:
             interval = INTRADAY_INTERVALS[timeframe]
-            for current_date in self._date_range(start_ts.date(), end_ts.date()):
+            for current_date in self._date_range(start_ts.date(), inclusive_end.date()):
                 if current_date < date(2023, 10, 28):
                     continue
                 payload = self._get_json(
@@ -120,7 +121,7 @@ class GmoForexPublicClient:
                 frames.append(self._normalize_klines(payload, normalized_symbol))
         else:
             interval = LONG_INTERVALS[timeframe]
-            for year in range(start_ts.year, end_ts.year + 1):
+            for year in range(start_ts.year, inclusive_end.year + 1):
                 if year < 2023:
                     continue
                 payload = self._get_json(
@@ -182,6 +183,12 @@ class GmoForexPublicClient:
             values.append(cursor)
             cursor += timedelta(days=1)
         return values
+
+    @staticmethod
+    def _inclusive_fetch_end(end: pd.Timestamp) -> pd.Timestamp:
+        # The sync window is half-open [start, end). When end lands exactly on a
+        # day/year boundary, subtract a tick so we do not request the next period.
+        return end - pd.Timedelta(nanoseconds=1)
 
     @staticmethod
     def _to_tokyo(value: datetime | pd.Timestamp) -> pd.Timestamp:

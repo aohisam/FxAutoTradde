@@ -40,6 +40,21 @@ def _has_combined_quote_columns(columns: list[str]) -> bool:
     return required.issubset(normalized)
 
 
+def _aligned_numeric_series(
+    value: pd.Series | float | int | None,
+    index: pd.Index,
+    *,
+    default: float = 0.0,
+) -> pd.Series:
+    if isinstance(value, pd.Series):
+        return pd.to_numeric(value, errors="coerce").reindex(index).fillna(default)
+    if value is None:
+        scalar = default
+    else:
+        scalar = float(value)
+    return pd.Series(scalar, index=index, dtype="float64")
+
+
 def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
     required: list[str] = []
     for side in ("bid", "ask"):
@@ -48,22 +63,22 @@ def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
     has_base_ohlc = {"open", "high", "low", "close"}.issubset(working.columns)
     missing = [column for column in required if column not in working.columns]
     if missing and has_base_ohlc:
-        base_volume = pd.to_numeric(working.get("volume", 0.0), errors="coerce").fillna(0.0)
+        base_volume = _aligned_numeric_series(working.get("volume"), working.index, default=0.0)
         for price_column in ("open", "high", "low", "close"):
             numeric = pd.to_numeric(working[price_column], errors="coerce")
             working[f"bid_{price_column}"] = pd.to_numeric(working.get(f"bid_{price_column}", numeric), errors="coerce")
             working[f"ask_{price_column}"] = pd.to_numeric(working.get(f"ask_{price_column}", numeric), errors="coerce")
             working[f"mid_{price_column}"] = numeric
             working[f"spread_{price_column}"] = 0.0
-        working["bid_volume"] = pd.to_numeric(working.get("bid_volume", base_volume), errors="coerce").fillna(base_volume)
-        working["ask_volume"] = pd.to_numeric(working.get("ask_volume", 0.0), errors="coerce").fillna(0.0)
+        working["bid_volume"] = _aligned_numeric_series(working.get("bid_volume", base_volume), working.index, default=0.0)
+        working["ask_volume"] = _aligned_numeric_series(working.get("ask_volume"), working.index, default=0.0)
         missing = [column for column in required if column not in working.columns]
     if missing:
         raise ValueError(f"Missing quote columns: {missing}")
     for column in required:
         working[column] = pd.to_numeric(working[column], errors="coerce")
     if has_base_ohlc:
-        base_volume = pd.to_numeric(working.get("volume", 0.0), errors="coerce").fillna(0.0)
+        base_volume = _aligned_numeric_series(working.get("volume"), working.index, default=0.0)
         for price_column in ("open", "high", "low", "close"):
             base_numeric = pd.to_numeric(working[price_column], errors="coerce")
             working[f"bid_{price_column}"] = working[f"bid_{price_column}"].fillna(base_numeric)

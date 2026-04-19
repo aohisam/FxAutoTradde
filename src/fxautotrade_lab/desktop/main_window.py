@@ -9,22 +9,24 @@ from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_r
 
 
 NAV_GROUPS = [
-    ("ダッシュボード", [("概要", "overview")]),
+    ("ダッシュボード", [
+        ("概要", "overview", "nav_overview"),
+    ]),
     ("リサーチ", [
-        ("監視通貨ペア", "watchlist"),
-        ("データ同期", "data_sync"),
-        ("バックテスト", "backtest"),
-        ("シグナル分析", "signals"),
+        ("監視通貨ペア", "watchlist", "nav_watchlist"),
+        ("データ同期", "data_sync", "nav_data_sync"),
+        ("バックテスト", "backtest", "nav_backtest"),
+        ("シグナル分析", "signals", "nav_signals"),
     ]),
     ("実行", [
-        ("実時間シミュレーション", "automation"),
-        ("チャート", "chart"),
-        ("取引履歴", "history"),
-        ("レポート", "reports"),
+        ("実時間シミュレーション", "automation", "nav_automation"),
+        ("チャート", "chart", "nav_chart"),
+        ("取引履歴", "history", "nav_history"),
+        ("レポート", "reports", "nav_reports"),
     ]),
     ("システム", [
-        ("設定", "settings"),
-        ("ヘルプ", "help"),
+        ("設定", "settings", "nav_settings"),
+        ("ヘルプ", "help", "nav_help"),
     ]),
 ]
 
@@ -46,7 +48,7 @@ PAGE_LABEL_TO_KEY = {label: key for key, label in PAGE_KEY_TO_LABEL.items()}
 
 
 def load_main_window_class():  # pragma: no cover - UI helper
-    from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt
+    from PySide6.QtCore import QSettings, QSize, QThreadPool, QTimer, Qt
     from PySide6.QtGui import QGuiApplication, QIcon
     from PySide6.QtWidgets import (
         QApplication,
@@ -80,7 +82,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
     from fxautotrade_lab.desktop.pages.overview import build_overview_page
     from fxautotrade_lab.desktop.pages.signals import build_signals_page
     from fxautotrade_lab.desktop.pages.watchlist import build_watchlist_page
-    from fxautotrade_lab.desktop.theme import load_theme_qss
+    from fxautotrade_lab.desktop.theme import Tokens, load_icon, load_theme_qss
     from fxautotrade_lab.desktop.widgets.sidebar import GroupedNavList
     from fxautotrade_lab.desktop.widgets.statusbar import AppStatusBar
     from fxautotrade_lab.desktop.workers import load_worker_classes
@@ -108,8 +110,8 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.log_output.setObjectName("logOutput")
             self.log_output.setReadOnly(True)
 
-            self.page_names = [PAGE_KEY_TO_LABEL[key] for _, entries in NAV_GROUPS for _, key in entries]
-            self.page_keys = [key for _, entries in NAV_GROUPS for _, key in entries]
+            self.page_names = [PAGE_KEY_TO_LABEL[entry[1]] for _, entries in NAV_GROUPS for entry in entries]
+            self.page_keys = [entry[1] for _, entries in NAV_GROUPS for entry in entries]
 
             self.sidebar = GroupedNavList()
             self._page_row_by_key: dict[str, int] = {}
@@ -151,8 +153,10 @@ def load_main_window_class():  # pragma: no cover - UI helper
         def _build_sidebar(self) -> None:
             for group_caption, entries in NAV_GROUPS:
                 self.sidebar.add_group(group_caption)
-                for label, key in entries:
-                    item = self.sidebar.add_page(label, key)
+                for entry in entries:
+                    label, key = entry[0], entry[1]
+                    icon_name = entry[2] if len(entry) > 2 else None
+                    item = self.sidebar.add_page(label, key, icon_name)
                     self._page_row_by_key[key] = self.sidebar.row(item)
 
         def _build_pages(self, worker_class) -> None:
@@ -197,15 +201,18 @@ def load_main_window_class():  # pragma: no cover - UI helper
             toolbar.addWidget(spacer)
 
             buttons = [
-                ("再読込", "ghost", self.refresh_current_page),
-                ("デモ実行", "ghost", self._run_demo),
-                ("ブローカー確認", "ghost", self._verify_broker),
-                ("バックテスト", "primary", lambda: self._goto_page("backtest")),
-                ("About", "ghost", self._show_about),
+                ("再読込", "top_refresh", "ghost", self.refresh_current_page),
+                ("デモ実行", "top_demo", "ghost", self._run_demo),
+                ("ブローカー確認", "top_broker", "ghost", self._verify_broker),
+                ("バックテスト", "top_backtest", "primary", lambda: self._goto_page("backtest")),
+                ("About", "top_about", "ghost", self._show_about),
             ]
-            for label, variant, callback in buttons:
+            for label, icon_name, variant, callback in buttons:
                 btn = QPushButton(label)
                 btn.setProperty("variant", variant)
+                icon_color = Tokens.INVERSE if variant == "primary" else Tokens.MUTED
+                btn.setIcon(load_icon(icon_name, icon_color, 16))
+                btn.setIconSize(QSize(16, 16))
                 btn.clicked.connect(callback)
                 toolbar.addWidget(btn)
 

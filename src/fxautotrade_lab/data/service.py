@@ -313,12 +313,17 @@ class MarketDataService:
         normalized_symbol = normalize_fx_symbol(symbol)
         cache_path = self.cache.path_for(normalized_symbol, timeframe)
         start_ts, end_ts = self._requested_window(start, end)
-        cached = self.cache.load(normalized_symbol, timeframe)
         quote_aware = True
-        if quote_aware and cached is not None and not cached.empty:
-            cached = validate_quote_bar_frame(cached)
+        cached_invalid = False
+        try:
+            cached = self.cache.load(normalized_symbol, timeframe)
+            if quote_aware and cached is not None and not cached.empty:
+                cached = validate_quote_bar_frame(cached)
+        except ValueError:
+            cached = None
+            cached_invalid = True
         merged = cached if cached is not None else (self._empty_quote_frame(start_ts) if quote_aware else self._empty_frame(start_ts))
-        coverage = self.cache.load_coverage(normalized_symbol, timeframe)
+        coverage = [] if cached_invalid else self.cache.load_coverage(normalized_symbol, timeframe)
         if not coverage and cached is not None and not cached.empty:
             coverage = [self._coverage_seed_from_cached(cached, timeframe)]
         requested_start = max(start_ts, GMO_INTRADAY_START) if timeframe in {
