@@ -492,6 +492,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     from PySide6.QtWidgets import (
         QCheckBox,
         QComboBox,
+        QDoubleSpinBox,
         QFrame,
         QGridLayout,
         QHBoxLayout,
@@ -519,6 +520,14 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         index = combo.findData(value)
         if index >= 0:
             combo.setCurrentIndex(index)
+
+    def credential_source_text(source: str) -> str:
+        return {
+            "public_api": "public API",
+            "keychain": "macOS キーチェーン",
+            "env": ".env",
+            "unset": "未設定",
+        }.get(source, source)
 
     page = QScrollArea()
     page.setWidgetResizable(True)
@@ -605,10 +614,11 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sizing_card.setObjectName("orderSizingCard")
     sizing_card.setStyleSheet(card_style("orderSizingCard"))
     sizing_layout = QVBoxLayout(sizing_card)
-    sizing_title = QLabel("注文サイズ")
+    sizing_title = QLabel("資金 / 注文サイズ")
     sizing_title.setStyleSheet("font-size: 16px; font-weight: 700;")
     sizing_note = QLabel(
-        "JPY 建ての資金量とリスクから数量を計算します。"
+        "初期資産と注文サイズの両方をここで管理します。"
+        " JPY 建ての資金量とリスクから数量を計算します。"
         " 実際の発注数量は最小数量と数量ステップに合わせて丸められます。"
     )
     sizing_note.setWordWrap(True)
@@ -623,6 +633,12 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     equity_fraction_input.setPlaceholderText("例: 0.10")
     risk_fraction_input = QLineEdit()
     risk_fraction_input.setPlaceholderText("例: 0.01")
+    starting_cash_input = QDoubleSpinBox()
+    starting_cash_input.setRange(100.0, 1_000_000_000.0)
+    starting_cash_input.setDecimals(2)
+    starting_cash_input.setSingleStep(1000.0)
+    starting_cash_input.setSuffix(" JPY")
+    starting_cash_input.setGroupSeparatorShown(True)
     sizing_status = QLabel()
     sizing_status.setWordWrap(True)
     sizing_status.setStyleSheet(
@@ -631,19 +647,21 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sizing_form = QGridLayout()
     sizing_form.setHorizontalSpacing(16)
     sizing_form.setVerticalSpacing(8)
-    sizing_form.addWidget(block_label("数量モード"), 0, 0)
-    sizing_form.addWidget(block_label("定額 (JPY)"), 0, 1)
-    sizing_form.addWidget(block_label("資産比率"), 0, 2)
-    sizing_form.addWidget(block_label("リスク率"), 0, 3)
-    sizing_form.addWidget(sizing_combo, 1, 0)
-    sizing_form.addWidget(fixed_amount_input, 1, 1)
-    sizing_form.addWidget(equity_fraction_input, 1, 2)
-    sizing_form.addWidget(risk_fraction_input, 1, 3)
+    sizing_form.addWidget(block_label("初期資産"), 0, 0)
+    sizing_form.addWidget(block_label("数量モード"), 0, 1)
+    sizing_form.addWidget(block_label("定額 (JPY)"), 0, 2)
+    sizing_form.addWidget(block_label("資産比率"), 0, 3)
+    sizing_form.addWidget(block_label("リスク率"), 0, 4)
+    sizing_form.addWidget(starting_cash_input, 1, 0)
+    sizing_form.addWidget(sizing_combo, 1, 1)
+    sizing_form.addWidget(fixed_amount_input, 1, 2)
+    sizing_form.addWidget(equity_fraction_input, 1, 3)
+    sizing_form.addWidget(risk_fraction_input, 1, 4)
     sizing_layout.addWidget(sizing_title)
     sizing_layout.addWidget(sizing_note)
     sizing_layout.addLayout(sizing_form)
     sizing_layout.addWidget(sizing_status)
-    save_sizing_button = QPushButton("注文サイズを保存")
+    save_sizing_button = QPushButton("資金 / 注文サイズを保存")
     set_button_role(save_sizing_button, "primary")
     sizing_layout.addWidget(save_sizing_button, alignment=Qt.AlignLeft)
     cards_layout.addWidget(sizing_card)
@@ -697,22 +715,54 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     connection_title = QLabel("GMO 接続確認")
     connection_title.setStyleSheet("font-size: 16px; font-weight: 700;")
     connection_note = QLabel(
-        "現在の実時間データ連携は GMO の public API を使用します。"
-        " private API キーは将来の実売買拡張用で、現時点では .env に置くだけで十分です。"
+        "現在の接続テストは GMO の public API を使う read-only 確認なので API キーは不要です。"
+        " private API キーは将来の private API / 実売買拡張に備えて、macOS キーチェーンへ安全に保存できます。"
     )
     connection_note.setWordWrap(True)
     connection_note.setStyleSheet("color: #475569;")
+    api_key_input = QLineEdit()
+    api_key_input.setPlaceholderText("GMO private API Key")
+    api_key_input.setClearButtonEnabled(True)
+    api_secret_input = QLineEdit()
+    api_secret_input.setPlaceholderText("GMO private API Secret")
+    api_secret_input.setClearButtonEnabled(True)
+    api_secret_input.setEchoMode(QLineEdit.Password)
+    credential_status = QLabel()
+    credential_status.setWordWrap(True)
+    credential_status.setStyleSheet(
+        "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
+    )
     connection_status = QLabel("接続テストは未実行です。")
     connection_status.setWordWrap(True)
     connection_status.setStyleSheet(
         "background: #f8fafc; border: none; border-radius: 10px; padding: 10px; color: #0f172a;"
     )
+    credential_form = QGridLayout()
+    credential_form.setHorizontalSpacing(16)
+    credential_form.setVerticalSpacing(8)
+    credential_form.addWidget(block_label("private API Key"), 0, 0)
+    credential_form.addWidget(block_label("private API Secret"), 0, 1)
+    credential_form.addWidget(api_key_input, 1, 0)
+    credential_form.addWidget(api_secret_input, 1, 1)
+    credential_form.setColumnStretch(0, 1)
+    credential_form.setColumnStretch(1, 1)
+    save_credentials_button = QPushButton("private API を保存")
+    set_button_role(save_credentials_button, "primary")
+    clear_credentials_button = QPushButton("保存済みキーを削除")
+    set_button_role(clear_credentials_button, "secondary")
     test_connection_button = QPushButton("GMO 接続テスト")
     set_button_role(test_connection_button, "secondary")
+    connection_buttons = QHBoxLayout()
+    connection_buttons.addWidget(save_credentials_button)
+    connection_buttons.addWidget(clear_credentials_button)
+    connection_buttons.addWidget(test_connection_button)
+    connection_buttons.addStretch(1)
     connection_layout.addWidget(connection_title)
     connection_layout.addWidget(connection_note)
+    connection_layout.addLayout(credential_form)
+    connection_layout.addWidget(credential_status)
     connection_layout.addWidget(connection_status)
-    connection_layout.addWidget(test_connection_button, alignment=Qt.AlignLeft)
+    connection_layout.addLayout(connection_buttons)
     cards_layout.addWidget(connection_card)
 
     summary_card = QFrame()
@@ -850,6 +900,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def save_order_sizing() -> None:
         try:
+            app_state.update_account_settings(starting_cash=float(starting_cash_input.value()))
             app_state.update_order_sizing(
                 order_size_mode=str(sizing_combo.currentData() or "fixed_amount"),
                 fixed_order_amount=_parse_positive_float(
@@ -866,10 +917,48 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
                 ),
             )
         except Exception as exc:  # pragma: no cover - UI validation
-            QMessageBox.critical(page, "エラー", f"注文サイズ設定の保存に失敗しました。\n{exc}")
+            QMessageBox.critical(page, "エラー", f"資金 / 注文サイズ設定の保存に失敗しました。\n{exc}")
             return
-        QMessageBox.information(page, "完了", "注文サイズ設定を保存しました。")
-        log_message(f"注文サイズ設定を保存しました: {app_state.config.risk.order_size_mode.value}")
+        QMessageBox.information(page, "完了", "資金 / 注文サイズ設定を保存しました。")
+        log_message(
+            "資金 / 注文サイズ設定を保存しました: "
+            f"{app_state.config.risk.starting_cash:,.0f} {app_state.config.risk.account_currency} / "
+            f"{app_state.config.risk.order_size_mode.value}"
+        )
+        refresh_all_pages()
+
+    def save_private_credentials() -> None:
+        try:
+            values = app_state.save_gmo_credentials(
+                "private",
+                api_key_input.text(),
+                api_secret_input.text(),
+            )
+        except Exception as exc:  # pragma: no cover - OS credential store
+            QMessageBox.critical(page, "エラー", f"GMO private API の保存に失敗しました。\n{exc}")
+            return
+        QMessageBox.information(page, "完了", "GMO private API を macOS キーチェーンへ保存しました。")
+        log_message(f"GMO private API を保存しました: {credential_source_text(str(values.get('source', 'keychain')))}")
+        refresh_all_pages()
+
+    def clear_private_credentials() -> None:
+        answer = QMessageBox.question(
+            page,
+            "確認",
+            "macOS キーチェーンに保存済みの GMO private API 資格情報を削除します。よろしいですか？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            deleted = app_state.delete_gmo_credentials("private")
+        except Exception as exc:  # pragma: no cover - OS credential store
+            QMessageBox.critical(page, "エラー", f"GMO private API の削除に失敗しました。\n{exc}")
+            return
+        if deleted:
+            QMessageBox.information(page, "完了", "GMO private API を macOS キーチェーンから削除しました。")
+            log_message("GMO private API を削除しました。")
+        else:
+            QMessageBox.information(page, "情報", "削除対象の GMO private API は見つかりませんでした。")
         refresh_all_pages()
 
     def save_notifications() -> None:
@@ -963,6 +1052,8 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_notifications_button.clicked.connect(save_notifications)
     save_mode_button.clicked.connect(save_runtime_mode)
     save_sizing_button.clicked.connect(save_order_sizing)
+    save_credentials_button.clicked.connect(save_private_credentials)
+    clear_credentials_button.clicked.connect(clear_private_credentials)
     test_connection_button.clicked.connect(run_connection_test)
     mode_combo.currentIndexChanged.connect(lambda _: update_mode_status())
     source_combo.currentIndexChanged.connect(lambda _: update_mode_status())
@@ -970,7 +1061,10 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def refresh() -> None:
         env = app_state.env
-        private_configured = bool(getattr(env, "has_credentials", lambda _profile: False)("private"))
+        credential_statuses = app_state.credential_statuses()
+        private_status = credential_statuses["private"]
+        private_values = app_state.load_credential_values("private")
+        private_configured = bool(private_status["configured"])
         warning.setText(
             "GMO 実時間シミュレーションでは実データを取得しますが、売買はまだすべてローカル約定です。"
             if app_state.config.broker.mode.value == "gmo_sim" or app_state.config.data.source == "gmo"
@@ -980,6 +1074,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         payload["env_status"] = {
             "gmo_public_api": "利用可",
             "gmo_private_api": "設定済み" if private_configured else "未設定",
+            "gmo_private_api_source": private_status["source"],
             "live_trading_enabled": getattr(env, "live_trading_enabled", False),
             "config_path": str(app_state.config_path) if app_state.config_path is not None else "",
         }
@@ -996,7 +1091,12 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
                     f"監視通貨ペア: {len(app_state.config.watchlist.symbols)} ペア",
                     f"インポート先: {app_state.config.data.import_dir}",
                     f"キャッシュ先: {app_state.config.data.cache_dir}",
-                    f"GMO private API: {'設定済み' if private_configured else '未設定 (.env 任意)'}",
+                    (
+                        "GMO private API: 設定済み"
+                        f" ({credential_source_text(str(private_status['source']))})"
+                        if private_configured
+                        else "GMO private API: 未設定"
+                    ),
                 ]
             )
         )
@@ -1011,6 +1111,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         stream_box.setChecked(bool(app_state.config.data.stream_enabled))
         update_mode_status()
         _set_combo_value(sizing_combo, app_state.config.risk.order_size_mode.value)
+        starting_cash_input.setValue(float(app_state.config.risk.starting_cash))
         fixed_amount_input.setText(f"{app_state.config.risk.fixed_order_amount:.2f}")
         equity_fraction_input.setText(f"{app_state.config.risk.equity_fraction_per_trade:.4f}")
         risk_fraction_input.setText(f"{app_state.config.risk.risk_per_trade:.4f}")
@@ -1018,11 +1119,31 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         sound_name.setText(app_state.config.automation.notification_channels.sound_name)
         webhook_url.setText(app_state.config.automation.notification_channels.webhook_url)
         log_path_label.setText(str(app_state.config.automation.notification_channels.log_path))
+        api_key_input.setText(str(private_values.get("api_key", "")))
+        api_secret_input.setText(str(private_values.get("api_secret", "")))
+        credential_status.setText(
+            "\n".join(
+                [
+                    "private API 資格情報",
+                    f"保存状態: {'設定済み' if private_configured else '未設定'}",
+                    f"保存元: {credential_source_text(str(private_status['source']))}",
+                    (
+                        "保存先: macOS キーチェーン"
+                        if private_status.get("keychain_available")
+                        else "保存先: この環境では macOS キーチェーンを利用できません"
+                    ),
+                    f"API Key: {private_values.get('api_key_masked') or '未設定'}",
+                ]
+            )
+        )
         connection_status.setText(
             "\n".join(
                 [
                     "GMO public API: 認証不要",
-                    f"GMO private API: {'設定済み' if private_configured else '未設定'}",
+                    (
+                        f"GMO private API: {'設定済み' if private_configured else '未設定'}"
+                        f" ({credential_source_text(str(private_status['source']))})"
+                    ),
                     (
                         "最終テスト: 実行済み"
                         if page.last_test_result and "error" not in page.last_test_result

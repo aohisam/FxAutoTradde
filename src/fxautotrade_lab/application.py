@@ -27,6 +27,11 @@ from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
 from fxautotrade_lab.persistence.sqlite_store import SQLiteStore
 from fxautotrade_lab.research.pipeline import ResearchPipeline
+from fxautotrade_lab.security.keychain import (
+    delete_private_gmo_credentials,
+    resolve_private_gmo_credentials,
+    save_private_gmo_credentials,
+)
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 from fxautotrade_lab.strategies.registry import create_strategy
 
@@ -72,6 +77,24 @@ class LabApplication:
 
     def sync_data(self) -> dict[str, object]:
         return MarketDataService(self.config, self.env).sync()
+
+    def sync_market_data(
+        self,
+        *,
+        source: str,
+        start_date: str,
+        end_date: str,
+        timeframes: list[TimeFrame],
+    ) -> dict[str, object]:
+        sync_source = str(source).strip().lower()
+        if sync_source not in {"gmo", "fixture"}:
+            raise ValueError("同期ソースは GMO または fixture を指定してください。")
+        sync_config = self.config.model_copy(deep=True)
+        sync_config.data.source = sync_source
+        sync_config.data.start_date = start_date
+        sync_config.data.end_date = end_date
+        sync_config.data.timeframes = list(timeframes)
+        return MarketDataService(sync_config, self.env).sync()
 
     def run_backtest(self) -> BacktestResult:
         self.last_result = BacktestRunner(self.config, self.env).run()
@@ -229,6 +252,15 @@ class LabApplication:
         self.config.risk.equity_fraction_per_trade = max(0.0, float(equity_fraction_per_trade))
         self.config.risk.risk_per_trade = max(0.0, float(risk_per_trade))
         self.save_config()
+        self._invalidate_chart_cache()
+
+    def update_account_settings(self, *, starting_cash: float) -> None:
+        normalized_cash = float(starting_cash)
+        if normalized_cash <= 0:
+            raise ValueError("初期資産は 0 より大きい値を指定してください。")
+        self.config.risk.starting_cash = normalized_cash
+        self.save_config()
+        self._invalidate_runtime_cache()
         self._invalidate_chart_cache()
 
     def runtime_status_snapshot(
@@ -397,34 +429,35 @@ class LabApplication:
         return [timeframe.value for timeframe in TimeFrame]
 
     def credential_statuses(self) -> dict[str, dict[str, object]]:
+        private_credentials = self._resolved_private_credentials()
         return {
             "public": {
                 "configured": True,
                 "source": "public_api",
                 "key_hint": "認証不要",
-                "keychain_available": False,
+                "keychain_available": private_credentials.keychain_available,
             },
             "private": {
-                "configured": bool(self.env.has_credentials("private")),
-                "source": "env" if self.env.has_credentials("private") else "unset",
-                "key_hint": self._mask_api_key(self.env.gmo_api_key) if self.env.has_credentials("private") else "未設定",
-                "keychain_available": False,
+                "configured": private_credentials.configured,
+                "source": private_credentials.source,
+                "key_hint": self._mask_api_key(private_credentials.api_key) if private_credentials.configured else "未設定",
+                "keychain_available": private_credentials.keychain_available,
             },
         }
 
     def load_credential_values(self, profile: str) -> dict[str, object]:
         normalized = profile.lower().strip()
         if normalized == "private":
-            api_key = self.env.gmo_api_key.strip()
-            api_secret = self.env.gmo_api_secret.strip()
+            credentials = self._resolved_private_credentials()
             return {
                 "profile": "private",
-                "configured": bool(api_key and api_secret),
-                "source": "env" if api_key and api_secret else "unset",
-                "api_key": api_key,
-                "api_secret": api_secret,
-                "api_key_masked": self._mask_api_key(api_key),
-                "api_secret_masked": self._mask_api_secret(api_secret),
+                "configured": credentials.configured,
+                "source": credentials.source,
+                "api_key": credentials.api_key,
+                "api_secret": credentials.api_secret,
+                "api_key_masked": self._mask_api_key(credentials.api_key),
+                "api_secret_masked": self._mask_api_secret(credentials.api_secret),
+                "keychain_available": credentials.keychain_available,
             }
         return {
             "profile": "public",
@@ -434,15 +467,24 @@ class LabApplication:
             "api_secret": "",
             "api_key_masked": "",
             "api_secret_masked": "",
+            "keychain_available": self._resolved_private_credentials().keychain_available,
         }
 
     def save_gmo_credentials(self, profile: str, api_key: str, api_secret: str) -> dict[str, object]:
-        _ = profile, api_key, api_secret
-        raise RuntimeError("現行版では UI から GMO 認証情報を保存しません。.env に設定してください。")
+        normalized = profile.lower().strip()
+        if normalized != "private":
+            raise ValueError("GMO private API の資格情報だけ保存できます。")
+        save_private_gmo_credentials(api_key=api_key, api_secret=api_secret)
+        self.env = load_environment()
+        return self.load_credential_values("private")
 
     def delete_gmo_credentials(self, profile: str) -> bool:
-        _ = profile
-        return False
+        normalized = profile.lower().strip()
+        if normalized != "private":
+            return False
+        deleted = delete_private_gmo_credentials()
+        self.env = load_environment()
+        return deleted
 
     def import_jforex_csv(self, file_path: str, symbol: str | None = None) -> dict[str, object]:
         _ = file_path, symbol
@@ -618,6 +660,12 @@ class LabApplication:
         if len(normalized) <= 4:
             return "*" * len(normalized)
         return f"{'*' * max(4, len(normalized) - 4)}{normalized[-4:]}"
+
+    def _resolved_private_credentials(self):
+        return resolve_private_gmo_credentials(
+            env_api_key=getattr(self.env, "gmo_api_key", ""),
+            env_api_secret=getattr(self.env, "gmo_api_secret", ""),
+        )
 
     @staticmethod
     def _prepare_writable_config_path(path: Path | None) -> Path | None:

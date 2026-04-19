@@ -8,6 +8,7 @@ from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
+from fxautotrade_lab.security.keychain import GmoPrivateCredentialRecord
 
 from tests.conftest import write_config
 
@@ -63,6 +64,112 @@ def test_application_load_credential_values_masks_private_credentials(tmp_path):
     assert result["api_key_masked"] == "GMO-****5678"
     assert result["api_secret_masked"].endswith("5678")
     assert result["api_secret_masked"] != "SECRET-5678"
+
+
+def test_application_load_credential_values_prefers_keychain(monkeypatch, tmp_path):
+    app = LabApplication(write_config(tmp_path))
+    app.env = EnvironmentConfig().model_copy(
+        update={
+            "gmo_api_key": "ENV-11112222",
+            "gmo_api_secret": "ENV-SECRET-2222",
+        }
+    )
+
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.resolve_private_gmo_credentials",
+        lambda **_: GmoPrivateCredentialRecord(
+            api_key="KC-ABCDEFGH",
+            api_secret="KC-SECRET-9999",
+            source="keychain",
+            keychain_available=True,
+            configured=True,
+        ),
+    )
+
+    result = app.load_credential_values("private")
+    statuses = app.credential_statuses()
+
+    assert result["configured"] is True
+    assert result["source"] == "keychain"
+    assert result["api_key"] == "KC-ABCDEFGH"
+    assert statuses["private"]["source"] == "keychain"
+    assert statuses["private"]["keychain_available"] is True
+
+
+def test_application_save_and_delete_gmo_credentials_use_keychain(monkeypatch, tmp_path):
+    app = LabApplication(write_config(tmp_path))
+    store = {"api_key": "", "api_secret": ""}
+
+    def fake_resolve_private_gmo_credentials(*, env_api_key: str = "", env_api_secret: str = "") -> GmoPrivateCredentialRecord:
+        if store["api_key"] and store["api_secret"]:
+            return GmoPrivateCredentialRecord(
+                api_key=store["api_key"],
+                api_secret=store["api_secret"],
+                source="keychain",
+                keychain_available=True,
+                configured=True,
+            )
+        return GmoPrivateCredentialRecord(
+            api_key=env_api_key,
+            api_secret=env_api_secret,
+            source="unset",
+            keychain_available=True,
+            configured=False,
+        )
+
+    def fake_save_private_gmo_credentials(*, api_key: str, api_secret: str) -> GmoPrivateCredentialRecord:
+        store["api_key"] = api_key
+        store["api_secret"] = api_secret
+        return GmoPrivateCredentialRecord(
+            api_key=api_key,
+            api_secret=api_secret,
+            source="keychain",
+            keychain_available=True,
+            configured=True,
+        )
+
+    def fake_delete_private_gmo_credentials() -> bool:
+        had_values = bool(store["api_key"] or store["api_secret"])
+        store["api_key"] = ""
+        store["api_secret"] = ""
+        return had_values
+
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.resolve_private_gmo_credentials",
+        fake_resolve_private_gmo_credentials,
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.save_private_gmo_credentials",
+        fake_save_private_gmo_credentials,
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.delete_private_gmo_credentials",
+        fake_delete_private_gmo_credentials,
+    )
+
+    saved = app.save_gmo_credentials("private", "UI-KEY-1234", "UI-SECRET-5678")
+
+    assert saved["configured"] is True
+    assert saved["source"] == "keychain"
+    assert store["api_key"] == "UI-KEY-1234"
+    assert app.load_credential_values("private")["api_key"] == "UI-KEY-1234"
+
+    deleted = app.delete_gmo_credentials("private")
+
+    assert deleted is True
+    assert store["api_key"] == ""
+    assert app.load_credential_values("private")["configured"] is False
+
+
+def test_application_update_account_settings_persists_starting_cash(tmp_path):
+    config_path = write_config(tmp_path)
+    app = LabApplication(config_path)
+
+    app.update_account_settings(starting_cash=7_654_321.0)
+
+    reloaded = LabApplication(config_path)
+    assert app.config.risk.starting_cash == 7_654_321.0
+    assert reloaded.config.risk.starting_cash == 7_654_321.0
 
 
 def test_application_update_runtime_mode_forces_gmo_source_in_runtime_mode(tmp_path):
@@ -174,3 +281,42 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
     assert calls["loads"] == 2
     assert calls["features"] == 2
     assert calls["signals"] == 2
+
+
+def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tmp_path):
+    app = LabApplication(write_config(tmp_path))
+    app.config.data.source = "csv"
+    app.config.data.start_date = "2024-01-01"
+    app.config.data.end_date = "2024-03-31"
+    app.config.data.timeframes = [TimeFrame.DAY_1]
+    captured: dict[str, object] = {}
+
+    class FakeMarketDataService:
+        def __init__(self, config, env) -> None:  # noqa: ANN001
+            captured["source"] = config.data.source
+            captured["start_date"] = config.data.start_date
+            captured["end_date"] = config.data.end_date
+            captured["timeframes"] = [timeframe.value for timeframe in config.data.timeframes]
+            _ = env
+
+        def sync(self) -> dict[str, object]:
+            return {"source": captured["source"], "details": []}
+
+    monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
+
+    summary = app.sync_market_data(
+        source="gmo",
+        start_date="2026-04-01",
+        end_date="2026-04-19",
+        timeframes=[TimeFrame.MIN_1, TimeFrame.HOUR_1],
+    )
+
+    assert summary["source"] == "gmo"
+    assert captured["source"] == "gmo"
+    assert captured["start_date"] == "2026-04-01"
+    assert captured["end_date"] == "2026-04-19"
+    assert captured["timeframes"] == ["1Min", "1Hour"]
+    assert app.config.data.source == "csv"
+    assert app.config.data.start_date == "2024-01-01"
+    assert app.config.data.end_date == "2024-03-31"
+    assert [timeframe.value for timeframe in app.config.data.timeframes] == ["1Day"]

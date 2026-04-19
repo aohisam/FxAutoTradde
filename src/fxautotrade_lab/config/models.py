@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from fxautotrade_lab.core.constants import DEFAULT_BENCHMARK_SYMBOLS, DEFAULT_CURRENCY, DEFAULT_SECTOR_SYMBOLS
 from fxautotrade_lab.core.enums import BrokerMode, OrderSizingMode, TimeFrame
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
+from fxautotrade_lab.security.keychain import resolve_private_gmo_credentials
 
 
 class EnvironmentConfig(BaseSettings):
@@ -29,8 +30,14 @@ class EnvironmentConfig(BaseSettings):
     confirm_live_broker_class: str = ""
 
     def credentials_for_profile(self, profile: str) -> tuple[str, str]:
-        _ = profile
-        return (self.gmo_api_key, self.gmo_api_secret)
+        normalized = profile.lower().strip()
+        if normalized == "public":
+            return ("", "")
+        credentials = resolve_private_gmo_credentials(
+            env_api_key=self.gmo_api_key,
+            env_api_secret=self.gmo_api_secret,
+        )
+        return (credentials.api_key, credentials.api_secret)
 
     def has_credentials(self, profile: str) -> bool:
         if profile.lower().strip() == "public":
