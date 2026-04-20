@@ -85,6 +85,8 @@ class LabApplication:
         start_date: str,
         end_date: str,
         timeframes: list[TimeFrame],
+        symbols: list[str] | None = None,
+        progress_callback=None,
     ) -> dict[str, object]:
         sync_source = str(source).strip().lower()
         if sync_source not in {"gmo", "fixture"}:
@@ -94,7 +96,10 @@ class LabApplication:
         sync_config.data.start_date = start_date
         sync_config.data.end_date = end_date
         sync_config.data.timeframes = list(timeframes)
-        return MarketDataService(sync_config, self.env).sync()
+        return MarketDataService(sync_config, self.env).sync(
+            symbols=symbols,
+            progress_callback=progress_callback,
+        )
 
     def run_backtest(self) -> BacktestResult:
         self.last_result = BacktestRunner(self.config, self.env).run()

@@ -55,3 +55,11 @@ class Card(QFrame):
 
     def addBodyLayout(self, layout) -> None:
         self.body_layout.addLayout(layout)
+
+    def setBodyVisible(self, visible: bool) -> None:  # noqa: N802
+        self.body.setVisible(visible)
+        self.body.setMaximumHeight(16777215 if visible else 0)
+
+    def set_title(self, text: str) -> None:
+        if self.title_label is not None:
+            self.title_label.setText(text)

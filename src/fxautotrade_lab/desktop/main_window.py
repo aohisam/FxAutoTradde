@@ -72,9 +72,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
 
     from fxautotrade_lab.desktop.pages.automation import build_automation_page
     from fxautotrade_lab.desktop.pages.backtest import build_backtest_page
+    from fxautotrade_lab.desktop.pages.chart import build_chart_page
     from fxautotrade_lab.desktop.pages.data_sync import build_data_sync_page
     from fxautotrade_lab.desktop.pages.misc import (
-        build_chart_page,
         build_help_page,
         build_history_page,
         build_reports_page,
@@ -172,7 +172,12 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 "実時間シミュレーション": build_automation_page(
                     self.app_state, self.submit_background_task, self.log_message
                 ),
-                "チャート": build_chart_page(self.app_state, self.submit_background_task, self.log_message),
+                "チャート": build_chart_page(
+                    self.app_state,
+                    self.submit_background_task,
+                    self.log_message,
+                    on_add_pair=lambda: self._goto_page("watchlist"),
+                ),
                 "取引履歴": build_history_page(self.app_state),
                 "レポート": build_reports_page(self.app_state),
                 "設定": build_settings_page(self.app_state, self.submit_background_task, self.log_message),
@@ -316,7 +321,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.log_output.append(message)
             self.app_statusbar.showMessage(message, 5000)
 
-        def submit_background_task(self, fn, on_finished, on_error) -> None:  # noqa: ANN001
+        def submit_background_task(self, fn, on_finished, on_error, on_progress=None) -> None:  # noqa: ANN001
             worker = self.worker_class(fn)
             self._active_workers.add(worker)
 
@@ -352,8 +357,19 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 finally:
                     release_worker()
 
+            def handle_progress(payload) -> None:  # noqa: ANN001
+                if on_progress is None:
+                    return
+                try:
+                    on_progress(payload)
+                except Exception:  # noqa: BLE001
+                    log_runtime_exception("background_task:on_progress")
+                    self.log_message("進捗表示の更新でエラーが発生しました。詳細は runtime/desktop_error.log を確認してください。")
+
             worker.signals.finished.connect(handle_finished)
             worker.signals.error.connect(handle_error)
+            if on_progress is not None:
+                worker.signals.progress.connect(handle_progress)
             self.thread_pool.start(worker)
 
         def restore_geometry(self) -> None:

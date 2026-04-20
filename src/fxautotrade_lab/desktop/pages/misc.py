@@ -22,275 +22,6 @@ def _optional_web_view():  # pragma: no cover - UI helper
     return QWebEngineView
 
 
-def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
-    import re
-
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import (
-        QCheckBox,
-        QComboBox,
-        QFrame,
-        QHBoxLayout,
-        QLabel,
-        QPushButton,
-        QScrollArea,
-        QTextBrowser,
-        QVBoxLayout,
-        QWidget,
-    )
-
-    from fxautotrade_lab.desktop.charts import load_native_symbol_chart_widget_class, render_symbol_chart_html
-    from fxautotrade_lab.desktop.ui_controls import set_button_enabled
-    from fxautotrade_lab.desktop.widgets.card import Card
-    from fxautotrade_lab.desktop.widgets.chip import Chip
-
-    QWebEngineView = _optional_web_view()
-    try:
-        NativeSymbolChartWidget = load_native_symbol_chart_widget_class()
-    except ImportError:
-        NativeSymbolChartWidget = None
-
-    page = QScrollArea()
-    page.setWidgetResizable(True)
-    page.setFrameShape(QFrame.NoFrame)
-    content = QWidget()
-    layout = QVBoxLayout(content)
-    layout.setContentsMargins(20, 20, 20, 20)
-    layout.setSpacing(16)
-    page.setWidget(content)
-
-    header_row = QHBoxLayout()
-    header_left = QVBoxLayout()
-    header_left.setSpacing(2)
-    title = QLabel("チャート")
-    title.setProperty("role", "h1")
-    subtitle = QLabel("価格・出来高・RSI をまとめて確認")
-    subtitle.setProperty("role", "muted")
-    header_left.addWidget(title)
-    header_left.addWidget(subtitle)
-    header_row.addLayout(header_left, 1)
-    refresh_button = QPushButton("チャート更新")
-    refresh_button.setProperty("variant", "primary")
-    header_row.addWidget(refresh_button)
-    layout.addLayout(header_row)
-
-    banner = Card(sunken=True)
-    helper = QLabel(
-        "バックテスト結果、または GMO 実時間シミュレーション中の最新チャートを表示します。"
-        " 負荷を抑えるため、自動更新は必要な時だけ有効化してください。"
-    )
-    helper.setWordWrap(True)
-    helper.setProperty("role", "muted")
-    banner.addBodyWidget(helper)
-    layout.addWidget(banner)
-
-    controls_card = Card(title="表示設定", subtitle="通貨ペア / 足種 / オプション")
-    symbol_combo = QComboBox()
-    timeframe_combo = QComboBox()
-    auto_refresh = QCheckBox("自動更新")
-    auto_refresh.setChecked(False)
-    controls_row = QHBoxLayout()
-    controls_row.setSpacing(10)
-    controls_row.addWidget(symbol_combo, 1)
-    controls_row.addWidget(timeframe_combo)
-    controls_row.addWidget(auto_refresh)
-    controls_card.addBodyLayout(controls_row)
-    source_note = QLabel()
-    source_note.setWordWrap(True)
-    source_note.setProperty("role", "muted")
-    controls_card.addBodyWidget(source_note)
-    layout.addWidget(controls_card)
-
-    live_chip = Chip("静的", "neutral")
-    chart_card = Card(title="価格チャート", subtitle="OHLC / 指標 / 約定マーカー", header_right=live_chip)
-    web = QWebEngineView() if QWebEngineView is not None else None
-    native_chart = NativeSymbolChartWidget() if NativeSymbolChartWidget is not None else None
-    fallback = QTextBrowser()
-    if native_chart is not None:
-        chart_card.addBodyWidget(native_chart)
-    elif web is not None:
-        web.setMinimumHeight(1280)
-        chart_card.addBodyWidget(web, 1)
-    else:
-        fallback.setMinimumHeight(1280)
-        chart_card.addBodyWidget(fallback, 1)
-    layout.addWidget(chart_card)
-    layout.addStretch(1)
-
-    refresh_timer = QTimer(page)
-    refresh_timer.setInterval(max(10000, app_state.config.automation.poll_interval_seconds * 1000))
-    page._chart_request_id = 0
-    page._chart_loading = False
-
-    def is_runtime_chart() -> bool:
-        return (
-            app_state.automation_controller is not None
-            or app_state.config.data.source == "gmo"
-            or app_state.config.broker.mode.value == "gmo_sim"
-        )
-
-    def supported_timeframes() -> list[str]:
-        entry = app_state.config.strategy.entry_timeframe.value
-        configured = [timeframe.value for timeframe in app_state.config.data.timeframes]
-        ordered = [entry, *configured, "1Day", "1Week", "1Month"]
-        return list(dict.fromkeys(ordered))
-
-    def plain_message(content: str) -> str:
-        return re.sub(r"<[^>]+>", "", content).strip() or "表示できるチャートがありません。"
-
-    def set_content(content: str) -> None:
-        if native_chart is not None:
-            native_chart.clear(plain_message(content))
-        elif web is not None:
-            web.setHtml(content)
-        else:
-            fallback.setHtml(content)
-
-    def render_native(symbol: str, frame: pd.DataFrame, *, trades_frame: pd.DataFrame | None = None, fills_frame: pd.DataFrame | None = None, title_suffix: str = "") -> bool:
-        if native_chart is None:
-            return False
-        native_chart.render(
-            symbol,
-            frame.tail(400),
-            trades_frame=trades_frame,
-            fills_frame=fills_frame,
-            title_suffix=title_suffix,
-        )
-        return True
-
-    def on_chart_loaded(request_id: int, symbol: str, timeframe: str, dataset: dict[str, object]) -> None:
-        if request_id != page._chart_request_id:
-            return
-        page._chart_loading = False
-        refresh_button.setText("チャート更新")
-        set_button_enabled(refresh_button, True)
-        frame = dataset["frame"]
-        fills = dataset["fills"]
-        if frame is None or frame.empty:
-            set_content(f"<h3>{symbol} / {timeframe} の runtime チャートデータがありません。</h3>")
-            return
-        if not render_native(symbol, frame, fills_frame=fills, title_suffix="（実時間シミュレーション）"):
-            set_content(
-                render_symbol_chart_html(
-                    symbol,
-                    frame.tail(400),
-                    fills_frame=fills,
-                    title_suffix="（実時間シミュレーション）",
-                )
-            )
-
-    def on_chart_error(request_id: int, message: str) -> None:
-        if request_id != page._chart_request_id:
-            return
-        page._chart_loading = False
-        refresh_button.setText("チャート更新")
-        set_button_enabled(refresh_button, True)
-        set_content(f"<h3>チャート表示に失敗しました。</h3><p>{message}</p>")
-        log_message(f"チャート更新エラー: {message}")
-
-    def request_runtime_render(*, force_refresh: bool = False) -> None:
-        symbol = symbol_combo.currentText()
-        timeframe = timeframe_combo.currentText()
-        if not symbol or symbol == "データなし":
-            set_content("<h3>表示対象の通貨ペアがありません。</h3>")
-            return
-        if page._chart_loading:
-            return
-        page._chart_request_id += 1
-        request_id = page._chart_request_id
-        page._chart_loading = True
-        refresh_button.setText("更新中...")
-        set_button_enabled(refresh_button, False, busy=True)
-        set_content("<h3>チャートを更新しています…</h3>")
-        submit_task(
-            lambda: app_state.load_chart_dataset(symbol, timeframe, force_refresh=force_refresh),
-            lambda dataset, rid=request_id, current_symbol=symbol, current_timeframe=timeframe: on_chart_loaded(
-                rid,
-                current_symbol,
-                current_timeframe,
-                dataset,
-            ),
-            lambda message, rid=request_id: on_chart_error(rid, message),
-        )
-
-    def refresh() -> None:
-        symbol_combo.blockSignals(True)
-        timeframe_combo.blockSignals(True)
-        symbol_combo.clear()
-        timeframe_combo.clear()
-        timeframe_combo.addItems(supported_timeframes())
-        runtime = is_runtime_chart()
-        if runtime:
-            symbols = list(dict.fromkeys(app_state.config.watchlist.symbols))
-            source_note.setText("表示ソース: GMO / ローカル実時間シミュレーションの runtime データ")
-            live_chip.set_tone("running")
-            live_chip.set_text("live")
-            if symbols:
-                symbol_combo.addItems(symbols)
-            else:
-                symbol_combo.addItem("データなし")
-            content = "<h3>runtime チャートを読み込み中です。</h3>"
-        elif app_state.last_result is None or not app_state.last_result.chart_frames:
-            symbol_combo.addItem("データなし")
-            source_note.setText("表示ソース: バックテスト結果")
-            live_chip.set_tone("neutral")
-            live_chip.set_text("未実行")
-            content = "<h3>バックテスト後にチャートを表示できます。</h3>"
-            set_content(content)
-            symbol_combo.blockSignals(False)
-            timeframe_combo.blockSignals(False)
-            refresh_button.setText("チャート更新")
-            set_button_enabled(refresh_button, True)
-            return
-        else:
-            symbols = list(app_state.last_result.chart_frames.keys())
-            symbol_combo.addItems(symbols)
-            source_note.setText("表示ソース: バックテスト結果")
-            live_chip.set_tone("info")
-            live_chip.set_text("backtest")
-            content = "<h3>バックテストチャートを読み込み中です。</h3>"
-        set_content(content)
-        symbol_combo.blockSignals(False)
-        timeframe_combo.blockSignals(False)
-        if not page._chart_loading:
-            refresh_button.setText("チャート更新")
-            set_button_enabled(refresh_button, True)
-        render_current()
-
-    def render_current() -> None:
-        symbol = symbol_combo.currentText()
-        timeframe = timeframe_combo.currentText()
-        if not symbol or symbol == "データなし":
-            content = "<h3>表示対象の通貨ペアがありません。</h3>"
-        elif is_runtime_chart():
-            request_runtime_render(force_refresh=False)
-            return
-        elif app_state.last_result is None or not app_state.last_result.chart_frames:
-            content = "<h3>バックテスト後にチャートを表示できます。</h3>"
-        else:
-            frame = app_state.last_result.chart_frames.get(symbol, {}).get(timeframe)
-            if frame is None or frame.empty:
-                content = f"<h3>{symbol} / {timeframe} のチャートデータがありません。</h3>"
-            else:
-                if render_native(symbol, frame, trades_frame=app_state.last_result.trades):
-                    return
-                content = render_symbol_chart_html(symbol, frame.tail(400), app_state.last_result.trades)
-        set_content(content)
-
-    symbol_combo.currentTextChanged.connect(lambda _: render_current())
-    timeframe_combo.currentTextChanged.connect(lambda _: render_current())
-    refresh_button.clicked.connect(
-        lambda: request_runtime_render(force_refresh=True) if is_runtime_chart() else refresh()
-    )
-    refresh_timer.timeout.connect(
-        lambda: request_runtime_render(force_refresh=False)
-        if auto_refresh.isChecked() and page.isVisible() and is_runtime_chart()
-        else None
-    )
-    refresh_timer.start()
-    page.refresh = refresh
-    return page
-
 
 def build_history_page(app_state):  # pragma: no cover - UI helper
     from PySide6.QtWidgets import (
@@ -595,6 +326,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         QWidget,
     )
 
+    from fxautotrade_lab.desktop.ml_labels import ML_MODE_CHOICES, ml_mode_description, ml_mode_label
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
@@ -649,7 +381,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     header_left.setSpacing(2)
     title = QLabel("設定")
     title.setProperty("role", "h1")
-    subtitle = QLabel("運用モード / 資金管理 / 通知 / GMO 接続")
+    subtitle = QLabel("運用モード / 資金管理 / ML / 通知 / GMO 接続")
     subtitle.setProperty("role", "muted")
     header_left.addWidget(title)
     header_left.addWidget(subtitle)
@@ -761,6 +493,43 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     sizing_button_row.addWidget(save_sizing_button)
     sizing_card.addBodyLayout(sizing_button_row)
     layout.addWidget(sizing_card)
+
+    # ML card
+    ml_card = Card(title="ML 参加フィルタ", subtitle="FX breakout 戦略で使う ML 設定")
+    ml_enabled_box = QCheckBox("ML 参加フィルタを有効化")
+    ml_mode_combo = QComboBox()
+    for key, label in ML_MODE_CHOICES:
+        ml_mode_combo.addItem(label, key)
+    ml_mode_status = QLabel()
+    ml_mode_status.setWordWrap(True)
+    ml_mode_status.setProperty("role", "muted")
+    ml_model_status = QLabel()
+    ml_model_status.setWordWrap(True)
+    ml_model_status.setProperty("role", "muted")
+    ml_model_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    ml_form = QGridLayout()
+    ml_form.setHorizontalSpacing(14)
+    ml_form.setVerticalSpacing(8)
+    ml_enabled_label = QLabel("ML 有効化")
+    ml_enabled_label.setProperty("role", "muted2")
+    ml_mode_label_widget = QLabel("バックテストでの使い方")
+    ml_mode_label_widget.setProperty("role", "muted2")
+    ml_form.addWidget(ml_enabled_label, 0, 0)
+    ml_form.addWidget(ml_mode_label_widget, 0, 1)
+    ml_form.addWidget(ml_enabled_box, 1, 0)
+    ml_form.addWidget(ml_mode_combo, 1, 1)
+    ml_form.setColumnStretch(0, 1)
+    ml_form.setColumnStretch(1, 1)
+    ml_card.addBodyLayout(ml_form)
+    ml_card.addBodyWidget(ml_mode_status)
+    ml_card.addBodyWidget(ml_model_status)
+    ml_button_row = QHBoxLayout()
+    ml_button_row.addStretch(1)
+    save_ml_button = QPushButton("ML 設定を保存")
+    save_ml_button.setProperty("variant", "primary")
+    ml_button_row.addWidget(save_ml_button)
+    ml_card.addBodyLayout(ml_button_row)
+    layout.addWidget(ml_card)
 
     # Notifications card
     notifications_card = Card(
@@ -950,6 +719,22 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             "リスク率モード: ATR ベースのストップ距離と許容損失率から数量を計算します。"
         )
 
+    def update_ml_status() -> None:
+        selected_mode = str(ml_mode_combo.currentData() or "rule_only")
+        ml_mode_status.setText(ml_mode_description(selected_mode))
+        model_status = app_state.model_status()
+        ml_model_status.setText(
+            "\n".join(
+                [
+                    f"現在の設定: {'有効' if ml_enabled_box.isChecked() else '無効'}",
+                    f"モード: {ml_mode_label(selected_mode)}",
+                    f"モデル保存先: {model_status.get('model_path', '-')}",
+                    f"保存済みモデル: {'あり' if model_status.get('exists') else 'なし'}",
+                    "学習実行はバックテスト画面の「FX ML 学習」から行えます。",
+                ]
+            )
+        )
+
     def save_order_sizing() -> None:
         try:
             app_state.update_account_settings(
@@ -978,6 +763,24 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             "資金 / 注文サイズ設定を保存しました: "
             f"{app_state.config.risk.starting_cash:,.0f} {app_state.config.risk.account_currency} / "
             f"{app_state.config.risk.order_size_mode.value}"
+        )
+        refresh_all_pages()
+
+    def save_ml_settings() -> None:
+        try:
+            app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled_box.isChecked()
+            app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
+                ml_mode_combo.currentData() or "rule_only"
+            )
+            app_state.save_config()
+        except Exception as exc:  # pragma: no cover - config persistence
+            QMessageBox.critical(page, "エラー", f"ML 設定の保存に失敗しました。\n{exc}")
+            return
+        QMessageBox.information(page, "完了", "ML 設定を保存しました。")
+        log_message(
+            "ML 設定を保存しました: "
+            f"{'有効' if app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled else '無効'} / "
+            f"{ml_mode_label(app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)}"
         )
         refresh_all_pages()
 
@@ -1112,12 +915,15 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_notifications_button.clicked.connect(save_notifications)
     save_mode_button.clicked.connect(save_runtime_mode)
     save_sizing_button.clicked.connect(save_order_sizing)
+    save_ml_button.clicked.connect(save_ml_settings)
     save_credentials_button.clicked.connect(save_private_credentials)
     clear_credentials_button.clicked.connect(clear_private_credentials)
     test_connection_button.clicked.connect(run_connection_test)
     mode_combo.currentIndexChanged.connect(lambda _: update_mode_status())
     source_combo.currentIndexChanged.connect(lambda _: update_mode_status())
     sizing_combo.currentIndexChanged.connect(lambda _: update_sizing_status())
+    ml_enabled_box.toggled.connect(lambda _: update_ml_status())
+    ml_mode_combo.currentIndexChanged.connect(lambda _: update_ml_status())
 
     def refresh() -> None:
         env = app_state.env
@@ -1166,6 +972,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         equity_fraction_input.setText(format_number(app_state.config.risk.equity_fraction_per_trade, 4))
         risk_fraction_input.setText(format_number(app_state.config.risk.risk_per_trade, 4))
         update_sizing_status()
+        ml_enabled_box.setChecked(app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled)
+        _set_combo_value(ml_mode_combo, app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
+        update_ml_status()
         sound_name.setText(app_state.config.automation.notification_channels.sound_name)
         webhook_url.setText(app_state.config.automation.notification_channels.webhook_url)
         log_path_label.setText(str(app_state.config.automation.notification_channels.log_path))

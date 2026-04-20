@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html as html_mod
+
 import pandas as pd
 
 
@@ -44,8 +46,8 @@ ORDER_SIZE_LABELS = {
 SIDE_LABELS = {
     "buy": "買い",
     "sell": "売り",
-    "long": "ロング",
-    "short": "ショート",
+    "long": "買い",
+    "short": "売り",
 }
 
 ORDER_STATUS_LABELS = {
@@ -74,104 +76,16 @@ EVENT_LEVEL_LABELS = {
     "debug": "デバッグ",
 }
 
-COLUMN_LABELS = {
-    "fill_id": "約定ID",
-    "order_id": "注文ID",
-    "symbol": "通貨ペア",
-    "qty": "数量",
-    "filled_qty": "約定数量",
-    "side": "売買",
-    "status": "状態",
-    "price": "価格",
-    "filled_avg_price": "平均約定価格",
-    "filled_at": "約定時刻",
-    "submitted_at": "注文時刻",
-    "timestamp": "時刻",
-    "signal_action": "シグナル",
-    "signal_score": "スコア",
-    "accepted": "採用",
-    "explanation_ja": "説明",
-    "session_label_ja": "市場セッション",
-    "market_value": "時価評価額",
-    "unrealized_pl": "含み損益",
-    "unrealized_plpc": "含み損益率",
-    "current_price": "現在値",
-    "avg_entry_price": "平均取得価格",
-    "cost_basis": "取得総額",
-    "managed_initial_stop_price": "現在の初期ストップ価格",
-    "managed_stop_price": "防御ストップ",
-    "managed_trailing_stop_price": "トレーリングストップ",
-    "managed_active_stop_price": "現在の有効ストップ",
-    "managed_partial_target_price": "一部利確目標",
-    "managed_partial_reference_price": "一部利確の比較対象高値",
-    "managed_reference_bar_at": "比較バー時刻",
-    "managed_next_trailing_price": "次のトレーリング価格",
-    "managed_trailing_multiple": "トレーリング倍率",
-    "managed_bars_held": "保有バー数",
-    "managed_partial_taken": "一部利確済み",
-    "managed_break_even_armed": "建値防衛",
-    "level": "レベル",
-    "message_ja": "メッセージ",
-    "event": "イベント",
-    "reason": "理由",
+EVENT_LEVEL_KEYS = {
+    "情報": "INFO",
+    "警告": "WARN",
+    "エラー": "ERROR",
+    "デバッグ": "INFO",
+    "info": "INFO",
+    "warning": "WARN",
+    "error": "ERROR",
+    "debug": "INFO",
 }
-
-POSITION_COLUMNS = [
-    "symbol",
-    "qty",
-    "side",
-    "avg_entry_price",
-    "current_price",
-    "market_value",
-    "unrealized_pl",
-    "unrealized_plpc",
-    "managed_initial_stop_price",
-    "managed_active_stop_price",
-    "managed_partial_target_price",
-    "managed_partial_reference_price",
-    "managed_next_trailing_price",
-    "managed_break_even_armed",
-    "managed_partial_taken",
-    "managed_bars_held",
-]
-
-SIGNAL_COLUMNS = [
-    "timestamp",
-    "symbol",
-    "signal_action",
-    "signal_score",
-    "accepted",
-    "session_label_ja",
-    "explanation_ja",
-]
-
-ORDER_COLUMNS = [
-    "submitted_at",
-    "symbol",
-    "side",
-    "qty",
-    "filled_qty",
-    "filled_avg_price",
-    "status",
-    "reason",
-    "order_id",
-]
-
-FILL_COLUMNS = [
-    "filled_at",
-    "symbol",
-    "side",
-    "qty",
-    "price",
-    "order_id",
-    "fill_id",
-]
-
-EVENT_COLUMNS = [
-    "timestamp",
-    "level",
-    "message_ja",
-]
 
 
 def _label(mapping: dict[str, str], value: object, default: str = "-") -> str:
@@ -200,11 +114,25 @@ def _format_money(value: object, digits: int = 2, default: str = "-") -> str:
     return f"{numeric:,.{digits}f}"
 
 
+def _format_signed_money(value: object, digits: int = 0, default: str = "-") -> str:
+    numeric = _coerce_float(value)
+    if numeric is None:
+        return default
+    return f"{numeric:+,.{digits}f}"
+
+
 def _format_percent(value: object, digits: int = 2, default: str = "-") -> str:
     numeric = _coerce_float(value)
     if numeric is None:
         return default
     return f"{numeric:.{digits}%}"
+
+
+def _format_signed_percent(value: object, digits: int = 2, default: str = "-") -> str:
+    numeric = _coerce_float(value)
+    if numeric is None:
+        return default
+    return f"{numeric:+.{digits}%}"
 
 
 def _format_count(value: object, default: str = "-") -> str:
@@ -214,60 +142,131 @@ def _format_count(value: object, default: str = "-") -> str:
     return str(int(round(numeric)))
 
 
-def _format_timestamp(value: object, default: str = "-") -> str:
+def _format_timestamp(value: object, default: str = "-", *, fmt: str = "%m/%d %H:%M:%S") -> str:
     if value in {None, ""}:
         return default
     try:
         stamp = pd.Timestamp(value)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return str(value)
-    return stamp.strftime("%m/%d %H:%M:%S")
+    return stamp.strftime(fmt)
 
 
-def _format_latest_bar_map(latest_bar_summary: dict[str, str], *, multiline: bool = False) -> str:
+def _format_latest_bars(latest_bar_summary: dict[str, str]) -> str:
     if not latest_bar_summary:
         return "-"
-    items = [f"{symbol}: {_format_timestamp(timestamp)}" for symbol, timestamp in latest_bar_summary.items()]
-    return "\n".join(items) if multiline else " / ".join(items)
+    lines = [
+        f"{symbol}: {_format_timestamp(timestamp, fmt='%m/%d %H:%M')}"
+        for symbol, timestamp in latest_bar_summary.items()
+    ]
+    return "\n".join(lines[:3])
 
 
-def _select_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    ordered = [name for name in columns if name in frame.columns]
-    rest = [name for name in frame.columns if name not in ordered]
-    return frame.loc[:, ordered + rest]
+def _positions_frame(rows):
+    if not rows:
+        return None
+    out = []
+    for row in rows:
+        pnl_val = _coerce_float(row.get("unrealized_pl"))
+        pnl_pct = _coerce_float(row.get("unrealized_plpc"))
+        parts = []
+        if pnl_val is not None:
+            parts.append(f"{pnl_val:+,.0f}")
+        if pnl_pct is not None:
+            parts.append(f"{pnl_pct:+.2%}")
+        pnl_combined = " / ".join(parts) if parts else "-"
+        out.append(
+            {
+                "通貨ペア": str(row.get("symbol", "")).upper() or "-",
+                "売買": _label(SIDE_LABELS, row.get("side")),
+                "数量": _format_count(row.get("qty")),
+                "平均取得": _format_money(row.get("avg_entry_price")),
+                "現在値": _format_money(row.get("current_price")),
+                "時価評価": _format_money(row.get("market_value")),
+                "含み損益": pnl_combined,
+                "有効ストップ": _format_money(row.get("managed_active_stop_price"), digits=4),
+                "次トレール": _format_money(row.get("managed_next_trailing_price"), digits=4),
+                "保有バー": _format_count(row.get("managed_bars_held")),
+            }
+        )
+    return pd.DataFrame(out)
 
 
-def _localize_automation_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame is None or frame.empty:
-        return pd.DataFrame()
-    localized = frame.copy()
-    for column in localized.columns:
-        if column == "mode":
-            localized[column] = localized[column].map(lambda value: _label(MODE_LABELS, value))
-        elif column == "status":
-            localized[column] = localized[column].map(
-                lambda value: _label(ORDER_STATUS_LABELS | STATUS_LABELS | ACCOUNT_STATUS_LABELS, value)
-            )
-        elif column == "side":
-            localized[column] = localized[column].map(lambda value: _label(SIDE_LABELS, value))
-        elif column == "signal_action":
-            localized[column] = localized[column].map(lambda value: _label(SIGNAL_ACTION_LABELS, value))
-        elif column == "accepted":
-            localized[column] = localized[column].map(_bool_label)
-        elif column in {"managed_partial_taken", "managed_break_even_armed"}:
-            localized[column] = localized[column].map(_bool_label)
-        elif column == "level":
-            localized[column] = localized[column].map(lambda value: _label(EVENT_LEVEL_LABELS, value))
-        elif column == "event":
-            localized[column] = localized[column].map(lambda value: _label(ORDER_STATUS_LABELS, value))
-    localized = localized.rename(columns={name: COLUMN_LABELS.get(name, name) for name in localized.columns})
-    return localized
+def _signals_frame(rows):
+    if not rows:
+        return None
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "時刻": _format_timestamp(row.get("timestamp"), fmt="%m/%d %H:%M:%S"),
+                "通貨ペア": str(row.get("symbol", "")),
+                "シグナル": _label(SIGNAL_ACTION_LABELS, row.get("signal_action")),
+                "スコア": f"{_coerce_float(row.get('signal_score')) or 0:.2f}",
+                "採用": _bool_label(row.get("accepted")),
+                "市場セッション": str(row.get("session_label_ja") or "-"),
+                "説明": str(row.get("explanation_ja") or ""),
+            }
+        )
+    return pd.DataFrame(out)
+
+
+def _orders_frame(rows):
+    if not rows:
+        return None
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "注文時刻": _format_timestamp(row.get("submitted_at")),
+                "通貨ペア": str(row.get("symbol", "")),
+                "売買": _label(SIDE_LABELS, row.get("side")),
+                "数量": _format_count(row.get("qty")),
+                "約定数量": _format_count(row.get("filled_qty")),
+                "平均価格": _format_money(row.get("filled_avg_price")),
+                "状態": _label(ORDER_STATUS_LABELS, row.get("status")),
+                "理由": str(row.get("reason") or "-"),
+            }
+        )
+    return pd.DataFrame(out)
+
+
+def _fills_frame(rows):
+    if not rows:
+        return None
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "約定時刻": _format_timestamp(row.get("filled_at")),
+                "通貨ペア": str(row.get("symbol", "")),
+                "売買": _label(SIDE_LABELS, row.get("side")),
+                "数量": _format_count(row.get("qty")),
+                "価格": _format_money(row.get("price")),
+                "注文ID": str(row.get("order_id") or "-"),
+            }
+        )
+    return pd.DataFrame(out)
+
+
+def _events_frame(rows):
+    if not rows:
+        return None
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "時刻": _format_timestamp(row.get("timestamp")),
+                "レベル": _label(EVENT_LEVEL_LABELS, row.get("level")),
+                "メッセージ": str(row.get("message_ja") or ""),
+            }
+        )
+    return pd.DataFrame(out)
 
 
 def build_automation_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import Qt, QTimer, Signal
+    from PySide6.QtGui import QColor, QPainter, QPen
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QFrame,
@@ -278,32 +277,189 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         QMessageBox,
         QPushButton,
         QScrollArea,
-        QTabWidget,
+        QStackedWidget,
+        QStyledItemDelegate,
         QTableView,
+        QTextBrowser,
         QVBoxLayout,
         QWidget,
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.theme import Tokens
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
+    from fxautotrade_lab.desktop.widgets.banner import Banner
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
     from fxautotrade_lab.desktop.widgets.kpi import KpiTile
 
     DataFrameTableModel = load_dataframe_model_class()
 
-    def configure_table(view: QTableView) -> None:
-        view.setAlternatingRowColors(False)
-        view.setSelectionBehavior(QAbstractItemView.SelectRows)
-        view.setSelectionMode(QAbstractItemView.SingleSelection)
-        view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        view.verticalHeader().setVisible(False)
-        view.setShowGrid(False)
-        header = view.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setDefaultSectionSize(140)
-        header.setMinimumSectionSize(84)
+    # ---- Helper widgets -------------------------------------------------------
+
+    class DetailGrid(QWidget):
+        def __init__(self, columns: int = 2, parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            self.columns = max(1, columns)
+            self._grid = QGridLayout(self)
+            self._grid.setHorizontalSpacing(18)
+            self._grid.setVerticalSpacing(10)
+            self._grid.setContentsMargins(0, 0, 0, 0)
+            for column in range(self.columns):
+                self._grid.setColumnStretch(column, 1)
+            self._rows: dict[str, QLabel] = {}
+
+        def add(self, key: str, label_text: str) -> None:
+            cell = QWidget()
+            cell_lay = QVBoxLayout(cell)
+            cell_lay.setContentsMargins(0, 0, 0, 0)
+            cell_lay.setSpacing(2)
+            eyebrow = QLabel(label_text.upper())
+            eyebrow.setProperty("role", "eyebrow")
+            value = QLabel("-")
+            value.setProperty("role", "detail-value")
+            value.setWordWrap(True)
+            cell_lay.addWidget(eyebrow)
+            cell_lay.addWidget(value)
+            idx = len(self._rows)
+            self._grid.addWidget(cell, idx // self.columns, idx % self.columns)
+            self._rows[key] = value
+
+        def set(self, key: str, text: str, *, tone: str | None = None) -> None:
+            value = self._rows.get(key)
+            if value is None:
+                return
+            value.setText(text)
+            value.setProperty("tone", tone or "")
+            style = value.style()
+            if style is not None:
+                style.unpolish(value)
+                style.polish(value)
+
+    class CountedTabs(QWidget):
+        currentChanged = Signal(int)
+
+        def __init__(self, labels: list[str], parent: QWidget | None = None) -> None:
+            super().__init__(parent)
+            row = QHBoxLayout(self)
+            row.setContentsMargins(12, 8, 12, 0)
+            row.setSpacing(4)
+            self._labels = list(labels)
+            self._counts = [0] * len(labels)
+            self._buttons: list[QPushButton] = []
+            for index, name in enumerate(labels):
+                button = QPushButton(self._format_label(name, 0))
+                button.setCheckable(True)
+                button.setProperty("role", "tab")
+                button.setCursor(Qt.PointingHandCursor)
+                button.clicked.connect(lambda _=False, i=index: self.set_current(i))
+                row.addWidget(button)
+                self._buttons.append(button)
+            row.addStretch(1)
+            self._current = 0
+            if self._buttons:
+                self._buttons[0].setChecked(True)
+
+        def _format_label(self, name: str, count: int) -> str:
+            return f"{name}  {count:,}" if count else f"{name}"
+
+        def set_count(self, index: int, count: int) -> None:
+            if 0 <= index < len(self._counts):
+                self._counts[index] = count
+                self._buttons[index].setText(self._format_label(self._labels[index], count))
+
+        def set_current(self, index: int) -> None:
+            if not (0 <= index < len(self._buttons)):
+                return
+            for position, button in enumerate(self._buttons):
+                button.setChecked(position == index)
+            if index != self._current:
+                self._current = index
+            self.currentChanged.emit(index)
+
+        def current(self) -> int:
+            return self._current
+
+    _TONE_COLOR = {
+        "running": Tokens.POS,
+        "info": Tokens.INFO,
+        "warn": Tokens.WARN,
+        "neg": Tokens.NEG,
+        "neutral": Tokens.MUTED_2,
+        "accent": Tokens.ACCENT,
+    }
+
+    class ChipDelegate(QStyledItemDelegate):
+        def __init__(self, parent=None, tone_for=None):
+            super().__init__(parent)
+            self._tone_for = tone_for or (lambda _text: None)
+
+        def paint(self, painter, option, index):
+            text = str(index.data() or "")
+            tone = self._tone_for(text) if text else None
+            if not tone:
+                super().paint(painter, option, index)
+                return
+            tone_color = _TONE_COLOR.get(tone, Tokens.MUTED_2)
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+            rect = option.rect.adjusted(6, 4, -6, -4)
+            bg = QColor(tone_color)
+            bg.setAlphaF(0.10)
+            border = QColor(tone_color)
+            border.setAlphaF(0.30)
+            painter.setBrush(bg)
+            painter.setPen(QPen(border, 1))
+            radius = rect.height() / 2
+            painter.drawRoundedRect(rect, radius, radius)
+            painter.setPen(QColor(tone_color))
+            painter.drawText(rect.adjusted(10, 0, -10, 0), Qt.AlignVCenter | Qt.AlignLeft, text)
+            painter.restore()
+
+    class MonoRightDelegate(QStyledItemDelegate):
+        def initStyleOption(self, option, index):  # noqa: N802
+            super().initStyleOption(option, index)
+            option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
+            option.font.setFamily("JetBrains Mono")
+
+    class MonoSignedDelegate(QStyledItemDelegate):
+        def initStyleOption(self, option, index):  # noqa: N802
+            super().initStyleOption(option, index)
+            option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
+            option.font.setFamily("JetBrains Mono")
+            text = str(option.text or "").lstrip()
+            if text.startswith("+"):
+                option.palette.setColor(option.palette.Text, QColor(Tokens.POS))
+            elif text.startswith(("-", "−")):
+                option.palette.setColor(option.palette.Text, QColor(Tokens.NEG))
+
+    def signal_tone(text: str) -> str | None:
+        return "accent" if text in ("買い", "売り") else None
+
+    def order_status_tone(text: str) -> str | None:
+        mapping = {
+            "約定済み": "neutral",
+            "ローカル約定済み": "running",
+            "一部約定": "warn",
+            "取消済み": "neutral",
+            "拒否": "neg",
+            "新規": "info",
+            "受付済み": "info",
+            "受付待ち": "info",
+            "期限切れ": "warn",
+        }
+        return mapping.get(text)
+
+    def level_tone(text: str) -> str | None:
+        mapping = {
+            "情報": "info",
+            "警告": "warn",
+            "エラー": "neg",
+            "デバッグ": "neutral",
+        }
+        return mapping.get(text)
+
+    # ---- Page scaffolding -----------------------------------------------------
 
     page = QScrollArea()
     page.setWidgetResizable(True)
@@ -314,177 +470,284 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     layout.setSpacing(16)
     page.setWidget(content)
 
-    # Header -----------------------------------------------------------------
-    header_row = QHBoxLayout()
-    header_left = QVBoxLayout()
-    header_left.setSpacing(2)
+    # ---- Header ----
+    header = QHBoxLayout()
+    header.setSpacing(12)
+    header_text = QVBoxLayout()
+    header_text.setSpacing(2)
     title = QLabel("実時間シミュレーション")
     title.setProperty("role", "h1")
-    subtitle = QLabel("GMO 実時間 / ローカルシミュレーションの運用状況")
+    subtitle = QLabel(
+        "GMO 実時間データ連動 · 実売買は行いません · 約定はローカルシミュレーションです"
+    )
     subtitle.setProperty("role", "muted")
-    header_left.addWidget(title)
-    header_left.addWidget(subtitle)
-    header_row.addLayout(header_left, 1)
+    subtitle.setWordWrap(True)
+    header_text.addWidget(title)
+    header_text.addWidget(subtitle)
+    header.addLayout(header_text, 1)
+    status_running = Chip("停止中", "neutral")
+    status_gmo = Chip("GMO 未接続", "warn")
+    header.addWidget(status_running)
+    header.addWidget(status_gmo)
+    layout.addLayout(header)
 
-    status_chip = Chip("停止", "neutral")
-    mode_chip = Chip("ローカル", "paper")
-    header_right = QHBoxLayout()
-    header_right.setSpacing(8)
-    header_right.addWidget(mode_chip)
-    header_right.addWidget(status_chip)
-    header_row.addLayout(header_right)
-    layout.addLayout(header_row)
+    # ---- Banner ----
+    banner = Banner(
+        "GMO 実時間シミュレーションの準備は完了しています。"
+        "GMO の価格を監視しながら、ローカルで約定・損益計算を行います。"
+        " 停止後はポジションを保持しないため、手動決済は稼働中のみ利用できます。"
+    )
+    layout.addWidget(banner)
 
-    # Banner / guide ---------------------------------------------------------
-    banner_card = Card(sunken=True)
-    banner = QLabel()
-    banner.setWordWrap(True)
-    banner.setProperty("role", "muted")
-    banner_card.addBodyWidget(banner)
-    guide = QLabel()
-    guide.setWordWrap(True)
-    guide.setProperty("role", "muted2")
-    banner_card.addBodyWidget(guide)
-    layout.addWidget(banner_card)
-
-    # Action row -------------------------------------------------------------
-    button_row = QHBoxLayout()
-    button_row.setSpacing(10)
+    # ---- Action row ----
+    action_row = QHBoxLayout()
+    action_row.setSpacing(8)
+    action_row.setContentsMargins(0, 0, 0, 0)
     start_button = QPushButton("自動売買を開始")
-    stop_button = QPushButton("停止")
-    kill_button = QPushButton("キルスイッチで停止")
-    close_selected_button = QPushButton("選択ポジションを手動決済")
-    close_all_button = QPushButton("全ポジションを決済")
     start_button.setProperty("variant", "primary")
+    stop_button = QPushButton("停止")
     stop_button.setProperty("variant", "ghost")
+    kill_button = QPushButton("キルスイッチで停止")
     kill_button.setProperty("variant", "kill")
+    close_selected_button = QPushButton("選択ポジションを手動決済")
     close_selected_button.setProperty("variant", "success")
+    close_all_button = QPushButton("全ポジションを決済")
     close_all_button.setProperty("variant", "success")
-    for widget in (start_button, stop_button, kill_button, close_selected_button, close_all_button):
-        button_row.addWidget(widget)
-    button_row.addStretch(1)
-    layout.addLayout(button_row)
+    action_row.addWidget(start_button)
+    action_row.addWidget(stop_button)
+    action_row.addWidget(kill_button)
+    action_row.addStretch(1)
+    action_row.addWidget(close_selected_button)
+    action_row.addWidget(close_all_button)
+    layout.addLayout(action_row)
 
-    # Metrics grid -----------------------------------------------------------
-    metrics_grid = QGridLayout()
-    metrics_grid.setHorizontalSpacing(12)
-    metrics_grid.setVerticalSpacing(12)
+    # ---- KPI 4x2 ----
+    kpi_grid = QGridLayout()
+    kpi_grid.setHorizontalSpacing(12)
+    kpi_grid.setVerticalSpacing(12)
     for column in range(4):
-        metrics_grid.setColumnStretch(column, 1)
-    metric_specs = [
-        ("mode", "運用モード"),
-        ("connection", "接続状態"),
-        ("market", "市場データ"),
-        ("order_size", "注文サイズ"),
-        ("equity", "評価資産"),
-        ("daily_pl", "日次損益"),
-        ("positions", "保有ポジション"),
-        ("heartbeat", "更新状況"),
-    ]
-    page.metric_labels = {}
-    page.metric_tiles = {}
-    for index, (key, label_text) in enumerate(metric_specs):
-        tile = KpiTile(label=label_text, value="-", note="-")
-        metrics_grid.addWidget(tile, index // 4, index % 4)
-        page.metric_tiles[key] = tile
-        page.metric_labels[key] = {"value": tile.value, "note": tile.note}
-    layout.addLayout(metrics_grid)
+        kpi_grid.setColumnStretch(column, 1)
+    kpi_mode = KpiTile(label="運用モード", value="-", value_variant="plain")
+    kpi_conn = KpiTile(label="接続状態", value="-", value_variant="plain")
+    kpi_data = KpiTile(label="市場データ", value="-", value_variant="plain")
+    kpi_size = KpiTile(label="注文サイズ", value="-", value_variant="plain")
+    kpi_equity = KpiTile(label="評価資産", value="-", value_variant="mono")
+    kpi_daily = KpiTile(label="日次損益", value="-", value_variant="mono")
+    kpi_positions = KpiTile(label="保有ポジション", value="-", value_variant="mono")
+    kpi_heartbeat = KpiTile(label="更新状況", value="-", value_variant="mono-md")
+    tiles = [kpi_mode, kpi_conn, kpi_data, kpi_size, kpi_equity, kpi_daily, kpi_positions, kpi_heartbeat]
+    for index, tile in enumerate(tiles):
+        kpi_grid.addWidget(tile, index // 4, index % 4)
+    layout.addLayout(kpi_grid)
+    page.kpi_tiles = {
+        "mode": kpi_mode,
+        "connection": kpi_conn,
+        "market": kpi_data,
+        "order_size": kpi_size,
+        "equity": kpi_equity,
+        "daily_pl": kpi_daily,
+        "positions": kpi_positions,
+        "heartbeat": kpi_heartbeat,
+    }
 
-    # Position detail + runtime summary --------------------------------------
-    detail_grid = QGridLayout()
-    detail_grid.setHorizontalSpacing(14)
-    detail_grid.setColumnStretch(0, 3)
-    detail_grid.setColumnStretch(1, 2)
-
-    position_card = Card(title="選択ポジションの出口管理", subtitle="初期ストップ・トレーリング・一部利確")
-    position_summary = QLabel("保有ポジションを選ぶと、初期ストップや一部利確目標をここで確認できます。")
-    position_summary.setWordWrap(True)
-    position_summary.setProperty("role", "muted")
-    position_card.addBodyWidget(position_summary)
-
-    detail_specs = [
+    # ---- split-2: exit management + runtime summary ----
+    exit_hint = QLabel("-")
+    exit_hint.setProperty("role", "muted2")
+    exit_card = Card(title="選択ポジションの出口管理", header_right=exit_hint)
+    exit_grid = DetailGrid(columns=2)
+    exit_fields = [
         ("symbol", "選択通貨ペア"),
         ("qty", "保有数量"),
         ("avg_entry_price", "平均取得価格"),
         ("current_price", "現在値"),
         ("market_value", "時価評価額"),
         ("unrealized_pl", "含み損益"),
-        ("managed_initial_stop_price", "初期ストップ"),
-        ("managed_active_stop_price", "有効ストップ"),
+        ("managed_initial_stop_price", "現在の初期ストップ"),
+        ("managed_active_stop_price", "現在の有効ストップ"),
         ("managed_partial_target_price", "一部利確目標"),
         ("managed_partial_reference_price", "比較対象高値"),
-        ("managed_next_trailing_price", "次のトレーリング"),
+        ("managed_next_trailing_price", "次のトレーリング価格"),
         ("managed_reference_bar_at", "比較バー時刻"),
         ("managed_break_even_armed", "建値防衛"),
         ("managed_partial_taken", "一部利確済み"),
         ("managed_bars_held", "保有バー数"),
     ]
-    detail_cells = QGridLayout()
-    detail_cells.setHorizontalSpacing(10)
-    detail_cells.setVerticalSpacing(10)
-    page.position_detail_labels: dict[str, QLabel] = {}
-    for index, (key, label_text) in enumerate(detail_specs):
-        eyebrow = QLabel(label_text.upper())
-        eyebrow.setProperty("role", "eyebrow")
-        value_label = QLabel("-")
-        value_label.setProperty("role", "detail-value")
-        value_label.setWordWrap(True)
-        cell = QVBoxLayout()
-        cell.setContentsMargins(0, 0, 0, 0)
-        cell.setSpacing(2)
-        cell.addWidget(eyebrow)
-        cell.addWidget(value_label)
-        detail_cells.addLayout(cell, index // 3, index % 3)
-        page.position_detail_labels[key] = value_label
-    position_card.addBodyLayout(detail_cells)
-    detail_grid.addWidget(position_card, 0, 0)
+    for key, caption in exit_fields:
+        exit_grid.add(key, caption)
+    exit_card.addBodyWidget(exit_grid)
 
-    runtime_card = Card(title="実行サマリー", subtitle="ストリーム / 接続 / キルスイッチ")
-    runtime_summary = QLabel("停止中")
-    runtime_summary.setWordWrap(True)
-    runtime_summary.setProperty("role", "muted")
-    runtime_card.addBodyWidget(runtime_summary)
-    detail_grid.addWidget(runtime_card, 0, 1)
-    layout.addLayout(detail_grid)
+    run_card = Card(title="実行サマリー")
+    run_grid = DetailGrid(columns=1)
+    run_fields = [
+        ("run_id", "実行ID"),
+        ("account_msg", "口座メッセージ"),
+        ("last_bars", "最新市場バー"),
+        ("stream_last", "ストリーム最終受信"),
+        ("stream_err", "ストリーム最終エラー"),
+        ("kill", "キルスイッチ"),
+        ("last_action", "直近アクション"),
+    ]
+    for key, caption in run_fields:
+        run_grid.add(key, caption)
+    run_card.addBodyWidget(run_grid)
 
-    # Tabs card --------------------------------------------------------------
-    tabs_card = Card(title="一覧", subtitle="ポジション / シグナル / 注文 / 約定 / ログ")
-    tabs = QTabWidget()
-    tabs.setMinimumHeight(360)
+    split = QHBoxLayout()
+    split.setSpacing(16)
+    split_left = QWidget()
+    split_left_lay = QVBoxLayout(split_left)
+    split_left_lay.setContentsMargins(0, 0, 0, 0)
+    split_left_lay.addWidget(exit_card)
+    split_right = QWidget()
+    split_right_lay = QVBoxLayout(split_right)
+    split_right_lay.setContentsMargins(0, 0, 0, 0)
+    split_right_lay.addWidget(run_card)
+    split.addWidget(split_left, 3)
+    split.addWidget(split_right, 2)
+    layout.addLayout(split)
+
+    # ---- Tabs card ----
+    tabs_card = Card()
+    tabs = CountedTabs(
+        [
+            "現在のポジション",
+            "直近シグナル",
+            "最近の注文",
+            "最近の約定",
+            "実行ログ",
+        ]
+    )
     tabs_card.addBodyWidget(tabs)
-    orders_view = QTableView()
-    signals_view = QTableView()
-    positions_view = QTableView()
-    fills_view = QTableView()
-    events_view = QTableView()
-    orders_model = DataFrameTableModel()
-    signals_model = DataFrameTableModel()
-    positions_model = DataFrameTableModel()
-    fills_model = DataFrameTableModel()
-    events_model = DataFrameTableModel()
-    for view, model in (
-        (orders_view, orders_model),
-        (signals_view, signals_model),
-        (positions_view, positions_model),
-        (fills_view, fills_model),
-        (events_view, events_model),
-    ):
+    tab_stack = QStackedWidget()
+
+    def _mk_table() -> tuple[QTableView, DataFrameTableModel]:
+        view = QTableView()
+        view.setAlternatingRowColors(False)
+        view.setShowGrid(False)
+        view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        view.setSelectionMode(QAbstractItemView.SingleSelection)
+        view.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        view.verticalHeader().setVisible(False)
+        hdr = view.horizontalHeader()
+        hdr.setStretchLastSection(True)
+        hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
+        view.setMinimumHeight(320)
+        model = DataFrameTableModel()
         view.setModel(model)
-        configure_table(view)
-    tabs.addTab(positions_view, "現在のポジション")
-    tabs.addTab(signals_view, "直近シグナル")
-    tabs.addTab(orders_view, "最近の注文")
-    tabs.addTab(fills_view, "最近の約定")
-    tabs.addTab(events_view, "実行ログ")
+        return view, model
+
+    positions_view, positions_model = _mk_table()
+    signals_view, signals_model = _mk_table()
+    orders_view, orders_model = _mk_table()
+    fills_view, fills_model = _mk_table()
+    events_view, events_model = _mk_table()
+    tab_stack.addWidget(positions_view)
+    tab_stack.addWidget(signals_view)
+    tab_stack.addWidget(orders_view)
+    tab_stack.addWidget(fills_view)
+    tab_stack.addWidget(events_view)
+    tabs.currentChanged.connect(tab_stack.setCurrentIndex)
+    tabs_card.addBodyWidget(tab_stack)
     layout.addWidget(tabs_card)
+
+    # Column delegates
+    # positions: 通貨ペア(0) 売買(1) 数量(2) 平均取得(3) 現在値(4) 時価評価(5) 含み損益(6) 有効ストップ(7) 次トレール(8) 保有バー(9)
+    positions_view.setItemDelegateForColumn(1, ChipDelegate(positions_view, lambda t: "accent" if t in ("買い", "売り") else None))
+    for column in (2, 3, 4, 5, 7, 8, 9):
+        positions_view.setItemDelegateForColumn(column, MonoRightDelegate(positions_view))
+    positions_view.setItemDelegateForColumn(6, MonoSignedDelegate(positions_view))
+
+    # signals: 時刻(0) 通貨ペア(1) シグナル(2) スコア(3) 採用(4) 市場セッション(5) 説明(6)
+    signals_view.setItemDelegateForColumn(2, ChipDelegate(signals_view, signal_tone))
+    signals_view.setItemDelegateForColumn(3, MonoRightDelegate(signals_view))
+
+    # orders: 注文時刻(0) 通貨ペア(1) 売買(2) 数量(3) 約定数量(4) 平均価格(5) 状態(6) 理由(7)
+    orders_view.setItemDelegateForColumn(2, ChipDelegate(orders_view, lambda t: "accent" if t in ("買い", "売り") else None))
+    for column in (3, 4, 5):
+        orders_view.setItemDelegateForColumn(column, MonoRightDelegate(orders_view))
+    orders_view.setItemDelegateForColumn(6, ChipDelegate(orders_view, order_status_tone))
+
+    # fills: 約定時刻 通貨ペア 売買 数量 価格 注文ID
+    fills_view.setItemDelegateForColumn(2, ChipDelegate(fills_view, lambda t: "accent" if t in ("買い", "売り") else None))
+    for column in (3, 4):
+        fills_view.setItemDelegateForColumn(column, MonoRightDelegate(fills_view))
+
+    # events: 時刻 レベル メッセージ
+    events_view.setItemDelegateForColumn(1, ChipDelegate(events_view, level_tone))
+
+    # ---- Log dock (navy) ----
+    log_dock = QFrame()
+    log_dock.setProperty("role", "logdock-dark")
+    dock_lay = QVBoxLayout(log_dock)
+    dock_lay.setContentsMargins(14, 10, 14, 10)
+    dock_lay.setSpacing(6)
+    dock_head = QHBoxLayout()
+    dock_title = QLabel("ログ")
+    dock_title.setProperty("role", "h2-sm")
+    dock_chip = Chip("最新 20 件", "neutral")
+    dock_head.addWidget(dock_title)
+    dock_head.addSpacing(8)
+    dock_head.addWidget(dock_chip)
+    dock_head.addStretch(1)
+    dock_lay.addLayout(dock_head)
+    log_body = QTextBrowser()
+    log_body.setProperty("role", "logdock-body")
+    log_body.setOpenLinks(False)
+    log_body.setFrameShape(QFrame.NoFrame)
+    log_body.setFixedHeight(130)
+    dock_lay.addWidget(log_body)
+    layout.addWidget(log_dock)
+
     layout.addStretch(1)
 
+    # ---- State ----
     page._raw_positions_frame = pd.DataFrame()
     page._manual_supported = False
     page._latest_status = "stopped"
     page._busy = False
     page._refresh_timer = QTimer(page)
-    page._refresh_timer.setInterval(min(5000, max(2000, app_state.config.automation.poll_interval_seconds * 1000)))
+    page._refresh_timer.setInterval(
+        min(5000, max(2000, app_state.config.automation.poll_interval_seconds * 1000))
+    )
+
+    # ---- Log rendering ----
+
+    _LOG_CSS = (
+        f".time{{color:{Tokens.MUTED_2};margin-right:6px;"
+        f"font-family:{Tokens.FONT_MONO}}}"
+        f".lv-ok{{color:{Tokens.POS};margin-right:6px;font-weight:600}}"
+        f".lv-info{{color:{Tokens.INFO};margin-right:6px;font-weight:600}}"
+        f".lv-warn{{color:{Tokens.WARN};margin-right:6px;font-weight:600}}"
+        f".lv-err{{color:{Tokens.NEG};margin-right:6px;font-weight:600}}"
+        f"div{{font-family:{Tokens.FONT_MONO};font-size:12px;"
+        f"line-height:1.55;color:{Tokens.INVERSE_2}}}"
+    )
+
+    def _log_class(level_text: str) -> str:
+        key = EVENT_LEVEL_KEYS.get(level_text, "INFO")
+        return {"OK": "lv-ok", "INFO": "lv-info", "WARN": "lv-warn", "ERROR": "lv-err"}[key]
+
+    def _render_log(events: list[dict[str, object]]) -> None:
+        if not events:
+            log_body.setHtml(
+                f"<style>{_LOG_CSS}</style>"
+                f'<div><span class="lv-info">[INFO]</span> ログはまだありません。</div>'
+            )
+            return
+        last = events[-20:]
+        lines = []
+        for event in last:
+            timestamp = _format_timestamp(event.get("timestamp"), fmt="%H:%M:%S")
+            level_raw = str(event.get("level") or "info")
+            level_key = EVENT_LEVEL_KEYS.get(level_raw, "INFO")
+            klass = _log_class(level_raw)
+            message = html_mod.escape(str(event.get("message_ja") or ""))
+            lines.append(
+                f'<div><span class="time">{timestamp}</span>'
+                f'<span class="{klass}">[{level_key}]</span> {message}</div>'
+            )
+        log_body.setHtml(f"<style>{_LOG_CSS}</style>" + "".join(lines))
+
+    # ---- Busy / button plumbing ----
 
     def set_automation_busy(is_busy: bool, *, pending_start: bool = False) -> None:
         page._busy = is_busy
@@ -515,10 +778,6 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         elif page._refresh_timer.isActive():
             page._refresh_timer.stop()
 
-    def set_metric(key: str, value: str, note: str) -> None:
-        page.metric_tiles[key].set_value(value)
-        page.metric_tiles[key].set_note(note)
-
     def selected_position() -> dict[str, object] | None:
         frame = page._raw_positions_frame
         index = positions_view.currentIndex()
@@ -528,6 +787,34 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             return frame.iloc[0].to_dict()
         return frame.iloc[index.row()].to_dict()
 
+    # ---- Snapshot apply ----
+
+    def _apply_status_chips(status_key: str, mode_key: str, connection_key: str, stream_health: bool) -> None:
+        # running chip
+        tone_map = {
+            "running": "running",
+            "starting": "info",
+            "stopping": "warn",
+            "stopped": "neutral",
+            "error": "neg",
+        }
+        status_running.set_tone(tone_map.get(status_key, "neutral"))
+        status_running.set_text(_label(STATUS_LABELS, status_key))
+        # GMO chip
+        connected = connection_key == "connected"
+        if connected and stream_health:
+            status_gmo.set_tone("running")
+            status_gmo.set_text("GMO 接続済み")
+        elif connected:
+            status_gmo.set_tone("warn")
+            status_gmo.set_text("GMO 接続 (劣化)")
+        elif mode_key == "gmo_sim":
+            status_gmo.set_tone("warn")
+            status_gmo.set_text("GMO 未接続")
+        else:
+            status_gmo.set_tone("info")
+            status_gmo.set_text("ローカルシミュレーション")
+
     def refresh_position_detail() -> None:
         record = selected_position()
         set_button_enabled(
@@ -536,112 +823,86 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             busy=page._busy,
         )
         if record is None:
-            position_summary.setText(
-                "保有ポジションがないため、出口管理値はまだありません。自動売買中にポジションを持つとここに表示されます。"
-            )
-            for label in page.position_detail_labels.values():
-                label.setText("-")
+            exit_hint.setText("保有ポジション未選択")
+            for key, _ in exit_fields:
+                exit_grid.set(key, "-")
             return
         symbol = str(record.get("symbol", "")).upper() or "-"
-        has_managed = any(
-            record.get(name) not in {None, "", "-"}
-            for name in (
-                "managed_initial_stop_price",
-                "managed_active_stop_price",
-                "managed_partial_target_price",
-                "managed_partial_reference_price",
-                "managed_next_trailing_price",
-            )
-        )
-        if has_managed:
-            position_summary.setText(
-                f"{symbol} の出口管理を表示中です。"
-                " 一部利確は現在値ではなく、比較バー時刻の最新エントリー足高値と目標価格を比べて判定します。"
-            )
+        exit_hint.setText(f"{symbol} の出口管理を表示中")
+        exit_grid.set("symbol", symbol)
+        exit_grid.set("qty", _format_count(record.get("qty")))
+        exit_grid.set("avg_entry_price", _format_money(record.get("avg_entry_price")))
+        exit_grid.set("current_price", _format_money(record.get("current_price")))
+        exit_grid.set("market_value", _format_money(record.get("market_value")))
+        pnl = _coerce_float(record.get("unrealized_pl"))
+        pnl_pct = _coerce_float(record.get("unrealized_plpc"))
+        if pnl is None and pnl_pct is None:
+            exit_grid.set("unrealized_pl", "-")
         else:
-            position_summary.setText(
-                f"{symbol} の保有情報を表示中です。停止中の保有または未管理ポジションのため、"
-                " 出口管理値は稼働中のみ更新されます。"
-            )
-        page.position_detail_labels["symbol"].setText(symbol)
-        page.position_detail_labels["qty"].setText(_format_count(record.get("qty")))
-        page.position_detail_labels["avg_entry_price"].setText(_format_money(record.get("avg_entry_price")))
-        page.position_detail_labels["current_price"].setText(_format_money(record.get("current_price")))
-        page.position_detail_labels["market_value"].setText(_format_money(record.get("market_value")))
-        page.position_detail_labels["unrealized_pl"].setText(
-            f"{_format_money(record.get('unrealized_pl'))} / {_format_percent(record.get('unrealized_plpc'))}"
+            parts = []
+            if pnl is not None:
+                parts.append(f"{pnl:+,.0f}")
+            if pnl_pct is not None:
+                parts.append(f"{pnl_pct:+.2%}")
+            tone = "pos" if (pnl or 0) >= 0 else "neg"
+            exit_grid.set("unrealized_pl", " / ".join(parts), tone=tone)
+        exit_grid.set(
+            "managed_initial_stop_price",
+            _format_money(record.get("managed_initial_stop_price"), digits=4),
         )
-        page.position_detail_labels["managed_initial_stop_price"].setText(
-            _format_money(record.get("managed_initial_stop_price"), digits=4)
+        exit_grid.set(
+            "managed_active_stop_price",
+            _format_money(record.get("managed_active_stop_price"), digits=4),
         )
-        page.position_detail_labels["managed_active_stop_price"].setText(
-            _format_money(record.get("managed_active_stop_price"), digits=4)
+        exit_grid.set(
+            "managed_partial_target_price",
+            _format_money(record.get("managed_partial_target_price"), digits=4),
         )
-        page.position_detail_labels["managed_partial_target_price"].setText(
-            _format_money(record.get("managed_partial_target_price"), digits=4)
+        exit_grid.set(
+            "managed_partial_reference_price",
+            _format_money(record.get("managed_partial_reference_price"), digits=4),
         )
-        page.position_detail_labels["managed_partial_reference_price"].setText(
-            _format_money(record.get("managed_partial_reference_price"), digits=4)
+        exit_grid.set(
+            "managed_next_trailing_price",
+            _format_money(record.get("managed_next_trailing_price"), digits=4),
         )
-        page.position_detail_labels["managed_next_trailing_price"].setText(
-            _format_money(record.get("managed_next_trailing_price"), digits=4)
+        exit_grid.set(
+            "managed_reference_bar_at",
+            _format_timestamp(record.get("managed_reference_bar_at")),
         )
-        page.position_detail_labels["managed_reference_bar_at"].setText(
-            _format_timestamp(record.get("managed_reference_bar_at"))
+        exit_grid.set(
+            "managed_break_even_armed",
+            _bool_label(record.get("managed_break_even_armed")),
         )
-        page.position_detail_labels["managed_break_even_armed"].setText(
-            _bool_label(record.get("managed_break_even_armed"))
+        exit_grid.set(
+            "managed_partial_taken",
+            _bool_label(record.get("managed_partial_taken")),
         )
-        page.position_detail_labels["managed_partial_taken"].setText(
-            _bool_label(record.get("managed_partial_taken"))
-        )
-        page.position_detail_labels["managed_bars_held"].setText(_format_count(record.get("managed_bars_held")))
+        exit_grid.set("managed_bars_held", _format_count(record.get("managed_bars_held")))
 
     def refresh_snapshot() -> None:
-        gmo_notice = "GMO 実時間データ連動 / 実売買は行いません / 約定はローカルシミュレーションです"
         snapshot = None
         snapshot_error = ""
         try:
             snapshot = app_state.runtime_status_snapshot()
-        except Exception as exc:  # pragma: no cover - UI feedback
+        except Exception as exc:  # noqa: BLE001 - UI feedback
             snapshot_error = str(exc)
         current_mode = snapshot["mode"] if snapshot is not None else app_state.config.broker.mode.value
         current_status = snapshot["status"] if snapshot is not None else "stopped"
         page._latest_status = current_status
+        connection_state = snapshot.get("connection_state", "idle") if snapshot is not None else "idle"
+        stream_state = snapshot.get("stream_state", {}) if snapshot is not None else {}
+        stream_healthy = bool(stream_state.get("healthy", False))
+        _apply_status_chips(current_status, current_mode, connection_state, stream_healthy)
+
+        # button enablement
         ready_for_start = current_status in {"stopped", "error"}
-        guidance_lines: list[str] = []
-        if current_mode == "gmo_sim":
-            start_button.setText("GMO 実時間シミュレーションを開始")
-            if app_state.config.data.source != "gmo":
-                ready_for_start = False
-                guidance_lines = [
-                    "市場データ設定が不足しています。",
-                    "設定画面で運用モードを GMO 実時間シミュレーションに保存し直してください。",
-                ]
-            else:
-                guidance_lines = [
-                    "GMO 実時間シミュレーションの準備は完了しています。",
-                    "GMO の価格を監視しながら、ローカルで約定・損益計算を行います。",
-                    "停止後はポジションを保持しないため、手動決済は稼働中のみ利用できます。",
-                ]
-        else:
-            start_button.setText("自動売買を開始")
-            if app_state.config.data.source == "gmo":
-                guidance_lines = [
-                    "現在はローカルシミュレーションです。",
-                    "GMO の実時間データは使いますが、注文はローカル約定です。",
-                ]
-            elif app_state.config.data.source == "csv":
-                guidance_lines = [
-                    "現在はローカルシミュレーションです。",
-                    "JForex CSV から作成したキャッシュを使うオフライン検証モードです。",
-                ]
-            else:
-                guidance_lines = [
-                    "現在はローカルシミュレーションです。",
-                    "fixture 履歴を使う検証モードです。",
-                ]
+        if current_mode == "gmo_sim" and app_state.config.data.source != "gmo":
+            ready_for_start = False
         is_running = current_status in {"starting", "running", "stopping"}
+        start_button.setText(
+            "GMO 実時間シミュレーションを開始" if current_mode == "gmo_sim" else "自動売買を開始"
+        )
         set_button_enabled(
             start_button,
             ready_for_start and not is_running and not page._busy,
@@ -649,7 +910,6 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         )
         set_button_enabled(stop_button, is_running and not page._busy, busy=page._busy)
         set_button_enabled(kill_button, is_running and not page._busy, busy=page._busy)
-        guide.setText(" ".join(guidance_lines))
 
         positions = snapshot.get("positions", []) if snapshot is not None else []
         page._manual_supported = app_state.automation_controller is not None
@@ -658,161 +918,158 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             bool(positions) and page._manual_supported and not page._busy,
             busy=page._busy,
         )
+
         if is_running:
             if not page._refresh_timer.isActive():
                 page._refresh_timer.start()
         elif page._refresh_timer.isActive() and not page._busy:
             page._refresh_timer.stop()
 
-        # Chip updates
-        status_tone_map = {
-            "running": "running",
-            "starting": "info",
-            "stopping": "warn",
-            "stopped": "neutral",
-            "error": "neg",
-        }
-        status_chip.set_tone(status_tone_map.get(current_status, "neutral"))
-        status_chip.set_text(_label(STATUS_LABELS, current_status))
-        mode_chip.set_tone("paper" if current_mode == "local_sim" else "info")
-        mode_chip.set_text(_label(MODE_LABELS, current_mode))
-
         if snapshot is None:
-            idle_mode_text = (
-                gmo_notice if current_mode == "gmo_sim" else "ローカルシミュレーション"
-            )
-            banner.setText(f"実時間シミュレーション  •  {idle_mode_text}")
-            runtime_summary.setText(f"停止中\n{snapshot_error}" if snapshot_error else "停止中")
-            set_metric("mode", _label(MODE_LABELS, current_mode), "開始準備待ち")
-            set_metric("connection", "待機中", snapshot_error or "まだ接続確認を行っていません。")
-            set_metric(
-                "market",
+            kpi_mode.set_value(_label(MODE_LABELS, current_mode))
+            kpi_mode.set_note(snapshot_error or "開始準備待ち")
+            kpi_conn.set_value("待機中")
+            kpi_conn.set_note(snapshot_error or "まだ接続確認を行っていません。")
+            kpi_data.set_value(
                 {
                     "gmo": "GMO 実時間データ",
                     "csv": "JForex CSV キャッシュ",
                     "fixture": "fixture 検証データ",
-                }.get(app_state.config.data.source, app_state.config.data.source),
-                f"エントリー足: {app_state.config.strategy.entry_timeframe.value}",
+                }.get(app_state.config.data.source, app_state.config.data.source)
             )
-            set_metric(
-                "order_size",
-                _label(ORDER_SIZE_LABELS, app_state.config.risk.order_size_mode.value),
-                "開始後に数量計算へ反映されます。",
+            kpi_data.set_note(f"エントリー足: {app_state.config.strategy.entry_timeframe.value}")
+            kpi_size.set_value(_label(ORDER_SIZE_LABELS, app_state.config.risk.order_size_mode.value))
+            kpi_size.set_note("開始後に数量計算へ反映")
+            kpi_equity.set_value("-")
+            kpi_equity.set_note("口座情報は停止中")
+            kpi_daily.set_value("-")
+            kpi_daily.set_trend(None)
+            kpi_daily.set_note(
+                f"上限 {app_state.config.risk.max_daily_loss_amount:,.0f} JPY / "
+                f"{app_state.config.risk.max_daily_loss_pct:.1%}"
             )
-            set_metric("equity", "-", "口座情報は停止中です。")
-            set_metric(
-                "daily_pl",
-                "-",
-                f"上限 {app_state.config.risk.max_daily_loss_amount:.0f} JPY / {app_state.config.risk.max_daily_loss_pct:.1%}",
-            )
-            set_metric("positions", "0 件", "保有ポジションはありません。")
-            set_metric("heartbeat", "停止中", "自動売買はまだ動いていません。")
+            kpi_positions.set_value("0 件")
+            kpi_positions.set_note("保有なし")
+            kpi_heartbeat.set_value("停止中")
+            kpi_heartbeat.set_note("自動売買はまだ動いていません")
+
+            run_grid.set("run_id", "-")
+            run_grid.set("account_msg", snapshot_error or "-")
+            run_grid.set("last_bars", "-")
+            run_grid.set("stream_last", "-")
+            run_grid.set("stream_err", "-")
+            run_grid.set("kill", "未発動")
+            run_grid.set("last_action", "なし")
+
             page._raw_positions_frame = pd.DataFrame()
-            orders_model.set_frame(None)
-            signals_model.set_frame(None)
             positions_model.set_frame(None)
+            signals_model.set_frame(None)
+            orders_model.set_frame(None)
             fills_model.set_frame(None)
             events_model.set_frame(None)
+            for index in range(5):
+                tabs.set_count(index, 0)
+            _render_log([])
             refresh_position_detail()
             return
 
-        banner_lines = [
-            "実時間シミュレーション",
-            f"モード: {_label(MODE_LABELS, snapshot['mode'])}",
-            f"状態: {_label(STATUS_LABELS, snapshot['status'])}",
-            f"接続: {_label(CONNECTION_LABELS, snapshot.get('connection_state', '-'))}",
-        ]
-        if snapshot["mode"] == "gmo_sim":
-            banner_lines.append(gmo_notice)
-        banner.setText("  •  ".join(banner_lines))
-
-        stream_state = snapshot.get("stream_state", {})
-        latest_bar_summary = snapshot.get("latest_market_bar_at", {})
-        account_summary = snapshot.get("account_summary", {})
-        open_symbols = snapshot.get("open_symbols", [])
-        message = account_summary.get("message") or "-"
-        equity_value = account_summary.get("equity") or account_summary.get("portfolio_value")
-        set_metric(
-            "mode",
-            _label(MODE_LABELS, snapshot["mode"]),
-            f"状態: {_label(STATUS_LABELS, snapshot['status'])}",
+        # KPI bind
+        kpi_mode.set_value(_label(MODE_LABELS, snapshot["mode"]))
+        kpi_mode.set_note(f"状態: {_label(STATUS_LABELS, snapshot['status'])}")
+        kpi_conn.set_value(_label(CONNECTION_LABELS, connection_state))
+        kpi_conn.set_note(
+            f"ストリーム: {_bool_label(stream_state.get('connected', False))} / "
+            f"健全性 {_bool_label(stream_healthy)}"
         )
-        set_metric(
-            "connection",
-            _label(CONNECTION_LABELS, snapshot.get("connection_state", "-")),
-            f"ストリーム: {_bool_label(stream_state.get('connected', False))} / 健全性: {_bool_label(stream_state.get('healthy', False))}",
-        )
-        set_metric(
-            "market",
+        kpi_data.set_value(
             {
                 "gmo": "GMO 実時間データ",
                 "csv": "JForex CSV キャッシュ",
                 "fixture": "fixture 検証データ",
-            }.get(snapshot.get("data_source"), str(snapshot.get("data_source", "-"))),
-            f"エントリー足: {snapshot.get('entry_timeframe', '-')}",
+            }.get(snapshot.get("data_source"), str(snapshot.get("data_source", "-")))
         )
+        kpi_data.set_note(f"エントリー足: {snapshot.get('entry_timeframe', '-')}")
+
         order_size_mode = snapshot.get("order_size_mode", app_state.config.risk.order_size_mode.value)
-        order_size_value = _label(ORDER_SIZE_LABELS, order_size_mode)
+        kpi_size.set_value(_label(ORDER_SIZE_LABELS, order_size_mode))
         if order_size_mode == "fixed_amount":
-            order_note = f"{app_state.config.risk.fixed_order_amount:,.0f} JPY 相当"
+            kpi_size.set_note(f"{app_state.config.risk.fixed_order_amount:,.0f} JPY 相当")
         elif order_size_mode == "equity_fraction":
-            order_note = f"総資産の {app_state.config.risk.equity_fraction_per_trade:.1%}"
+            kpi_size.set_note(f"総資産の {app_state.config.risk.equity_fraction_per_trade:.1%}")
         else:
-            order_note = f"想定損失 {app_state.config.risk.risk_per_trade:.1%}"
-        set_metric("order_size", order_size_value, order_note)
-        set_metric(
-            "equity",
-            _format_money(equity_value),
-            f"口座状態: {_label(ACCOUNT_STATUS_LABELS, account_summary.get('status', 'unknown'))}",
-        )
-        daily_pl_numeric = _coerce_float(account_summary.get("daily_pl"))
-        daily_pl_tone = None
-        if daily_pl_numeric is not None:
-            daily_pl_tone = "pos" if daily_pl_numeric >= 0 else "neg"
-        page.metric_tiles["daily_pl"].set_value(_format_money(account_summary.get("daily_pl")), tone=daily_pl_tone)
-        page.metric_tiles["daily_pl"].set_note(
-            f"上限 {app_state.config.risk.max_daily_loss_amount:,.0f} JPY / {app_state.config.risk.max_daily_loss_pct:.1%}"
-        )
-        set_metric(
-            "positions",
-            f"{len(positions)} 件",
-            ", ".join(open_symbols) if open_symbols else "保有なし",
-        )
-        set_metric(
-            "heartbeat",
-            _format_timestamp(snapshot.get("heartbeat")),
-            f"サイクル {snapshot.get('cycle_count', 0)} / 再接続 {snapshot.get('reconnect_attempts', 0)} 回",
+            kpi_size.set_note(f"想定損失 {app_state.config.risk.risk_per_trade:.1%}")
+
+        account_summary = snapshot.get("account_summary", {})
+        equity_value = account_summary.get("equity") or account_summary.get("portfolio_value")
+        kpi_equity.set_value(_format_money(equity_value))
+        kpi_equity.set_note(
+            f"口座状態: {_label(ACCOUNT_STATUS_LABELS, account_summary.get('status', 'unknown'))}"
         )
 
-        runtime_summary.setText(
-            "\n".join(
-                [
-                    f"実行ID: {snapshot['run_id'] or '-'}",
-                    f"口座メッセージ: {message}",
-                    f"最新市場バー:\n{_format_latest_bar_map(latest_bar_summary, multiline=True)}",
-                    f"ストリーム最終受信: {_format_timestamp(stream_state.get('last_message_at'))}",
-                    f"ストリーム最終エラー: {stream_state.get('last_error', '-') or '-'}",
-                    f"最終再接続: {_format_timestamp(snapshot.get('last_reconnect_at'))}",
-                    f"キルスイッチ: {snapshot.get('kill_switch_reason', '未発動') or '未発動'}",
-                    f"直近アクション: {snapshot['last_actions'] if snapshot.get('last_actions') else 'なし'}",
-                ]
-            )
+        daily_pl = _coerce_float(account_summary.get("daily_pl"))
+        starting_cash = _coerce_float(app_state.config.risk.starting_cash) or 0.0
+        if daily_pl is None:
+            kpi_daily.set_value("-")
+            kpi_daily.set_trend(None)
+        else:
+            tone = "pos" if daily_pl >= 0 else "neg"
+            kpi_daily.set_value(f"{daily_pl:+,.0f}", tone=tone)
+            if starting_cash:
+                pct = daily_pl / starting_cash
+                kpi_daily.set_trend(
+                    "up" if pct >= 0 else "down",
+                    f"{abs(pct):.2%}",
+                )
+            else:
+                kpi_daily.set_trend("flat", "-")
+        kpi_daily.set_note(
+            f"上限 {app_state.config.risk.max_daily_loss_amount:,.0f} JPY / "
+            f"{app_state.config.risk.max_daily_loss_pct:.1%}"
         )
 
-        page._raw_positions_frame = pd.DataFrame(snapshot["positions"])
-        positions_frame = _select_columns(page._raw_positions_frame, POSITION_COLUMNS)
-        signals_frame = _select_columns(pd.DataFrame(snapshot["recent_signals"]), SIGNAL_COLUMNS)
-        orders_frame = _select_columns(pd.DataFrame(snapshot["recent_orders"]), ORDER_COLUMNS)
-        fills_frame = _select_columns(pd.DataFrame(snapshot["recent_fills"]), FILL_COLUMNS)
-        events_frame = _select_columns(pd.DataFrame(snapshot["recent_events"]), EVENT_COLUMNS)
-        orders_model.set_frame(_localize_automation_frame(orders_frame))
-        signals_model.set_frame(_localize_automation_frame(signals_frame))
-        positions_model.set_frame(_localize_automation_frame(positions_frame))
-        fills_model.set_frame(_localize_automation_frame(fills_frame))
-        events_model.set_frame(_localize_automation_frame(events_frame))
+        open_symbols = snapshot.get("open_symbols", [])
+        kpi_positions.set_value(f"{len(positions)} 件")
+        kpi_positions.set_note(", ".join(open_symbols) if open_symbols else "保有なし")
+
+        kpi_heartbeat.set_value(_format_timestamp(snapshot.get("heartbeat"), fmt="%H:%M:%S"))
+        kpi_heartbeat.set_note(
+            f"サイクル {snapshot.get('cycle_count', 0):,} / 再接続 {snapshot.get('reconnect_attempts', 0)} 回"
+        )
+
+        # Runtime summary detail-grid
+        run_grid.set("run_id", str(snapshot.get("run_id") or "-"))
+        run_grid.set("account_msg", str(account_summary.get("message") or "-"))
+        run_grid.set("last_bars", _format_latest_bars(snapshot.get("latest_market_bar_at", {})))
+        run_grid.set(
+            "stream_last",
+            _format_timestamp(stream_state.get("last_message_at")),
+        )
+        run_grid.set("stream_err", str(stream_state.get("last_error") or "-") or "-")
+        run_grid.set("kill", str(snapshot.get("kill_switch_reason") or "未発動"))
+        last_actions = snapshot.get("last_actions")
+        run_grid.set("last_action", str(last_actions) if last_actions else "なし")
+
+        # Tables
+        page._raw_positions_frame = pd.DataFrame(positions)
+        positions_model.set_frame(_positions_frame(positions))
+        signals_model.set_frame(_signals_frame(snapshot.get("recent_signals", [])))
+        orders_model.set_frame(_orders_frame(snapshot.get("recent_orders", [])))
+        fills_model.set_frame(_fills_frame(snapshot.get("recent_fills", [])))
+        events_model.set_frame(_events_frame(snapshot.get("recent_events", [])))
+
+        tabs.set_count(0, len(positions))
+        tabs.set_count(1, len(snapshot.get("recent_signals", [])))
+        tabs.set_count(2, len(snapshot.get("recent_orders", [])))
+        tabs.set_count(3, len(snapshot.get("recent_fills", [])))
+        tabs.set_count(4, len(snapshot.get("recent_events", [])))
+
+        _render_log(snapshot.get("recent_events", []))
+
         if not page._raw_positions_frame.empty and not positions_view.currentIndex().isValid():
             positions_view.selectRow(0)
         refresh_position_detail()
+
+    # ---- Callbacks ----
 
     def on_finished(events) -> None:
         app_state.persist_automation_events(events)
@@ -822,13 +1079,13 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
 
     def on_error(message: str) -> None:
         set_automation_busy(False)
-        runtime_summary.setText(f"エラー\n{message}")
+        run_grid.set("account_msg", f"エラー: {message}", tone="neg")
         log_message(f"自動売買エラー: {message}")
 
     def start_loop() -> None:
         controller = app_state.start_automation()
         page._latest_status = "starting"
-        runtime_summary.setText("開始要求を送信しました。\n自動売買ループを初期化しています。")
+        run_grid.set("account_msg", "開始要求を送信しました。")
         set_automation_busy(True, pending_start=True)
         if not page._refresh_timer.isActive():
             page._refresh_timer.start()
@@ -851,20 +1108,24 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         set_automation_busy(True)
         try:
             result = app_state.manual_close_position(symbol)
-        except Exception as exc:  # pragma: no cover - runtime/broker path
+        except Exception as exc:  # noqa: BLE001 - runtime/broker path
             set_automation_busy(False)
             QMessageBox.critical(page, "エラー", f"{symbol} の手動決済に失敗しました。\n{exc}")
             return
         set_automation_busy(False)
         log_message(f"{symbol} を手動決済しました。")
-        QMessageBox.information(page, "完了", f"{symbol} の手動決済を送信しました。\n注文ID: {result.get('order_id', '-')}")
+        QMessageBox.information(
+            page,
+            "完了",
+            f"{symbol} の手動決済を送信しました。\n注文ID: {result.get('order_id', '-')}",
+        )
         refresh_snapshot()
 
     def close_all_positions() -> None:
         set_automation_busy(True)
         try:
             result = app_state.manual_close_all_positions()
-        except Exception as exc:  # pragma: no cover - runtime/broker path
+        except Exception as exc:  # noqa: BLE001 - runtime/broker path
             set_automation_busy(False)
             QMessageBox.critical(page, "エラー", f"全ポジションの決済に失敗しました。\n{exc}")
             return

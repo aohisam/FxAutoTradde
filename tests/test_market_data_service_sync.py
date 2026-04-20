@@ -125,6 +125,54 @@ def test_sync_reuses_loaded_results_when_watchlist_and_benchmark_overlap(tmp_pat
     assert str(cache_path) == summary["details"][0]["cache_path"]
 
 
+def test_sync_filters_symbols_and_emits_progress_updates(tmp_path, monkeypatch):
+    config = load_app_config(
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
+        overrides={
+            "watchlist": {"symbols": ["USD_JPY", "EUR_JPY"], "benchmark_symbols": ["USD_JPY"], "sector_symbols": []},
+            "data": {
+                "source": "gmo",
+                "cache_dir": str(tmp_path / "cache"),
+                "timeframes": ["1Min"],
+                "start_date": "2026-04-14",
+                "end_date": "2026-04-14",
+            },
+            "strategy": {"entry_timeframe": "1Min"},
+        },
+    )
+    service = MarketDataService(config, EnvironmentConfig())
+    frame = _make_quote_frame("USD_JPY", "2026-04-14 09:00:00", 3)
+    cache_path = service.cache.path_for("USD_JPY", TimeFrame.MIN_1)
+    calls: list[str] = []
+    progress_events: list[dict[str, object]] = []
+
+    def fake_load_symbol_frame_results(symbol, **kwargs):  # noqa: ANN001
+        _ = kwargs
+        calls.append(symbol)
+        return {
+            TimeFrame.MIN_1: MarketDataFrameLoad(
+                frame=frame,
+                source="gmo_cache",
+                cache_path=cache_path,
+                refreshed=False,
+            )
+        }
+
+    monkeypatch.setattr(service, "_load_symbol_frame_results", fake_load_symbol_frame_results)
+
+    summary = service.sync(symbols=["USD/JPY"], progress_callback=progress_events.append)
+
+    assert calls == ["USD_JPY"]
+    assert summary["selected_symbols"] == ["USD_JPY"]
+    assert summary["symbols"] == 1
+    assert summary["benchmarks"] == 1
+    assert summary["sectors"] == 0
+    assert {detail["symbol"] for detail in summary["details"]} == {"USD_JPY"}
+    assert [event["phase"] for event in progress_events] == ["start", "loading", "loaded", "done"]
+    assert progress_events[-1]["current"] == 1
+    assert progress_events[-1]["total"] == 1
+
+
 def test_runtime_load_refreshes_recent_intraday_window(tmp_path, monkeypatch):
     config = load_app_config(
         write_config(tmp_path),

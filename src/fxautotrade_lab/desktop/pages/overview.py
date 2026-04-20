@@ -14,6 +14,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
         QWidget,
     )
 
+    from fxautotrade_lab.desktop.ml_labels import ml_mode_label
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
     from fxautotrade_lab.desktop.widgets.kpi import KpiTile
@@ -228,7 +229,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
         ml_enabled = bool(getattr(ml_filter, "enabled", False)) if ml_filter is not None else False
         ml_mode = getattr(ml_filter, "backtest_mode", "-") if ml_filter is not None else "-"
         page.kpi_tiles["strategy"].set_note(
-            f"ML 参加フィルタ {'有効' if ml_enabled else '無効'} · {ml_mode}"
+            f"ML 参加フィルタ {'有効' if ml_enabled else '無効'} · {ml_mode_label(ml_mode)}"
         )
 
         # runs

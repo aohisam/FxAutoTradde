@@ -4,7 +4,6 @@ from __future__ import annotations
 
 
 RESEARCH_MODES = ["quick", "standard", "exhaustive"]
-ML_MODE_LABELS = ["load_pretrained", "rule_only", "train_from_scratch", "walk_forward_train"]
 STRATEGY_LABELS = [
     "fx_breakout_pullback",
     "baseline_trend_pullback",
@@ -38,6 +37,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.ml_labels import ML_MODE_CHOICES, ml_mode_description, ml_mode_label
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.kpi import KpiTile
@@ -92,6 +92,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         lay.addWidget(hint)
         lay.addStretch(1)
         return wrap
+
+    def _set_combo_by_data(combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
 
     # ---- Config card (grid-2) ----
     config_hint = QLabel("未チェック時はデータ同期と同じ期間で検証")
@@ -175,12 +180,17 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     ml_enabled_box = QCheckBox("ML 参加フィルタを有効化する")
     ml_mode_combo = QComboBox()
-    ml_mode_combo.addItems(ML_MODE_LABELS)
+    for key, label in ML_MODE_CHOICES:
+        ml_mode_combo.addItem(label, key)
     research_seg = SegmentedControl(RESEARCH_MODES, current=1, data=RESEARCH_MODES)
+    ml_mode_hint = QLabel()
+    ml_mode_hint.setProperty("role", "muted")
+    ml_mode_hint.setWordWrap(True)
 
     ml_left.addRow(labeled("ML 有効化"), ml_enabled_box)
-    ml_left.addRow(labeled("ML Backtest モード"), ml_mode_combo)
+    ml_left.addRow(labeled("ML の使い方"), ml_mode_combo)
     ml_left.addRow(labeled("Research モード"), research_seg)
+    ml_left.addRow(labeled("モード説明"), ml_mode_hint)
 
     ml_right_cell = QWidget()
     mrc = QVBoxLayout(ml_right_cell)
@@ -368,7 +378,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
         starting_cash_input.edit.setText(format_number(app_state.config.risk.starting_cash, 2))
         ml_enabled_box.setChecked(app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled)
-        ml_mode_combo.setCurrentText(app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
+        _set_combo_by_data(ml_mode_combo, app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
         current_mode = app_state.config.research.mode
         if current_mode in RESEARCH_MODES:
             research_seg.set_current(RESEARCH_MODES.index(current_mode))
@@ -406,13 +416,17 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def update_model_status() -> None:
         status = app_state.model_status()
+        selected_enabled = ml_enabled_box.isChecked()
+        selected_mode = str(ml_mode_combo.currentData() or status.get("backtest_mode", "-"))
         lines = [
-            f"ML 有効: {'はい' if status.get('enabled') else 'いいえ'}",
-            f"Backtest モード: {status.get('backtest_mode', '-')}",
+            f"ML 有効: {'はい' if selected_enabled else 'いいえ'}",
+            f"ML モード: {ml_mode_label(selected_mode)}",
+            ml_mode_description(selected_mode),
             f"モデル保存先: {status.get('model_path', '-')}",
             f"存在: {'あり' if status.get('exists') else 'なし'}",
         ]
-        model_status_label.setText("\n".join(lines))
+        model_status_label.setText("\n".join(line for line in lines if line))
+        ml_mode_hint.setText(ml_mode_description(selected_mode))
 
     def update_window_enabled() -> None:
         enabled = custom_window_box.isChecked() and not page._busy
@@ -523,7 +537,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def persist_fx_controls() -> None:
         app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled_box.isChecked()
-        app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = ml_mode_combo.currentText()
+        app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
+            ml_mode_combo.currentData() or "rule_only"
+        )
         app_state.config.research.mode = RESEARCH_MODES[research_seg.current()]
 
     def run_backtest() -> None:
@@ -606,6 +622,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     train_btn.clicked.connect(run_train)
     research_btn.clicked.connect(run_research)
     custom_window_box.toggled.connect(lambda _checked=None: update_window_enabled())
+    ml_enabled_box.toggled.connect(lambda _checked=None: update_model_status())
+    ml_mode_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
 
     page.refresh = refresh_page
     refresh_controls()

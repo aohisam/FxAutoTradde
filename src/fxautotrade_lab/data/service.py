@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -135,32 +136,69 @@ class MarketDataService:
         }
         return MarketDataBundle(symbols=symbols, benchmarks=benchmarks, sectors=sectors)
 
-    def sync(self) -> dict[str, object]:
+    def sync(
+        self,
+        *,
+        symbols: list[str] | None = None,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
+    ) -> dict[str, object]:
         force_refresh = self._uses_gmo()
         sync_mode = "incremental" if self._uses_gmo() else self.config.data.source
         sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] = {}
+        selected_symbols = self._normalized_symbol_filter(symbols)
+        watchlist_symbols = self._filter_symbols(self.config.watchlist.symbols, selected_symbols)
+        benchmark_symbols = self._filter_symbols(self.config.watchlist.benchmark_symbols, selected_symbols)
+        sector_symbols = self._filter_symbols(self.config.watchlist.sector_symbols, selected_symbols)
+        total_symbol_loads = len(
+            {
+                normalize_fx_symbol(symbol)
+                for symbol in [*watchlist_symbols, *benchmark_symbols, *sector_symbols]
+            }
+        )
+        progress_state = {"completed": 0, "total": total_symbol_loads}
+        self._emit_sync_progress(
+            progress_callback,
+            phase="start",
+            current=0,
+            total=total_symbol_loads,
+            message="データ同期を開始しました。",
+        )
         symbols, symbol_details = self._sync_group(
             "watchlist",
-            self.config.watchlist.symbols,
+            watchlist_symbols,
             force_refresh,
             sync_results_cache,
+            progress_callback=progress_callback,
+            progress_state=progress_state,
         )
         benchmarks, benchmark_details = self._sync_group(
             "benchmark",
-            self.config.watchlist.benchmark_symbols,
+            benchmark_symbols,
             force_refresh,
             sync_results_cache,
+            progress_callback=progress_callback,
+            progress_state=progress_state,
         )
         sectors, sector_details = self._sync_group(
             "sector",
-            self.config.watchlist.sector_symbols,
+            sector_symbols,
             force_refresh,
             sync_results_cache,
+            progress_callback=progress_callback,
+            progress_state=progress_state,
+        )
+        self._emit_sync_progress(
+            progress_callback,
+            phase="done",
+            current=total_symbol_loads,
+            total=total_symbol_loads,
+            message="データ同期が完了しました。",
         )
         return {
             "symbols": symbols,
             "benchmarks": benchmarks,
             "sectors": sectors,
+            "selected_symbols": sorted(selected_symbols) if selected_symbols else [],
             "source": self.config.data.source,
             "force_refresh": force_refresh,
             "sync_mode": sync_mode,
@@ -176,6 +214,9 @@ class MarketDataService:
         symbols: list[str],
         force_refresh: bool,
         sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] | None = None,
+        *,
+        progress_callback: Callable[[dict[str, object]], None] | None = None,
+        progress_state: dict[str, int] | None = None,
     ) -> tuple[int, list[dict[str, object]]]:
         results_cache = sync_results_cache if sync_results_cache is not None else {}
         processed_symbols: set[str] = set()
@@ -184,11 +225,68 @@ class MarketDataService:
             normalized_symbol = normalize_fx_symbol(symbol)
             results = results_cache.get(normalized_symbol)
             if results is None:
+                completed = int((progress_state or {}).get("completed", 0))
+                total = int((progress_state or {}).get("total", 0))
+                self._emit_sync_progress(
+                    progress_callback,
+                    phase="loading",
+                    current=completed,
+                    total=total,
+                    symbol=normalized_symbol,
+                    category=category,
+                    message=f"{normalized_symbol} の同期を開始しています。",
+                )
                 results = self._load_symbol_frame_results(normalized_symbol, force_refresh=force_refresh)
                 results_cache[normalized_symbol] = results
+                if progress_state is not None:
+                    progress_state["completed"] = completed + 1
+                    completed = progress_state["completed"]
+                self._emit_sync_progress(
+                    progress_callback,
+                    phase="loaded",
+                    current=completed,
+                    total=total,
+                    symbol=normalized_symbol,
+                    category=category,
+                    message=f"{normalized_symbol} の同期が完了しました。",
+                )
             processed_symbols.add(normalized_symbol)
             details.extend(self._build_sync_details(category, symbol, results))
         return len(processed_symbols), details
+
+    def _normalized_symbol_filter(self, symbols: list[str] | None) -> set[str]:
+        if not symbols:
+            return set()
+        return {normalize_fx_symbol(symbol) for symbol in symbols if str(symbol).strip()}
+
+    def _filter_symbols(self, configured_symbols: list[str], selected_symbols: set[str]) -> list[str]:
+        if not selected_symbols:
+            return list(configured_symbols)
+        return [symbol for symbol in configured_symbols if normalize_fx_symbol(symbol) in selected_symbols]
+
+    def _emit_sync_progress(
+        self,
+        progress_callback: Callable[[dict[str, object]], None] | None,
+        *,
+        phase: str,
+        current: int,
+        total: int,
+        message: str,
+        symbol: str | None = None,
+        category: str | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            {
+                "phase": phase,
+                "current": int(current),
+                "total": int(total),
+                "message": message,
+                "symbol": symbol or "",
+                "category": category or "",
+            }
+        )
 
     def _build_sync_details(
         self,

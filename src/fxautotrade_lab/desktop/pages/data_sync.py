@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from fxautotrade_lab.core.enums import TimeFrame
+from fxautotrade_lab.core.symbols import normalize_fx_symbol
 
 
 SYNC_TIMEFRAMES = [
@@ -216,8 +217,11 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     parallel = LabeledSuffixInput(value="4", suffix="並列")
     parallel.setFixedWidth(160)
+    sync_symbols_edit = QLineEdit()
+    sync_symbols_edit.setPlaceholderText("空欄で全対象 / 例: USD/JPY, EUR/JPY")
 
     form.addRow("データソース", source_seg)
+    form.addRow("同期対象ペア", sync_symbols_edit)
     form.addRow("開始日", start_date)
     form.addRow("終了日", end_date)
     form.addRow("足種", tf_seg)
@@ -231,8 +235,15 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     progress = QProgressBar()
     progress.setAlignment(Qt.AlignCenter)
+    progress.setRange(0, 100)
     progress.setValue(0)
+    progress.setTextVisible(True)
+    progress.setFormat("待機中")
     sync_card.addBodyWidget(progress)
+    progress_status = QLabel("待機中")
+    progress_status.setProperty("role", "muted")
+    progress_status.setWordWrap(True)
+    sync_card.addBodyWidget(progress_status)
 
     reload_row = QHBoxLayout()
     reload_button = QPushButton("再読込")
@@ -259,15 +270,11 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     file_row.addWidget(file_edit, 1)
     file_row.addWidget(choose_btn)
 
-    symbols_edit = QLineEdit()
-    symbols_edit.setPlaceholderText("例: USD/JPY, EUR/USD")
-
     overwrite_box = QCheckBox("同一期間を上書き（推奨: OFF）")
     overwrite_box.setChecked(False)
     overwrite_box.setEnabled(False)
 
     import_form.addRow("対象ファイル", file_row)
-    import_form.addRow("対象ペア", symbols_edit)
     import_form.addRow("既存キャッシュ", overwrite_box)
     import_card.addBodyLayout(import_form)
 
@@ -370,7 +377,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         start_date.setEnabled(not is_busy)
         end_date.setEnabled(not is_busy)
         parallel.setEnabled(not is_busy)
-        symbols_edit.setEnabled(not is_busy)
+        sync_symbols_edit.setEnabled(not is_busy)
+        if not is_busy and progress.value() <= 0:
+            progress.setFormat("待機中")
+            progress_status.setText("待機中")
 
     def refresh_summary() -> None:
         cache_dir = Path(app_state.config.data.cache_dir)
@@ -391,11 +401,57 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     def update_hint() -> None:
         helper_text.setText(SOURCE_HINTS.get(current_source_key(), ""))
 
+    def parse_sync_symbols() -> list[str] | None:
+        raw = sync_symbols_edit.text().strip()
+        if not raw:
+            return None
+        configured = {
+            normalize_fx_symbol(symbol)
+            for symbol in [
+                *app_state.config.watchlist.symbols,
+                *app_state.config.watchlist.benchmark_symbols,
+                *app_state.config.watchlist.sector_symbols,
+            ]
+        }
+        values: list[str] = []
+        for token in raw.replace("，", ",").replace(";", ",").replace("\n", ",").split(","):
+            cleaned = token.strip()
+            if not cleaned:
+                continue
+            normalized = normalize_fx_symbol(cleaned)
+            if normalized not in values:
+                values.append(normalized)
+        if not values:
+            return None
+        unknown = [symbol for symbol in values if symbol not in configured]
+        if unknown:
+            raise ValueError(
+                "同期対象に含まれていない通貨ペアがあります: "
+                + ", ".join(unknown)
+            )
+        return values
+
+    def on_sync_progress(payload) -> None:  # noqa: ANN001
+        total = max(int(payload.get("total", 0) or 0), 1)
+        current = max(0, min(int(payload.get("current", 0) or 0), total))
+        phase = str(payload.get("phase", ""))
+        message = str(payload.get("message", "")).strip() or "同期中"
+        if phase == "loading":
+            percent = max(progress.value(), int((current / total) * 100))
+            current_label = min(current + 1, total)
+        else:
+            percent = int((current / total) * 100)
+            current_label = current
+        progress.setValue(percent)
+        progress.setFormat(f"{current_label}/{total}")
+        progress_status.setText(message)
+
     # ---- callbacks ----
     def on_import_finished(result) -> None:  # noqa: ANN001
         set_busy(False)
-        progress.setRange(0, 100)
         progress.setValue(100)
+        progress.setFormat("完了")
+        progress_status.setText("CSV インポートが完了しました。")
         refresh_summary()
         detail_rows = [
             {
@@ -435,8 +491,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     def on_finished(result) -> None:  # noqa: ANN001
         set_busy(False)
-        progress.setRange(0, 100)
         progress.setValue(100)
+        progress.setFormat("完了")
+        progress_status.setText("データ同期が完了しました。")
         refresh_summary()
         details = result.get("details", [])
         result_model.set_frame(_detail_frame(details))
@@ -453,6 +510,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         append_log("INFO", f"期間: {start} - {end}")
         append_log("INFO", f"時間足: {', '.join(result.get('timeframes', []))}")
         append_log("INFO", f"同期ソース: {result.get('source', app_state.config.data.source)}")
+        selected_symbols = result.get("selected_symbols", [])
+        if selected_symbols:
+            append_log("INFO", f"対象ペア: {', '.join(selected_symbols)}")
         mode_line = (
             "同期方法: 未取得期間のみ追加取得"
             if result.get("sync_mode") == "incremental"
@@ -463,8 +523,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     def on_error(message: str) -> None:
         set_busy(False)
-        progress.setRange(0, 100)
         progress.setValue(0)
+        progress.setFormat("エラー")
+        progress_status.setText(message)
         result_model.set_frame(None)
         last_run_chip.set_text("エラー")
         last_run_chip.set_tone("neg")
@@ -472,23 +533,36 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         log_message(f"データ同期エラー: {message}")
 
     def run_sync() -> None:
+        try:
+            selected_symbols = parse_sync_symbols()
+        except ValueError as exc:
+            on_error(str(exc))
+            return
         set_busy(True)
         sync_source = current_source_key()
         sync_start = start_date.date().toString("yyyy-MM-dd")
         sync_end = end_date.date().toString("yyyy-MM-dd")
         sync_timeframes = selected_timeframes()
-        progress.setRange(0, 0)
+        progress.setRange(0, 100)
+        progress.setValue(0)
+        progress.setFormat("0/1")
+        progress_status.setText("同期ジョブを準備しています。")
         result_model.set_frame(None)
         append_log("INFO", f"同期開始: {sync_source} / {sync_start} → {sync_end}")
+        if selected_symbols:
+            append_log("INFO", f"対象ペア: {', '.join(selected_symbols)}")
         submit_task(
-            lambda: app_state.sync_market_data(
+            lambda progress_callback=None: app_state.sync_market_data(
                 source=sync_source,
                 start_date=sync_start,
                 end_date=sync_end,
                 timeframes=sync_timeframes,
+                symbols=selected_symbols,
+                progress_callback=progress_callback,
             ),
             on_finished,
             on_error,
+            on_sync_progress,
         )
 
     def _open_file_dialog() -> list[str]:
@@ -516,7 +590,10 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             page._selected_files = paths
             file_edit.setText(", ".join(Path(p).name for p in paths))
         set_busy(True)
-        progress.setRange(0, 0)
+        progress.setRange(0, 100)
+        progress.setValue(10)
+        progress.setFormat("処理中")
+        progress_status.setText("Bid / Ask CSV を検証しています。")
         result_model.set_frame(None)
         try:
             selection = resolve_bid_ask_csv_selection(paths)

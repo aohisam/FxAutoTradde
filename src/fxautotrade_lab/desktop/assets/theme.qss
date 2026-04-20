@@ -39,6 +39,11 @@ QLabel[role="kpi-trend"] {
 QLabel[role="kpi-trend"][tone="pos"] { color: #0f766e; }
 QLabel[role="kpi-trend"][tone="neg"] { color: #b91c1c; }
 QLabel[role="mono"]      { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; }
+QLabel[role="mono-hint"] {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    color: #64748b;
+    font-size: 11.5px;
+}
 QLabel[role="detail-value"] {
     font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
     font-size: 13px; font-weight: 600; color: #0f172a;

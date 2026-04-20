@@ -372,8 +372,10 @@ def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tm
             captured["timeframes"] = [timeframe.value for timeframe in config.data.timeframes]
             _ = env
 
-        def sync(self) -> dict[str, object]:
-            return {"source": captured["source"], "details": []}
+        def sync(self, *, symbols=None, progress_callback=None) -> dict[str, object]:  # noqa: ANN001
+            captured["symbols"] = list(symbols or [])
+            captured["has_progress_callback"] = callable(progress_callback)
+            return {"source": captured["source"], "details": [], "selected_symbols": captured["symbols"]}
 
     monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
 
@@ -382,6 +384,8 @@ def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tm
         start_date="2026-04-01",
         end_date="2026-04-19",
         timeframes=[TimeFrame.MIN_1, TimeFrame.HOUR_1],
+        symbols=["USD_JPY"],
+        progress_callback=lambda payload: payload,
     )
 
     assert summary["source"] == "gmo"
@@ -389,6 +393,9 @@ def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tm
     assert captured["start_date"] == "2026-04-01"
     assert captured["end_date"] == "2026-04-19"
     assert captured["timeframes"] == ["1Min", "1Hour"]
+    assert captured["symbols"] == ["USD_JPY"]
+    assert captured["has_progress_callback"] is True
+    assert summary["selected_symbols"] == ["USD_JPY"]
     assert app.config.data.source == "csv"
     assert app.config.data.start_date == "2024-01-01"
     assert app.config.data.end_date == "2024-03-31"
