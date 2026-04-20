@@ -32,3 +32,21 @@ class LabeledSuffixInput(QFrame):
 
     def setText(self, value: str) -> None:  # noqa: N802
         self.edit.setText(value)
+
+    def value_float(self) -> float:
+        try:
+            return float(self.edit.text().replace(",", "").strip())
+        except ValueError:
+            return 0.0
+
+    def value_int(self) -> int:
+        try:
+            return int(float(self.edit.text().replace(",", "").strip()))
+        except ValueError:
+            return 0
+
+    def set_float(self, value: float, fmt: str = "{:.2f}") -> None:
+        self.edit.setText(fmt.format(float(value)))
+
+    def set_int(self, value: int) -> None:
+        self.edit.setText(f"{int(value):,}")

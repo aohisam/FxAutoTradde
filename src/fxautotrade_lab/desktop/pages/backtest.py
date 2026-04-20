@@ -325,6 +325,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     layout.addStretch(1)
     page._busy = False
+    page._active_task = None
 
     # ---- helpers ----
 
@@ -400,6 +401,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             out["説明"] = ""
         return out.tail(300)
 
+    def selected_strategy_name() -> str:
+        return str(strategy_combo.currentData() or app_state.config.strategy.name)
+
+    def supports_fx_ml_research() -> bool:
+        return selected_strategy_name() == "fx_breakout_pullback"
+
     def refresh_controls() -> None:
         _set_combo_by_data(strategy_combo, app_state.config.strategy.name)
         custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
@@ -431,6 +438,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         update_model_status()
         update_research_mode_status()
         update_action_help()
+        update_action_availability()
         if app_state.last_research_result is not None:
             research_status_label.setText(
                 "\n".join(
@@ -444,13 +452,23 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         update_window_enabled()
 
     def update_strategy_status() -> None:
-        selected_strategy = str(strategy_combo.currentData() or app_state.config.strategy.name)
-        strategy_hint.setText(strategy_description(selected_strategy))
+        selected_strategy = selected_strategy_name()
+        lines = [strategy_description(selected_strategy)]
+        if not supports_fx_ml_research():
+            lines.append("この戦略では ML モデル学習と研究パイプラインは使いません。利用するには「FX ブレイクアウト押し目」を選んでください。")
+        strategy_hint.setText("\n".join(line for line in lines if line))
 
     def update_model_status() -> None:
         status = app_state.model_status()
         selected_enabled = ml_enabled_box.isChecked()
         selected_mode = str(ml_mode_combo.currentData() or status.get("backtest_mode", "-"))
+        if not supports_fx_ml_research():
+            model_status_label.setText(
+                "現在の戦略では ML 参加フィルタを使いません。\n"
+                "ML モデル学習 / 研究パイプラインを使う場合は、戦略を「FX ブレイクアウト押し目」に切り替えてください。"
+            )
+            ml_mode_hint.setText("この戦略では ML モード設定は未使用です。")
+            return
         applies_ml = selected_enabled and selected_mode != "rule_only"
         lines = [
             f"ML スイッチ: {'有効' if selected_enabled else '無効'}",
@@ -468,15 +486,36 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         research_mode_hint.setText(research_mode_description(selected_mode))
 
     def update_action_help() -> None:
-        action_help_label.setText(
-            "\n".join(
-                [
-                    "バックテスト実行: 現在の設定で 1 回だけ検証し、取引結果を確認します。",
-                    "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。バックテストは走りません。",
-                    "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。",
-                ]
-            )
+        lines = [
+            "バックテスト実行: 現在の設定で 1 回だけ検証し、取引結果を確認します。",
+            "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。バックテストは走りません。",
+            "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。",
+        ]
+        if not supports_fx_ml_research():
+            lines.append("現在の戦略では下2つは使えません。FX ブレイクアウト押し目戦略に切り替えると有効になります。")
+        action_help_label.setText("\n".join(lines))
+
+    def update_action_availability() -> None:
+        can_run_ml = supports_fx_ml_research() and not page._busy
+        unsupported_tooltip = (
+            ""
+            if supports_fx_ml_research()
+            else "ML モデル学習と研究パイプラインは FX ブレイクアウト押し目戦略でのみ利用できます。"
         )
+        ml_enabled_box.setEnabled(can_run_ml)
+        ml_mode_combo.setEnabled(can_run_ml)
+        research_seg.setEnabled(can_run_ml)
+        ml_enabled_box.setToolTip(unsupported_tooltip)
+        ml_mode_combo.setToolTip(unsupported_tooltip)
+        research_seg.setToolTip(unsupported_tooltip)
+        if page._busy:
+            set_button_enabled(train_btn, False, busy=True)
+            set_button_enabled(research_btn, False, busy=True)
+        else:
+            set_button_enabled(train_btn, can_run_ml, busy=False)
+            set_button_enabled(research_btn, can_run_ml, busy=False)
+            train_btn.setToolTip(unsupported_tooltip)
+            research_btn.setToolTip(unsupported_tooltip)
 
     def update_window_enabled() -> None:
         enabled = not page._busy
@@ -498,13 +537,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         strategy_combo.setEnabled(not is_busy)
         starting_cash_input.setEnabled(not is_busy)
         custom_window_box.setEnabled(not is_busy)
-        ml_enabled_box.setEnabled(not is_busy)
-        ml_mode_combo.setEnabled(not is_busy)
-        research_seg.setEnabled(not is_busy)
         tf_seg.setEnabled(not is_busy)
-        set_button_enabled(train_btn, not is_busy, busy=is_busy)
-        set_button_enabled(research_btn, not is_busy, busy=is_busy)
         update_window_enabled()
+        update_action_availability()
 
     def refresh_views() -> None:
         if app_state.last_result is None:
@@ -579,6 +614,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def on_finished(result) -> None:  # noqa: ANN001
         _ = result
+        page._active_task = None
         set_busy(False)
         tabs_seg.set_current(0)
         stack.setCurrentIndex(0)
@@ -586,10 +622,16 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         log_message("バックテストが完了しました。")
 
     def on_error(message: str) -> None:
+        active_task = page._active_task
+        page._active_task = None
         set_busy(False)
         run_id_hint.setText("エラー")
         for tile in metric_tiles.values():
             tile.set_value("-")
+        if active_task == "research":
+            research_status_label.setText(f"研究パイプラインでエラーが発生しました。\n{message}")
+        elif active_task == "train":
+            research_status_label.setText(f"ML モデル学習でエラーが発生しました。\n{message}")
         log_message(f"バックテストエラー: {message}")
 
     def persist_fx_controls() -> None:
@@ -610,8 +652,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         except ValueError as exc:
             on_error(str(exc))
             return
+        page._active_task = "backtest"
         set_busy(True)
-        app_state.config.strategy.name = str(strategy_combo.currentData() or app_state.config.strategy.name)
+        app_state.config.strategy.name = selected_strategy_name()
         app_state.config.backtest.use_custom_window = custom_window_box.isChecked()
         app_state.config.backtest.start_date = selected_start
         app_state.config.backtest.end_date = selected_end
@@ -621,6 +664,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         submit_task(app_state.run_backtest, on_finished, on_error)
 
     def on_train_finished(summary) -> None:  # noqa: ANN001
+        page._active_task = None
         set_busy(False)
         refresh_controls()
         model_path = summary.get("latest_model_path") or summary.get("model_path") or ""
@@ -637,8 +681,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         log_message("ML モデル学習が完了しました。")
 
     def run_train() -> None:
+        if not supports_fx_ml_research():
+            on_error("ML モデル学習は FX ブレイクアウト押し目戦略でのみ利用できます。")
+            return
         persist_fx_controls()
         app_state.save_config()
+        page._active_task = "train"
         set_busy(True)
         research_status_label.setText(
             "ML モデル学習を実行中...\n"
@@ -647,6 +695,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         submit_task(app_state.train_fx_model, on_train_finished, on_error)
 
     def on_research_finished(summary) -> None:  # noqa: ANN001
+        page._active_task = None
         set_busy(False)
         refresh_controls()
         uplift = summary.get("uplift", {}).get("total_return_delta", 0.0)
@@ -662,8 +711,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         log_message("研究パイプラインが完了しました。")
 
     def run_research() -> None:
+        if not supports_fx_ml_research():
+            on_error("研究パイプラインは FX ブレイクアウト押し目戦略でのみ利用できます。")
+            return
         persist_fx_controls()
         app_state.save_config()
+        page._active_task = "research"
         set_busy(True)
         selected_mode = str(research_seg.currentData() or "standard")
         research_status_label.setText(
@@ -688,6 +741,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     ml_enabled_box.toggled.connect(lambda _checked=None: update_model_status())
     ml_mode_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
     strategy_combo.currentIndexChanged.connect(lambda _index=None: update_strategy_status())
+    strategy_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
+    strategy_combo.currentIndexChanged.connect(lambda _index=None: update_action_help())
+    strategy_combo.currentIndexChanged.connect(lambda _index=None: update_action_availability())
     research_seg.currentChanged.connect(lambda _index=None: update_research_mode_status())
 
     page.refresh = refresh_page

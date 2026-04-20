@@ -77,3 +77,9 @@ class SegmentedControl(QFrame):
             if payload == value:
                 self.setCurrentIndex(index)
                 return
+
+    def set_current_by_text(self, text: str) -> None:
+        for index, button in enumerate(self.buttons):
+            if button.text() == text:
+                self.setCurrentIndex(index)
+                return

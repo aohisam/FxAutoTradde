@@ -75,11 +75,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
     from fxautotrade_lab.desktop.pages.chart import build_chart_page
     from fxautotrade_lab.desktop.pages.data_sync import build_data_sync_page
     from fxautotrade_lab.desktop.pages.history import build_history_page
-    from fxautotrade_lab.desktop.pages.misc import (
-        build_help_page,
-        build_settings_page,
-    )
+    from fxautotrade_lab.desktop.pages.misc import build_help_page
     from fxautotrade_lab.desktop.pages.reports import build_reports_page
+    from fxautotrade_lab.desktop.pages.settings import build_settings_page
     from fxautotrade_lab.desktop.pages.overview import build_overview_page
     from fxautotrade_lab.desktop.pages.signals import build_signals_page
     from fxautotrade_lab.desktop.pages.watchlist import build_watchlist_page

@@ -545,6 +545,17 @@ QFrame#suffixInput QLabel {
     font-size: 11.5px;
 }
 
+/* ---------- YAML pre ---------- */
+QPlainTextEdit[role="yaml-pre"] {
+    background: #f7f8fa;
+    border: 1px solid #e6e8ee;
+    border-radius: 10px;
+    padding: 14px;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: #334155;
+}
+
 /* ---------- Log dock-like view ---------- */
 QTextBrowser[role="logdock"] {
     background: #ffffff;
