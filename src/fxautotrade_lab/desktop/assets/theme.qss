@@ -60,6 +60,15 @@ QLabel[role="form-label"] {
     font-size: 12.5px;
     font-weight: 500;
 }
+QLabel[role="detail-label"] {
+    color: #64748b;
+    font-size: 11.5px;
+}
+QLabel[role="h2"][variant="mono-sm"] {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+}
 QLabel[role="breadcrumb"]        { color: #475569; font-size: 12.5px; }
 QLabel[role="breadcrumb-current"]{ color: #0f172a; font-weight: 600; font-size: 12.5px; }
 QLabel[tone="pos"]       { color: #0f766e; }

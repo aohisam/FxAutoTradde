@@ -77,9 +77,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
     from fxautotrade_lab.desktop.pages.history import build_history_page
     from fxautotrade_lab.desktop.pages.misc import (
         build_help_page,
-        build_reports_page,
         build_settings_page,
     )
+    from fxautotrade_lab.desktop.pages.reports import build_reports_page
     from fxautotrade_lab.desktop.pages.overview import build_overview_page
     from fxautotrade_lab.desktop.pages.signals import build_signals_page
     from fxautotrade_lab.desktop.pages.watchlist import build_watchlist_page
@@ -183,7 +183,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
                     self.log_message,
                     on_go_to_reports=lambda: self._goto_page("reports"),
                 ),
-                "レポート": build_reports_page(self.app_state),
+                "レポート": build_reports_page(self.app_state, self.log_message),
                 "設定": build_settings_page(self.app_state, self.submit_background_task, self.log_message),
                 "ヘルプ": build_help_page(),
             }
