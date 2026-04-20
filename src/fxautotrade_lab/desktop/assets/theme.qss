@@ -481,3 +481,35 @@ QTextBrowser[role="logdock"] {
     color: #0f172a;
     padding: 10px 14px;
 }
+
+/* ---------- Automation log dock (navy) ---------- */
+QFrame[role="logdock-dark"] {
+    background: #0b1020;
+    border-radius: 12px;
+    color: #e2e8f0;
+}
+QFrame[role="logdock-dark"] QLabel[role="h2-sm"] {
+    color: #f1f5f9; font-size: 12.5px; font-weight: 600;
+}
+QTextBrowser[role="logdock-body"] {
+    background: transparent;
+    border: none;
+    color: #e2e8f0;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    padding: 0;
+}
+
+/* ---------- Counted tabs ---------- */
+QPushButton[role="tab"] {
+    background: transparent;
+    border: none;
+    padding: 10px 14px;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    min-height: 0;
+}
+QPushButton[role="tab"]:hover    { color: #0f172a; }
+QPushButton[role="tab"]:checked  { color: #0f172a; border-bottom-color: #14b8a6; }
