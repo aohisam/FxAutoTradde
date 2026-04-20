@@ -37,6 +37,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit
     from fxautotrade_lab.desktop.ml_labels import ML_MODE_CHOICES, ml_mode_description, ml_mode_label
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.card import Card
@@ -131,12 +132,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     right_form.setVerticalSpacing(10)
     right_form.setLabelAlignment(Qt.AlignLeft)
 
-    start_date = QDateEdit()
-    start_date.setCalendarPopup(True)
-    start_date.setDisplayFormat("yyyy-MM-dd")
-    end_date = QDateEdit()
-    end_date.setCalendarPopup(True)
-    end_date.setDisplayFormat("yyyy-MM-dd")
+    start_date = create_popup_date_edit()
+    end_date = create_popup_date_edit()
     tf_seg = SegmentedControl(TF_SEG_LABELS, current=1, data=TF_SEG_LABELS)
 
     right_form.addRow(labeled("開始日"), start_date)
@@ -429,9 +426,16 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         ml_mode_hint.setText(ml_mode_description(selected_mode))
 
     def update_window_enabled() -> None:
-        enabled = custom_window_box.isChecked() and not page._busy
+        enabled = not page._busy
         start_date.setEnabled(enabled)
         end_date.setEnabled(enabled)
+        tooltip = (
+            "期間指定を ON にすると、この日付範囲でバックテストします。"
+            if custom_window_box.isChecked()
+            else "いまは未使用ですが、ON にするとこの日付範囲を使います。"
+        )
+        start_date.setToolTip(tooltip)
+        end_date.setToolTip(tooltip)
 
     def set_busy(is_busy: bool) -> None:
         page._busy = is_busy

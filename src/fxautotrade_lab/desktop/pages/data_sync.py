@@ -121,6 +121,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit
     from fxautotrade_lab.desktop.theme import Tokens
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.banner import Banner
@@ -196,12 +197,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         data=SEG_SOURCE_KEYS,
     )
 
-    start_date = QDateEdit()
-    start_date.setCalendarPopup(True)
-    start_date.setDisplayFormat("yyyy-MM-dd")
-    end_date = QDateEdit()
-    end_date.setCalendarPopup(True)
-    end_date.setDisplayFormat("yyyy-MM-dd")
+    start_date = create_popup_date_edit()
+    end_date = create_popup_date_edit()
     start_date.setDate(QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd"))
     end_date.setDate(QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd"))
 

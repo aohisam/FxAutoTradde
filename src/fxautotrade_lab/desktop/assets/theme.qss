@@ -249,7 +249,17 @@ QComboBox::drop-down {
     subcontrol-position: center right;
     padding-right: 6px;
 }
+QDateEdit::drop-down {
+    border: none;
+    width: 24px;
+    subcontrol-position: center right;
+    padding-right: 6px;
+}
 QComboBox::down-arrow {
+    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23475569' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    width: 10px; height: 6px;
+}
+QDateEdit::down-arrow {
     image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23475569' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
     width: 10px; height: 6px;
 }
@@ -258,6 +268,56 @@ QComboBox QAbstractItemView {
     background: #ffffff; border: 1px solid #e6e8ee; border-radius: 6px;
     selection-background-color: rgba(20,184,166,0.12); selection-color: #0f172a;
     padding: 4px;
+}
+QCalendarWidget QWidget#qt_calendar_navigationbar {
+    background: #ffffff;
+    border-bottom: 1px solid #e6e8ee;
+    min-height: 34px;
+}
+QCalendarWidget QToolButton {
+    background: transparent;
+    border: none;
+    color: #0f172a;
+    font-size: 12.5px;
+    font-weight: 600;
+    min-width: 36px;
+    min-height: 28px;
+    padding: 4px 8px;
+}
+QCalendarWidget QToolButton:hover {
+    background: #f1f3f7;
+    border-radius: 6px;
+}
+QCalendarWidget QToolButton#qt_calendar_monthbutton {
+    min-width: 96px;
+}
+QCalendarWidget QSpinBox {
+    min-width: 72px;
+    padding: 2px 6px;
+}
+QCalendarWidget QTableView,
+QCalendarWidget QTableWidget {
+    background: #ffffff;
+    alternate-background-color: #ffffff;
+    border: none;
+    gridline-color: transparent;
+    selection-background-color: rgba(20,184,166,0.10);
+    selection-color: #0f172a;
+    outline: 0;
+}
+QCalendarWidget QTableView::item,
+QCalendarWidget QTableWidget::item {
+    padding: 0px;
+    margin: 0px;
+    border: none;
+}
+QCalendarWidget QHeaderView::section {
+    background: transparent;
+    color: #64748b;
+    border: none;
+    padding: 4px 0;
+    font-size: 11px;
+    font-weight: 600;
 }
 
 QCheckBox { spacing: 6px; color: #0f172a; font-size: 12.5px; }
