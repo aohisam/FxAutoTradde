@@ -22,6 +22,8 @@ class Tokens:
     MUTED_2: Final = "#64748b"
     INVERSE: Final = "#ffffff"
     INVERSE_2: Final = "#cbd6e4"
+    NAV_MUTED: Final = "#8591a6"
+    NAV_TEXT: Final = "#d9dee8"
 
     # Lines
     HAIRLINE: Final = "#e6e8ee"

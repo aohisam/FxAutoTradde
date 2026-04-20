@@ -139,9 +139,24 @@ def _desktop_storage_overrides() -> dict[str, object] | None:
         return None
     app_support = Path.home() / "Library" / "Application Support" / "FXAutoTradeLab"
     return {
-        "data": {"cache_dir": str(app_support / "data_cache")},
+        "data": {
+            "cache_dir": str(app_support / "data_cache"),
+            "import_dir": str(app_support / "imports"),
+        },
         "persistence": {"sqlite_path": str(app_support / "runtime" / "trading_lab.sqlite")},
         "reporting": {"output_dir": str(app_support / "reports")},
+        "research": {
+            "output_dir": str(app_support / "research_runs"),
+            "cache_dir": str(app_support / "research_cache"),
+        },
+        "strategy": {
+            "fx_breakout_pullback": {
+                "ml_filter": {
+                    "model_dir": str(app_support / "models" / "fx_ml"),
+                    "dataset_dir": str(app_support / "datasets" / "fx_ml"),
+                }
+            }
+        },
         "automation": {
             "notification_channels": {
                 "log_path": str(app_support / "runtime" / "notifications.log"),
@@ -170,6 +185,7 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
         QCoreApplication.setLibraryPaths([runtime_paths["plugins_dir"]])
 
     app = QApplication.instance() or QApplication([])
+    app.setStyle("Fusion")
     app.setApplicationName("FXAutoTrade Lab")
     app.setApplicationDisplayName("FXAutoTrade Lab")
     app.setQuitOnLastWindowClosed(True)

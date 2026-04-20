@@ -611,98 +611,137 @@ QPushButton[role="tab"]:checked  { color: #0f172a; border-bottom-color: #14b8a6;
    ============================================================================ */
 
 /* ---------- Sidebar ---------- */
-QWidget#Sidebar { background: #0f172a; border-right: 1px solid #e5e8ee; }
+QWidget#Sidebar {
+    background: #0f172a;
+    border-right: 1px solid #e5e8ee;
+}
 QWidget#NavBody { background: transparent; }
 
-QWidget#Brand { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.04); }
+/* --- Brand --- */
+QWidget#Brand {
+    background: transparent;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
 QLabel#BrandMark {
     background: #0f766e;
     color: #ffffff;
-    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-    font-size: 12px;
-    font-weight: 700;
+    font: 700 12px "JetBrains Mono", "Menlo", monospace;
     border-radius: 7px;
+    padding: 0;
+    qproperty-alignment: AlignCenter;
 }
 QLabel#BrandT1 {
     color: #ffffff;
-    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    font-size: 13px; font-weight: 600;
     background: transparent;
+    font: 600 13px "Inter", "Noto Sans JP", sans-serif;
 }
 QLabel#BrandT2 {
     color: #8591a6;
-    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    font-size: 10.5px; font-weight: 500;
-    letter-spacing: 1.2px;
     background: transparent;
+    font: 500 10px "Inter", sans-serif;
+    letter-spacing: 1.2px;
 }
 
-QWidget#Sidebar QScrollArea { background: transparent; border: none; }
-QWidget#Sidebar QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
-QWidget#Sidebar QScrollBar::handle:vertical { background: rgba(255,255,255,0.08); border-radius: 3px; }
-QWidget#Sidebar QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.18); }
-QWidget#Sidebar QScrollBar::add-line, QWidget#Sidebar QScrollBar::sub-line { height: 0; background: none; }
+/* --- Nav scroll --- */
+QWidget#Sidebar QScrollArea {
+    background: transparent;
+    border: none;
+}
+QWidget#Sidebar QScrollArea > QWidget > QWidget { background: transparent; }
+QWidget#Sidebar QScrollBar:vertical {
+    background: transparent;
+    width: 6px;
+    margin: 0;
+}
+QWidget#Sidebar QScrollBar::handle:vertical {
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    min-height: 24px;
+}
+QWidget#Sidebar QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.16); }
+QWidget#Sidebar QScrollBar::add-line:vertical,
+QWidget#Sidebar QScrollBar::sub-line:vertical { height: 0; background: none; }
+QWidget#Sidebar QScrollBar::add-page:vertical,
+QWidget#Sidebar QScrollBar::sub-page:vertical { background: none; }
 
+/* --- Nav section header --- */
 QLabel#NavSection {
     color: #8591a6;
     background: transparent;
-    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    font-size: 10px; font-weight: 600;
+    font: 600 10px "Inter", sans-serif;
     letter-spacing: 1.5px;
-    padding: 14px 10px 6px;
+    padding: 14px 10px 6px 10px;
     text-transform: uppercase;
 }
 
+/* --- Nav item (unselected) --- */
 QWidget#NavItem {
     background: transparent;
-    border-radius: 8px;
-    margin: 1px 0;
+    border: none;
     border-left: 3px solid transparent;
+    border-radius: 8px;
+    margin: 1px 4px;
 }
 QWidget#NavItem:hover { background: #1b2740; }
+QLabel#NavText {
+    color: #d9dee8;
+    background: transparent;
+    font: 500 13px "Inter", "Noto Sans JP", sans-serif;
+}
+QLabel#NavIcon { background: transparent; qproperty-alignment: AlignCenter; }
+
+/* --- Nav item (active) --- */
 QWidget#NavItem[active="true"] {
     background: #2a3a5c;
-    border-left: 3px solid #14b8a6;
+    border-left: 3px solid #0f766e;
+    border-radius: 8px;
 }
-QLabel#NavText {
-    background: transparent;
-    color: #d9dee8;
-    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    font-size: 13px; font-weight: 500;
+QWidget#NavItem[active="true"] QLabel#NavText {
+    color: #ffffff;
+    font-weight: 600;
 }
-QLabel#NavText[active="true"] { color: #ffffff; font-weight: 600; }
-QLabel#NavIcon { background: transparent; qproperty-alignment: AlignCenter; }
+
+/* --- Badge (数字 pill) --- */
 QLabel#NavBadge {
     background: rgba(255,255,255,0.08);
     color: #d9dee8;
-    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-    font-size: 10px; font-weight: 500;
+    font: 500 10px "JetBrains Mono", "Menlo", monospace;
     padding: 2px 6px;
-    border-radius: 999px;
-    min-width: 12px;
+    border-radius: 9px;
+    min-width: 14px;
     qproperty-alignment: AlignCenter;
 }
+QWidget#NavItem[active="true"] QLabel#NavBadge {
+    background: rgba(255,255,255,0.16);
+    color: #ffffff;
+}
+
+/* --- Running dot (緑) --- */
 QLabel#NavDot {
-    background: #0b8457;
+    background: #22c993;
     border-radius: 3px;
 }
 
-QWidget#SidebarFooter { background: transparent; border-top: 1px solid rgba(255,255,255,0.05); }
+/* --- Footer --- */
+QWidget#SidebarFooter {
+    background: transparent;
+    border-top: 1px solid rgba(255,255,255,0.05);
+}
 QLabel#FooterVer {
-    color: #8591a6; background: transparent;
-    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
-    font-size: 11px; font-weight: 400;
+    color: #8591a6;
+    background: transparent;
+    font: 400 11px "JetBrains Mono", "Menlo", monospace;
 }
 QLabel#FooterPill {
-    background: rgba(11,132,87,0.18);
+    background: rgba(34,201,147,0.14);
     color: #6fd2a3;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
-    font-size: 11px; font-weight: 500;
+    padding: 3px 9px;
+    border-radius: 9px;
+    font: 500 11px "Inter", "Noto Sans JP", sans-serif;
+    qproperty-alignment: AlignCenter;
 }
 QLabel#FooterPill[state="err"] {
-    background: rgba(181,52,31,0.20);
+    background: rgba(181,52,31,0.18);
     color: #f1a090;
 }
 

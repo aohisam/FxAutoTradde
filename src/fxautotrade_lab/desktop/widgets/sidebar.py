@@ -65,36 +65,40 @@ class _NavItem(QWidget):
         row.setSpacing(10)
         self._icon = QLabel()
         self._icon.setObjectName("NavIcon")
-        self._icon.setFixedSize(18, 18)
+        self._icon.setFixedSize(16, 16)
+        self._icon.setAttribute(Qt.WA_TransparentForMouseEvents)
         self._apply_icon(active=False)
 
         self._text = QLabel(label)
         self._text.setObjectName("NavText")
+        self._text.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         self._badge = QLabel("")
         self._badge.setObjectName("NavBadge")
         self._badge.setVisible(False)
+        self._badge.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         self._dot = QLabel()
         self._dot.setObjectName("NavDot")
         self._dot.setFixedSize(7, 7)
         self._dot.setVisible(False)
+        self._dot.setAttribute(Qt.WA_TransparentForMouseEvents)
 
         row.addWidget(self._icon)
-        row.addWidget(self._text)
-        row.addStretch(1)
+        row.addWidget(self._text, 1)
         row.addWidget(self._badge)
         row.addWidget(self._dot)
         self.setCursor(Qt.PointingHandCursor)
+        self.setAutoFillBackground(False)
 
     @property
     def page_key(self) -> str:
         return self._page_key
 
     def _apply_icon(self, *, active: bool) -> None:
-        color = Tokens.INVERSE if active else Tokens.INVERSE_2
-        icon = load_icon(self._icon_name, color, 18)
-        self._icon.setPixmap(icon.pixmap(QSize(18, 18)))
+        color = Tokens.INVERSE if active else Tokens.NAV_MUTED
+        icon = load_icon(self._icon_name, color, 16)
+        self._icon.setPixmap(icon.pixmap(QSize(16, 16)))
 
     def set_active(self, active: bool) -> None:
         self.setProperty("active", "true" if active else "false")
