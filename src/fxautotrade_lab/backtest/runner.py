@@ -24,12 +24,34 @@ from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackSt
 from fxautotrade_lab.strategies.registry import create_strategy
 
 
+def _emit_progress(
+    progress_callback,
+    *,
+    task: str,
+    current: int,
+    total: int,
+    message: str,
+    phase: str = "running",
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "task": task,
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+    )
+
+
 @dataclass(slots=True)
 class BacktestRunner:
     config: AppConfig
     env: EnvironmentConfig
 
-    def run(self) -> BacktestResult:
+    def run(self, *, progress_callback=None) -> BacktestResult:
         backtest_start, backtest_end = self._backtest_window()
         if self.config.strategy.name == FxBreakoutPullbackStrategy.name:
             return run_fx_backtest(
@@ -37,7 +59,15 @@ class BacktestRunner:
                 self.env,
                 backtest_start=backtest_start,
                 backtest_end=backtest_end,
+                progress_callback=progress_callback,
             )
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=1,
+            total=5,
+            message="市場データと特徴量を読み込んでいます。",
+        )
         data_service = MarketDataService(self.config, self.env)
         bundle = data_service.load_bundle(start=backtest_start, end=backtest_end)
         strategy = create_strategy(self.config)
@@ -54,6 +84,13 @@ class BacktestRunner:
         sector_symbol = self.config.watchlist.sector_symbols[0] if self.config.watchlist.sector_symbols else None
         sector_frames = bundle.sectors.get(sector_symbol, {}) if sector_symbol else None
 
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message="シグナル候補を構築しています。",
+        )
         for symbol, frames in bundle.symbols.items():
             if strategy.name == FxBreakoutPullbackStrategy.name:
                 fx_feature_set = build_fx_feature_set(
@@ -90,12 +127,26 @@ class BacktestRunner:
                 .rename(columns={"index": "timestamp"})
                 .assign(symbol=symbol, strategy_name=strategy.name)
             )
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=3,
+            total=5,
+            message="約定シミュレーションを実行しています。",
+        )
         sim = (
             FxQuotePortfolioSimulator(self.config)
             if strategy.name == FxBreakoutPullbackStrategy.name
             else PortfolioSimulator(self.config)
         )
         sim_outputs = sim.run(signal_frames, mode=self.config.broker.mode)
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=4,
+            total=5,
+            message="指標とサマリーを集計しています。",
+        )
         equity_curve = sim_outputs["equity_curve"]
         if not equity_curve.empty:
             equity_curve["drawdown"] = compute_drawdown(equity_curve["equity"])
@@ -163,6 +214,13 @@ class BacktestRunner:
             out_of_sample_metrics=out_of_sample_metrics,
             walk_forward=walk_forward,
             chart_frames=chart_frames,
+        )
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=5,
+            total=5,
+            message="レポートを書き出しています。",
         )
         output_dir = export_backtest_artifacts(result, self.config)
         result.output_dir = str(output_dir)

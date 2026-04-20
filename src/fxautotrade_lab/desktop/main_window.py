@@ -342,7 +342,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.statusbar_w.showMessage(message)
 
         # ---- Worker pool --------------------------------------------------
-        def submit_background_task(self, fn, on_finished, on_error) -> None:  # noqa: ANN001
+        def submit_background_task(self, fn, on_finished, on_error, on_progress=None) -> None:  # noqa: ANN001
             worker = self.worker_class(fn)
             self._active_workers.add(worker)
 
@@ -364,8 +364,17 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 finally:
                     release_worker()
 
+            def handle_progress(payload) -> None:  # noqa: ANN001
+                if on_progress is None:
+                    return
+                try:
+                    on_progress(payload)
+                except Exception as exc:  # noqa: BLE001
+                    log_runtime_exception(exc)
+
             worker.signals.finished.connect(handle_finished)
             worker.signals.error.connect(handle_error)
+            worker.signals.progress.connect(handle_progress)
             self.thread_pool.start(worker)
 
         # ---- Geometry / restore ------------------------------------------

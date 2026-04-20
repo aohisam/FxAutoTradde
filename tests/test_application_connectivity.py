@@ -273,6 +273,7 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
     app = LabApplication(write_config(tmp_path))
     app.config.data.source = "gmo"
     app.config.broker.mode = BrokerMode.GMO_SIM
+    app.config.strategy.entry_timeframe = TimeFrame.MIN_15
     app.config.watchlist.symbols = ["USD_JPY"]
     app.config.watchlist.benchmark_symbols = []
     app.config.watchlist.sector_symbols = []
@@ -344,9 +345,9 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
         },
     )
 
-    first = app.load_chart_dataset("USD_JPY", app.config.strategy.entry_timeframe.value)
-    second = app.load_chart_dataset("USD_JPY", app.config.strategy.entry_timeframe.value)
-    third = app.load_chart_dataset("USD_JPY", app.config.strategy.entry_timeframe.value, force_refresh=True)
+    first = app.load_chart_dataset("USD_JPY", "15m")
+    second = app.load_chart_dataset("USD_JPY", "15m")
+    third = app.load_chart_dataset("USD_JPY", "15m", force_refresh=True)
 
     assert not first["frame"].empty
     assert not second["frame"].empty
@@ -400,3 +401,34 @@ def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tm
     assert app.config.data.start_date == "2024-01-01"
     assert app.config.data.end_date == "2024-03-31"
     assert [timeframe.value for timeframe in app.config.data.timeframes] == ["1Day"]
+
+
+def test_application_training_and_research_forward_progress_callbacks(tmp_path, monkeypatch):
+    app = LabApplication(write_config(tmp_path))
+    app.config.strategy.name = "fx_breakout_pullback"
+    train_progress: list[dict[str, object]] = []
+    research_progress: list[dict[str, object]] = []
+
+    def fake_train(config, env, *, as_of=None, progress_callback=None):  # noqa: ANN001
+        _ = config, env, as_of
+        if progress_callback is not None:
+            progress_callback({"task": "train", "current": 2, "total": 4, "message": "学習中"})
+        return {"trained_rows": 12}
+
+    def fake_research(self, *, progress_callback=None):  # noqa: ANN001
+        if progress_callback is not None:
+            progress_callback({"task": "research", "current": 3, "total": 7, "message": "ベースライン実行中"})
+        return {"run_id": "r1", "output_dir": "x"}
+
+    monkeypatch.setattr("fxautotrade_lab.application.train_fx_filter_model_run", fake_train)
+    monkeypatch.setattr("fxautotrade_lab.application.ResearchPipeline.run", fake_research)
+
+    train_summary = app.train_fx_model(progress_callback=train_progress.append)
+    research_summary = app.run_research(progress_callback=research_progress.append)
+
+    assert train_summary["trained_rows"] == 12
+    assert research_summary["run_id"] == "r1"
+    assert train_progress[0]["message"] == "学習中"
+    assert train_progress[-1]["phase"] == "done"
+    assert research_progress[0]["message"] == "ベースライン実行中"
+    assert research_progress[-1]["phase"] == "done"

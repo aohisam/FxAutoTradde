@@ -57,6 +57,7 @@ class _NavItem(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("NavItem")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._page_key = page_key
         self._icon_name = icon_name
 
@@ -130,6 +131,9 @@ class Sidebar(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
+        # QWidget subclasses ignore QSS `background` unless WA_StyledBackground is set.
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(False)
         self.setFixedWidth(232)
 
         outer = QVBoxLayout(self)
@@ -139,6 +143,7 @@ class Sidebar(QWidget):
         # ---- Brand ----
         brand = QWidget()
         brand.setObjectName("Brand")
+        brand.setAttribute(Qt.WA_StyledBackground, True)
         brand_row = QHBoxLayout(brand)
         brand_row.setContentsMargins(18, 14, 18, 16)
         brand_row.setSpacing(10)
@@ -165,8 +170,15 @@ class Sidebar(QWidget):
         self._nav_scroll.setWidgetResizable(True)
         self._nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._nav_scroll.setFrameShape(QFrame.NoFrame)
+        self._nav_scroll.setAttribute(Qt.WA_StyledBackground, True)
+        # QScrollArea's viewport paints with palette(Base) (white) by default —
+        # disable auto-fill so the navy sidebar background shows through.
+        self._nav_scroll.viewport().setAutoFillBackground(False)
+        self._nav_scroll.setStyleSheet("")  # rely on theme.qss
         nav_body = QWidget()
         nav_body.setObjectName("NavBody")
+        nav_body.setAttribute(Qt.WA_StyledBackground, True)
+        nav_body.setAutoFillBackground(False)
         nav_layout = QVBoxLayout(nav_body)
         nav_layout.setContentsMargins(10, 10, 10, 12)
         nav_layout.setSpacing(0)
@@ -188,6 +200,7 @@ class Sidebar(QWidget):
         # ---- Footer ----
         footer = QWidget()
         footer.setObjectName("SidebarFooter")
+        footer.setAttribute(Qt.WA_StyledBackground, True)
         footer_row = QHBoxLayout(footer)
         footer_row.setContentsMargins(14, 10, 14, 12)
         footer_row.setSpacing(8)

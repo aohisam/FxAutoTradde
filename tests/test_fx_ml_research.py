@@ -209,19 +209,31 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
         ),
     )
 
-    monkeypatch.setattr(ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "USD_JPY"}]})
-    monkeypatch.setattr(ResearchPipeline, "_train_summary", lambda self: {"trained_rows": 8})
-    monkeypatch.setattr(ResearchPipeline, "_run_backtest_variant", lambda self, **kwargs: fake_result)
-    monkeypatch.setattr(ResearchPipeline, "_robustness_runs", lambda self, mode: {"rows": [{"spread_multiplier": 1.2}]})
-    monkeypatch.setattr(ResearchPipeline, "_parameter_sensitivity", lambda self, mode: {"rows": [{"breakout_lookback": 20}]})
+    progress_events: list[dict[str, object]] = []
 
-    summary = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run()
+    monkeypatch.setattr(ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "USD_JPY"}]})
+    monkeypatch.setattr(ResearchPipeline, "_train_summary", lambda self, progress_callback=None: {"trained_rows": 8})
+    monkeypatch.setattr(ResearchPipeline, "_run_backtest_variant", lambda self, **kwargs: fake_result)
+    monkeypatch.setattr(
+        ResearchPipeline,
+        "_robustness_runs",
+        lambda self, mode, progress_callback=None: {"rows": [{"spread_multiplier": 1.2}]},
+    )
+    monkeypatch.setattr(
+        ResearchPipeline,
+        "_parameter_sensitivity",
+        lambda self, mode, progress_callback=None: {"rows": [{"breakout_lookback": 20}]},
+    )
+
+    summary = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run(progress_callback=progress_events.append)
 
     assert summary["run_id"]
     assert Path(summary["output_dir"]).exists()
     assert (Path(summary["output_dir"]) / "research_summary.json").exists()
     assert (Path(summary["output_dir"]) / "regime_summary.csv").exists()
     assert summary["uplift"]["total_return_delta"] == 0.0
+    assert progress_events[0]["current"] == 1
+    assert progress_events[-1]["current"] == 7
 
     monkeypatch.setattr(
         ResearchPipeline,
@@ -492,6 +504,9 @@ research:
     )
     app = LabApplication(config_path)
     monkeypatch.setattr("fxautotrade_lab.application.train_fx_filter_model_run", lambda *args, **kwargs: {"trained_rows": 1})
-    monkeypatch.setattr("fxautotrade_lab.application.ResearchPipeline.run", lambda self: {"run_id": "r1", "output_dir": "x"})
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.ResearchPipeline.run",
+        lambda self, *, progress_callback=None: {"run_id": "r1", "output_dir": "x"},
+    )
     assert app.train_fx_model()["trained_rows"] == 1
     assert app.run_research()["run_id"] == "r1"

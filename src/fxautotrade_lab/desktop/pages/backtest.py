@@ -232,11 +232,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     mrc.addWidget(mrc_label)
     mrc.addWidget(model_status_label)
 
-    research_status_label = QLabel("まだ研究パイプラインは実行していません。")
-    research_status_label.setProperty("role", "muted")
-    research_status_label.setWordWrap(True)
-    research_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-    mrc.addWidget(research_status_label)
+    task_status_label = QLabel("まだバックテスト / ML 学習 / 研究パイプラインは実行していません。")
+    task_status_label.setProperty("role", "muted")
+    task_status_label.setWordWrap(True)
+    task_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    mrc.addWidget(task_status_label)
     mrc.addStretch(1)
 
     ml_left_wrap = QWidget()
@@ -440,7 +440,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         update_action_help()
         update_action_availability()
         if app_state.last_research_result is not None:
-            research_status_label.setText(
+            task_status_label.setText(
                 "\n".join(
                     [
                         f"最新 research_run: {app_state.last_research_result.get('run_id', '-')}",
@@ -612,6 +612,34 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     # ---- callbacks ----
 
+    def _task_title(task_key: str | None) -> str:
+        return {
+            "backtest": "バックテスト",
+            "train": "ML モデル学習",
+            "research": "研究パイプライン",
+        }.get(task_key or "", "処理")
+
+    def on_progress(payload) -> None:  # noqa: ANN001
+        if not isinstance(payload, dict):
+            return
+        active_task = page._active_task
+        title_text = _task_title(active_task)
+        current = int(payload.get("current", 0) or 0)
+        total = int(payload.get("total", 0) or 0)
+        message = str(payload.get("message", "")).strip() or f"{title_text}を実行中です。"
+        phase = str(payload.get("phase", "running") or "running")
+        if total > 0:
+            run_id_hint.setText(f"{min(current, total)}/{total}")
+        else:
+            run_id_hint.setText("実行中…")
+        lines = [f"{title_text}を実行中..."]
+        if total > 0:
+            lines.append(f"進行: {min(current, total)}/{total}")
+        lines.append(message)
+        if phase == "done":
+            lines[0] = f"{title_text}が完了しました。"
+        task_status_label.setText("\n".join(lines))
+
     def on_finished(result) -> None:  # noqa: ANN001
         _ = result
         page._active_task = None
@@ -619,6 +647,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         tabs_seg.set_current(0)
         stack.setCurrentIndex(0)
         refresh_views()
+        task_status_label.setText("バックテストが完了しました。")
         log_message("バックテストが完了しました。")
 
     def on_error(message: str) -> None:
@@ -629,10 +658,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         for tile in metric_tiles.values():
             tile.set_value("-")
         if active_task == "research":
-            research_status_label.setText(f"研究パイプラインでエラーが発生しました。\n{message}")
+            task_status_label.setText(f"研究パイプラインでエラーが発生しました。\n{message}")
         elif active_task == "train":
-            research_status_label.setText(f"ML モデル学習でエラーが発生しました。\n{message}")
-        log_message(f"バックテストエラー: {message}")
+            task_status_label.setText(f"ML モデル学習でエラーが発生しました。\n{message}")
+        elif active_task == "backtest":
+            task_status_label.setText(f"バックテストでエラーが発生しました。\n{message}")
+        log_message(f"{_task_title(active_task)}エラー: {message}")
 
     def persist_fx_controls() -> None:
         app_state.config.strategy.name = selected_strategy_name()
@@ -661,14 +692,15 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         persist_fx_controls()
         app_state.save_config()
         run_id_hint.setText("実行中…")
-        submit_task(app_state.run_backtest, on_finished, on_error)
+        task_status_label.setText("バックテストを実行中...\n準備しています。")
+        submit_task(app_state.run_backtest, on_finished, on_error, on_progress)
 
     def on_train_finished(summary) -> None:  # noqa: ANN001
         page._active_task = None
         set_busy(False)
         refresh_controls()
         model_path = summary.get("latest_model_path") or summary.get("model_path") or ""
-        research_status_label.setText(
+        task_status_label.setText(
             "\n".join(
                 [
                     f"学習完了: {summary.get('trained_rows', 0)} 行",
@@ -688,18 +720,18 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         app_state.save_config()
         page._active_task = "train"
         set_busy(True)
-        research_status_label.setText(
+        task_status_label.setText(
             "ML モデル学習を実行中...\n"
             "保存済みモデルを更新し、次回の load_pretrained などで使えるようにします。"
         )
-        submit_task(app_state.train_fx_model, on_train_finished, on_error)
+        submit_task(app_state.train_fx_model, on_train_finished, on_error, on_progress)
 
     def on_research_finished(summary) -> None:  # noqa: ANN001
         page._active_task = None
         set_busy(False)
         refresh_controls()
         uplift = summary.get("uplift", {}).get("total_return_delta", 0.0)
-        research_status_label.setText(
+        task_status_label.setText(
             "\n".join(
                 [
                     f"research_run 完了: {summary.get('run_id', '-')}",
@@ -719,7 +751,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         page._active_task = "research"
         set_busy(True)
         selected_mode = str(research_seg.currentData() or "standard")
-        research_status_label.setText(
+        task_status_label.setText(
             "研究パイプラインを実行中...\n"
             f"モード: {research_mode_label(selected_mode)}"
         )
@@ -727,6 +759,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             lambda: app_state.run_research(mode=selected_mode),
             on_research_finished,
             on_error,
+            on_progress,
         )
 
     def refresh_page() -> None:

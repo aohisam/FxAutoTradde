@@ -29,6 +29,29 @@ from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
 from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 
+
+def _emit_progress(
+    progress_callback,
+    *,
+    task: str,
+    current: int,
+    total: int,
+    message: str,
+    phase: str = "running",
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "task": task,
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+    )
+
+
 def _build_test_windows(start: pd.Timestamp, end: pd.Timestamp, config: AppConfig) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     walk_cfg = config.strategy.fx_breakout_pullback.ml_filter.walk_forward
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
@@ -152,18 +175,47 @@ def _train_model_from_history(
     *,
     train_start: pd.Timestamp,
     train_end: pd.Timestamp,
+    progress_callback=None,
 ) -> tuple[object, pd.DataFrame, dict[str, str]]:
+    _emit_progress(
+        progress_callback,
+        task="train",
+        current=1,
+        total=4,
+        message="学習対象ウィンドウを準備しています。",
+    )
     training_slices = {
         symbol: _slice_window(frame, train_start, train_end)
         for symbol, frame in signal_frames.items()
     }
+    _emit_progress(
+        progress_callback,
+        task="train",
+        current=2,
+        total=4,
+        message="ラベル付きデータを構築しています。",
+    )
     baseline_outputs = FxQuotePortfolioSimulator(config).run(training_slices)
     datasets = [
         build_labeled_dataset(frame, baseline_outputs["trades"], config, require_exit_before=train_end)
         for frame in training_slices.values()
     ]
     dataset = pd.concat([item for item in datasets if not item.empty], ignore_index=True) if datasets else pd.DataFrame()
+    _emit_progress(
+        progress_callback,
+        task="train",
+        current=3,
+        total=4,
+        message="ML モデルを学習しています。",
+    )
     model = fit_fx_filter_model(dataset, config)
+    _emit_progress(
+        progress_callback,
+        task="train",
+        current=4,
+        total=4,
+        message="モデルとデータセットを保存しています。",
+    )
     paths = _save_model_and_dataset(model, dataset, config)
     return model, dataset, paths
 
@@ -175,6 +227,7 @@ def _apply_walk_forward_filter(
     backtest_start: pd.Timestamp,
     backtest_end: pd.Timestamp,
     history_start: pd.Timestamp,
+    progress_callback=None,
 ) -> tuple[dict[str, pd.DataFrame], list[dict[str, object]], dict[str, str]]:
     windows = _build_test_windows(backtest_start, backtest_end, config)
     filtered: dict[str, pd.DataFrame] = {
@@ -185,6 +238,15 @@ def _apply_walk_forward_filter(
     latest_paths: dict[str, str] = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
     for window_start, window_end in windows:
         train_start = _training_window_start(window_start, history_start, config)
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message=(
+                f"Walk-forward 学習 {len(walk_rows) + 1}/{max(len(windows), 1)} を実行しています。"
+            ),
+        )
         model, dataset, paths = _train_model_from_history(
             signal_frames,
             config,
@@ -227,6 +289,7 @@ def run_fx_backtest(
     *,
     backtest_start: str,
     backtest_end: str,
+    progress_callback=None,
 ) -> BacktestResult:
     data_service = MarketDataService(config, env)
     ml_cfg = config.strategy.fx_breakout_pullback.ml_filter
@@ -239,6 +302,13 @@ def run_fx_backtest(
             ml_cfg.walk_forward.train_window,
             backward=True,
         )
+    _emit_progress(
+        progress_callback,
+        task="backtest",
+        current=1,
+        total=5,
+        message="FX シグナル候補を読み込んでいます。",
+    )
     signal_frames, chart_frames, _ = _build_symbol_signals(
         config,
         data_service,
@@ -250,12 +320,26 @@ def run_fx_backtest(
     model_paths = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
     walk_forward_rows: list[dict[str, object]]
     if not ml_cfg.enabled or ml_cfg.backtest_mode == "rule_only":
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message="ルールベースのみで検証しています。",
+        )
         active_frames = {
             symbol: _slice_window(frame, requested_start, requested_end)
             for symbol, frame in signal_frames.items()
         }
         walk_forward_rows = []
     elif ml_cfg.backtest_mode == "load_pretrained":
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message="学習済みモデルを読み込み、候補を絞り込んでいます。",
+        )
         model = _load_model_for_backtest(config)
         active_frames = {
             symbol: apply_fx_ml_filter(
@@ -268,6 +352,13 @@ def run_fx_backtest(
         }
         walk_forward_rows = []
     elif ml_cfg.backtest_mode == "train_from_scratch":
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message="指定期間より前の履歴で ML モデルを学習しています。",
+        )
         model, dataset, model_paths = _train_model_from_history(
             signal_frames,
             config,
@@ -294,16 +385,31 @@ def run_fx_backtest(
             }
         ]
     elif ml_cfg.backtest_mode == "walk_forward_train":
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=2,
+            total=5,
+            message="Walk-forward 学習を開始しています。",
+        )
         active_frames, walk_forward_rows, model_paths = _apply_walk_forward_filter(
             signal_frames,
             config,
             backtest_start=requested_start,
             backtest_end=requested_end,
             history_start=history_start,
+            progress_callback=progress_callback,
         )
     else:
         raise ValueError(f"未対応の FX ML backtest mode です: {ml_cfg.backtest_mode}")
 
+    _emit_progress(
+        progress_callback,
+        task="backtest",
+        current=3,
+        total=5,
+        message="約定シミュレーションを実行しています。",
+    )
     sim_outputs = FxQuotePortfolioSimulator(config).run(active_frames, mode=config.broker.mode)
     equity_curve = sim_outputs["equity_curve"]
     if not equity_curve.empty:
@@ -336,6 +442,13 @@ def run_fx_backtest(
             windows=config.validation.rolling_windows,
         )
     )
+    _emit_progress(
+        progress_callback,
+        task="backtest",
+        current=4,
+        total=5,
+        message="指標とウォークフォワード集計を計算しています。",
+    )
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
     result = BacktestResult(
         run_id=run_id,
@@ -359,6 +472,13 @@ def run_fx_backtest(
         walk_forward=walk_forward_summary,
         chart_frames=chart_frames,
     )
+    _emit_progress(
+        progress_callback,
+        task="backtest",
+        current=5,
+        total=5,
+        message="バックテスト結果を書き出しています。",
+    )
     result.output_dir = str(export_backtest_artifacts(result, config))
     return result
 
@@ -368,6 +488,7 @@ def train_fx_filter_model_run(
     env: EnvironmentConfig,
     *,
     as_of: str | None = None,
+    progress_callback=None,
 ) -> dict[str, object]:
     data_service = MarketDataService(config, env)
     train_end = pd.Timestamp(as_of or config.data.end_date, tz="Asia/Tokyo")
@@ -375,6 +496,13 @@ def train_fx_filter_model_run(
         train_end,
         config.strategy.fx_breakout_pullback.ml_filter.walk_forward.train_window,
         backward=True,
+    )
+    _emit_progress(
+        progress_callback,
+        task="train",
+        current=1,
+        total=4,
+        message="学習に使うシグナル候補を読み込んでいます。",
     )
     signal_frames, _, _ = _build_symbol_signals(
         config,
@@ -387,6 +515,7 @@ def train_fx_filter_model_run(
         config,
         train_start=history_start,
         train_end=train_end,
+        progress_callback=progress_callback,
     )
     return {
         "trained_rows": int(len(dataset.index)),

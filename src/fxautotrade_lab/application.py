@@ -36,6 +36,71 @@ from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackSt
 from fxautotrade_lab.strategies.registry import create_strategy
 
 
+_TIMEFRAME_ALIASES: dict[str, TimeFrame] = {
+    "1m": TimeFrame.MIN_1,
+    "1min": TimeFrame.MIN_1,
+    "5m": TimeFrame.MIN_5,
+    "5min": TimeFrame.MIN_5,
+    "10m": TimeFrame.MIN_10,
+    "10min": TimeFrame.MIN_10,
+    "15m": TimeFrame.MIN_15,
+    "15min": TimeFrame.MIN_15,
+    "30m": TimeFrame.MIN_30,
+    "30min": TimeFrame.MIN_30,
+    "1h": TimeFrame.HOUR_1,
+    "1hour": TimeFrame.HOUR_1,
+    "4h": TimeFrame.HOUR_4,
+    "4hour": TimeFrame.HOUR_4,
+    "8h": TimeFrame.HOUR_8,
+    "8hour": TimeFrame.HOUR_8,
+    "12h": TimeFrame.HOUR_12,
+    "12hour": TimeFrame.HOUR_12,
+    "1d": TimeFrame.DAY_1,
+    "1day": TimeFrame.DAY_1,
+    "1w": TimeFrame.WEEK_1,
+    "1week": TimeFrame.WEEK_1,
+    "1month": TimeFrame.MONTH_1,
+    "1mo": TimeFrame.MONTH_1,
+}
+
+
+def _emit_progress(
+    progress_callback,
+    *,
+    task: str,
+    current: int,
+    total: int,
+    message: str,
+    phase: str = "running",
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "task": task,
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+    )
+
+
+def _resolve_timeframe(value: TimeFrame | str) -> TimeFrame:
+    if isinstance(value, TimeFrame):
+        return value
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise ValueError("時間足が指定されていません。")
+    try:
+        return TimeFrame(normalized)
+    except ValueError:
+        alias = _TIMEFRAME_ALIASES.get(normalized.lower())
+        if alias is not None:
+            return alias
+        raise ValueError(f"未対応の時間足です: {normalized}") from None
+
+
 @dataclass(slots=True)
 class LabApplication:
     config_path: Path | None = None
@@ -101,16 +166,32 @@ class LabApplication:
             progress_callback=progress_callback,
         )
 
-    def run_backtest(self) -> BacktestResult:
-        self.last_result = BacktestRunner(self.config, self.env).run()
+    def run_backtest(self, *, progress_callback=None) -> BacktestResult:
+        self.last_result = BacktestRunner(self.config, self.env).run(progress_callback=progress_callback)
         if self.config.persistence.enabled:
             self.store.save_backtest_result(self.last_result, self.config)
+        _emit_progress(
+            progress_callback,
+            task="backtest",
+            current=5,
+            total=5,
+            phase="done",
+            message="バックテストが完了しました。",
+        )
         return self.last_result
 
-    def train_fx_model(self, *, as_of: str | None = None) -> dict[str, object]:
+    def train_fx_model(self, *, as_of: str | None = None, progress_callback=None) -> dict[str, object]:
         if self.config.strategy.name != FxBreakoutPullbackStrategy.name:
             raise RuntimeError("FX breakout 戦略以外では FX ML 学習は利用できません。")
-        summary = train_fx_filter_model_run(self.config, self.env, as_of=as_of)
+        summary = train_fx_filter_model_run(self.config, self.env, as_of=as_of, progress_callback=progress_callback)
+        _emit_progress(
+            progress_callback,
+            task="train",
+            current=4,
+            total=4,
+            phase="done",
+            message="ML モデル学習が完了しました。",
+        )
         return summary
 
     def model_status(self) -> dict[str, object]:
@@ -123,10 +204,20 @@ class LabApplication:
             "exists": model_path.exists(),
         }
 
-    def run_research(self, *, mode: str | None = None) -> dict[str, object]:
+    def run_research(self, *, mode: str | None = None, progress_callback=None) -> dict[str, object]:
         if self.config.strategy.name != FxBreakoutPullbackStrategy.name:
             raise RuntimeError("FX breakout 戦略以外では research_run は未対応です。")
-        self.last_research_result = ResearchPipeline(self.config, self.env, mode=mode).run()
+        self.last_research_result = ResearchPipeline(self.config, self.env, mode=mode).run(
+            progress_callback=progress_callback
+        )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=7,
+            total=7,
+            phase="done",
+            message="研究パイプラインが完了しました。",
+        )
         return self.last_research_result
 
     def run_demo(self) -> dict[str, object]:
@@ -332,7 +423,7 @@ class LabApplication:
         force_refresh: bool = False,
     ) -> dict[str, object]:
         selected_symbol = normalize_fx_symbol(symbol)
-        selected_timeframe = TimeFrame(timeframe)
+        selected_timeframe = _resolve_timeframe(timeframe)
         runtime_mode = (
             self.automation_controller is not None
             or self.config.data.source == "gmo"

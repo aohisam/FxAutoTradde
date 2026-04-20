@@ -144,6 +144,28 @@ def _load_backtest_frame(path: Path, *, index_col: int | None = None) -> pd.Data
     return frame
 
 
+def _emit_progress(
+    progress_callback,
+    *,
+    task: str,
+    current: int,
+    total: int,
+    message: str,
+    phase: str = "running",
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "task": task,
+            "phase": phase,
+            "current": current,
+            "total": total,
+            "message": message,
+        }
+    )
+
+
 @dataclass(slots=True)
 class ResearchPipeline:
     config: AppConfig
@@ -152,23 +174,63 @@ class ResearchPipeline:
     logs: list[str] = field(default_factory=list)
     steps: list[dict[str, object]] = field(default_factory=list)
 
-    def run(self) -> dict[str, object]:
+    def run(self, *, progress_callback=None) -> dict[str, object]:
         selected_mode = (self.mode or self.config.research.mode).strip().lower()
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_research"
         output_dir = self.config.research.output_dir / run_id
         output_dir.mkdir(parents=True, exist_ok=True)
         cache_dir = self._cache_dir(selected_mode)
         cache_dir.mkdir(parents=True, exist_ok=True)
+        total_steps = 7
 
+        def nested(step_index: int, label: str):
+            def _callback(payload: dict[str, object]) -> None:
+                message = str(payload.get("message", "")).strip()
+                if message:
+                    full_message = f"{label}: {message}"
+                else:
+                    full_message = f"{label}を実行しています。"
+                _emit_progress(
+                    progress_callback,
+                    task="research",
+                    current=step_index,
+                    total=total_steps,
+                    message=full_message,
+                    phase=str(payload.get("phase", "running") or "running"),
+                )
+
+            return _callback
+
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=1,
+            total=total_steps,
+            message="データ検証を実行しています。",
+        )
         validation = self._step(
             "validate",
             cache_dir / "validate.json",
             lambda: self._validate_data(),
         )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=2,
+            total=total_steps,
+            message="ML 学習ステップを実行しています。",
+        )
         train_summary = self._step(
             "train",
             cache_dir / "train.json",
-            lambda: self._train_summary(),
+            lambda: self._train_summary(progress_callback=nested(2, "ML 学習")),
+        )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=3,
+            total=total_steps,
+            message="ベースラインのバックテストを実行しています。",
         )
         baseline_result = self._backtest_step(
             "baseline_backtest",
@@ -178,7 +240,15 @@ class ResearchPipeline:
                 output_dir=output_dir,
                 ml_enabled=False,
                 backtest_mode="rule_only",
+                progress_callback=nested(3, "ベースラインバックテスト"),
             ),
+        )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=4,
+            total=total_steps,
+            message="選択モードのバックテストを実行しています。",
         )
         selected_result = self._backtest_step(
             "selected_backtest",
@@ -188,17 +258,32 @@ class ResearchPipeline:
                 output_dir=output_dir,
                 ml_enabled=True,
                 backtest_mode="walk_forward_train",
+                progress_callback=nested(4, "選択モードバックテスト"),
             ),
+        )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=5,
+            total=total_steps,
+            message="頑健性チェックを実行しています。",
         )
         robustness = self._step(
             "robustness",
             cache_dir / f"robustness_{selected_mode}.json",
-            lambda: self._robustness_runs(selected_mode),
+            lambda: self._robustness_runs(selected_mode, progress_callback=nested(5, "頑健性チェック")),
+        )
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=6,
+            total=total_steps,
+            message="パラメータ感度分析を実行しています。",
         )
         sensitivity = self._step(
             "sensitivity",
             cache_dir / f"sensitivity_{selected_mode}.json",
-            lambda: self._parameter_sensitivity(selected_mode),
+            lambda: self._parameter_sensitivity(selected_mode, progress_callback=nested(6, "感度分析")),
         )
 
         summary = {
@@ -227,6 +312,13 @@ class ResearchPipeline:
             "robustness": robustness,
             "sensitivity": sensitivity,
         }
+        _emit_progress(
+            progress_callback,
+            task="research",
+            current=7,
+            total=total_steps,
+            message="レポートを書き出しています。",
+        )
         self._write_reports(output_dir, summary, baseline_result, selected_result)
         return summary
 
@@ -313,10 +405,10 @@ class ResearchPipeline:
             )
         return {"symbols": rows}
 
-    def _train_summary(self) -> dict[str, Any]:
+    def _train_summary(self, progress_callback=None) -> dict[str, Any]:
         train_config = self.config.model_copy(deep=True)
         train_config.strategy.fx_breakout_pullback.ml_filter.enabled = True
-        return train_fx_filter_model_run(train_config, self.env)
+        return train_fx_filter_model_run(train_config, self.env, progress_callback=progress_callback)
 
     def _run_backtest_variant(
         self,
@@ -329,6 +421,7 @@ class ResearchPipeline:
         entry_delay_bars: int = 0,
         breakout_lookback: int | None = None,
         atr_stop_mult: float | None = None,
+        progress_callback=None,
     ):
         variant = self.config.model_copy(deep=True)
         variant.reporting.output_dir = output_dir / mode_name
@@ -345,17 +438,30 @@ class ResearchPipeline:
             self.env,
             backtest_start=variant.backtest.start_date or variant.data.start_date,
             backtest_end=variant.backtest.end_date or variant.data.end_date,
+            progress_callback=progress_callback,
         )
 
-    def _robustness_runs(self, selected_mode: str) -> dict[str, Any]:
+    def _robustness_runs(self, selected_mode: str, progress_callback=None) -> dict[str, Any]:
         spread_values = self.config.research.spread_stress_multipliers
         delay_values = self.config.research.entry_delay_scenarios
         if selected_mode == "quick":
             spread_values = spread_values[:2]
             delay_values = delay_values[:2]
         rows: list[dict[str, Any]] = []
+        total_runs = max(len(spread_values) * len(delay_values), 1)
         for spread_multiplier in spread_values:
             for delay_bars in delay_values:
+                current_run = len(rows) + 1
+                _emit_progress(
+                    progress_callback,
+                    task="research",
+                    current=current_run,
+                    total=total_runs,
+                    message=(
+                        f"頑健性シナリオ {current_run}/{total_runs}: "
+                        f"spread x{spread_multiplier:.1f}, 遅延 {delay_bars} 本"
+                    ),
+                )
                 result = self._run_backtest_variant(
                     mode_name=f"robustness_s{spread_multiplier:.1f}_d{delay_bars}",
                     output_dir=self.config.research.output_dir / "tmp",
@@ -377,7 +483,7 @@ class ResearchPipeline:
                 )
         return {"rows": rows}
 
-    def _parameter_sensitivity(self, selected_mode: str) -> dict[str, Any]:
+    def _parameter_sensitivity(self, selected_mode: str, progress_callback=None) -> dict[str, Any]:
         if selected_mode == "quick":
             return {"rows": []}
         rows: list[dict[str, Any]] = []
@@ -386,8 +492,20 @@ class ResearchPipeline:
         if selected_mode == "standard":
             breakout_values = breakout_values[:2]
             stop_values = stop_values[:2]
+        total_runs = max(len(breakout_values) * len(stop_values), 1)
         for breakout_lookback in breakout_values:
             for atr_stop_mult in stop_values:
+                current_run = len(rows) + 1
+                _emit_progress(
+                    progress_callback,
+                    task="research",
+                    current=current_run,
+                    total=total_runs,
+                    message=(
+                        f"感度分析 {current_run}/{total_runs}: "
+                        f"breakout={breakout_lookback}, stop={atr_stop_mult:.1f}"
+                    ),
+                )
                 result = self._run_backtest_variant(
                     mode_name=f"sensitivity_b{breakout_lookback}_s{atr_stop_mult:.1f}",
                     output_dir=self.config.research.output_dir / "tmp",

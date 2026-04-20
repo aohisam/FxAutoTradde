@@ -32,6 +32,11 @@ def test_desktop_storage_overrides_for_frozen(monkeypatch, tmp_path):
     assert overrides is not None
     assert overrides["persistence"]["sqlite_path"].endswith("Application Support/FXAutoTradeLab/runtime/trading_lab.sqlite")
     assert overrides["data"]["cache_dir"].endswith("Application Support/FXAutoTradeLab/data_cache")
+    assert overrides["research"]["output_dir"].endswith("Application Support/FXAutoTradeLab/research_runs")
+    assert overrides["research"]["cache_dir"].endswith("Application Support/FXAutoTradeLab/research_cache")
+    assert overrides["strategy"]["fx_breakout_pullback"]["ml_filter"]["model_dir"].endswith(
+        "Application Support/FXAutoTradeLab/models/fx_ml"
+    )
 
 
 def test_resolve_config_path_from_bundle_resources(monkeypatch, tmp_path):
@@ -96,3 +101,12 @@ def test_spec_uses_relative_paths():
     spec_text = Path("FXAutoTradeLab.spec").read_text(encoding="utf-8")
     assert "/Users/" not in spec_text
     assert "ROOT_DIR = Path.cwd().resolve()" in spec_text
+
+
+def test_chart_page_defers_runtime_load_until_visible():
+    source = Path(
+        "src/fxautotrade_lab/desktop/pages/chart.py"
+    ).read_text(encoding="utf-8")
+    assert "not page.isVisible()" in source
+    tail = source.split("page.refresh = refresh_chart", 1)[1]
+    assert "refresh_chart()" not in tail

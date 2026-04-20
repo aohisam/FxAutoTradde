@@ -403,6 +403,7 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
     layout.addStretch(1)
     page._chart_request_id = 0
     page._chart_loading = False
+    page._chart_loaded_once = False
 
     # ---- Data helpers -----------------------------------------------------
     def _is_runtime_chart() -> bool:
@@ -529,6 +530,7 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
         if request_id != page._chart_request_id:
             return
         page._chart_loading = False
+        page._chart_loaded_once = True
         set_button_enabled(reload_btn, True)
         _apply_candles(frame, live=True)
 
@@ -590,6 +592,7 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
             live_chip.set_tone("neutral")
             _update_title(_display_symbol(), timeframe)
             return
+        page._chart_loaded_once = True
         _apply_candles(frame, live=False)
 
     # ---- Main refresh ----------------------------------------------------
@@ -598,6 +601,15 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
         if symbol_combo.currentText() in {"", "データなし"}:
             _clear_canvases("O - · H - · L - · C - · Δ -")
             _update_title("", _current_tf_label())
+            return
+        if _is_runtime_chart() and not force_refresh and not page.isVisible():
+            if not page._chart_loaded_once:
+                _clear_canvases(
+                    "チャートページを開くと最新データを読み込みます。",
+                    chip_tone="neutral",
+                    chip_text="standby",
+                )
+                _update_title(_display_symbol(), _current_tf_label())
             return
         if _is_runtime_chart():
             _request_runtime_render(force_refresh=force_refresh)
@@ -630,5 +642,11 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
     add_pair_btn.clicked.connect(_on_add_pair)
 
     page.refresh = refresh_chart
-    refresh_chart()
+    _populate_symbol_combo()
+    _clear_canvases(
+        "チャートページを開くと最新データを読み込みます。",
+        chip_tone="neutral",
+        chip_text="standby",
+    )
+    _update_title(_display_symbol(), _current_tf_label())
     return page

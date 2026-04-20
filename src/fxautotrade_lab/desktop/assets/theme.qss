@@ -611,6 +611,16 @@ QPushButton[role="tab"]:checked  { color: #0f172a; border-bottom-color: #14b8a6;
    ============================================================================ */
 
 /* ---------- Sidebar ---------- */
+/* Catch-all: prevent the base QWidget bg (#f7f8fa) from bleeding through to
+   the scroll viewport / NavBody / brand container etc. and also give sidebar
+   labels a sane default color that overrides the base QLabel rule. */
+QWidget#Sidebar,
+QWidget#Sidebar > QWidget,
+QWidget#Sidebar QWidget {
+    background: transparent;
+}
+QWidget#Sidebar QLabel { color: #d9dee8; }
+
 QWidget#Sidebar {
     background: #0f172a;
     border-right: 1px solid #e5e8ee;
@@ -622,7 +632,7 @@ QWidget#Brand {
     background: transparent;
     border-bottom: 1px solid rgba(255,255,255,0.04);
 }
-QLabel#BrandMark {
+QWidget#Sidebar QLabel#BrandMark {
     background: #0f766e;
     color: #ffffff;
     font: 700 12px "JetBrains Mono", "Menlo", monospace;
@@ -630,12 +640,12 @@ QLabel#BrandMark {
     padding: 0;
     qproperty-alignment: AlignCenter;
 }
-QLabel#BrandT1 {
+QWidget#Sidebar QLabel#BrandT1 {
     color: #ffffff;
     background: transparent;
     font: 600 13px "Inter", "Noto Sans JP", sans-serif;
 }
-QLabel#BrandT2 {
+QWidget#Sidebar QLabel#BrandT2 {
     color: #8591a6;
     background: transparent;
     font: 500 10px "Inter", sans-serif;
@@ -665,7 +675,7 @@ QWidget#Sidebar QScrollBar::add-page:vertical,
 QWidget#Sidebar QScrollBar::sub-page:vertical { background: none; }
 
 /* --- Nav section header --- */
-QLabel#NavSection {
+QWidget#Sidebar QLabel#NavSection {
     color: #8591a6;
     background: transparent;
     font: 600 10px "Inter", sans-serif;
@@ -702,7 +712,7 @@ QWidget#NavItem[active="true"] QLabel#NavText {
 }
 
 /* --- Badge (数字 pill) --- */
-QLabel#NavBadge {
+QWidget#Sidebar QLabel#NavBadge {
     background: rgba(255,255,255,0.08);
     color: #d9dee8;
     font: 500 10px "JetBrains Mono", "Menlo", monospace;
@@ -717,7 +727,7 @@ QWidget#NavItem[active="true"] QLabel#NavBadge {
 }
 
 /* --- Running dot (緑) --- */
-QLabel#NavDot {
+QWidget#Sidebar QLabel#NavDot {
     background: #22c993;
     border-radius: 3px;
 }
@@ -727,12 +737,12 @@ QWidget#SidebarFooter {
     background: transparent;
     border-top: 1px solid rgba(255,255,255,0.05);
 }
-QLabel#FooterVer {
+QWidget#Sidebar QLabel#FooterVer {
     color: #8591a6;
     background: transparent;
     font: 400 11px "JetBrains Mono", "Menlo", monospace;
 }
-QLabel#FooterPill {
+QWidget#Sidebar QLabel#FooterPill {
     background: rgba(34,201,147,0.14);
     color: #6fd2a3;
     padding: 3px 9px;
@@ -740,7 +750,7 @@ QLabel#FooterPill {
     font: 500 11px "Inter", "Noto Sans JP", sans-serif;
     qproperty-alignment: AlignCenter;
 }
-QLabel#FooterPill[state="err"] {
+QWidget#Sidebar QLabel#FooterPill[state="err"] {
     background: rgba(181,52,31,0.18);
     color: #f1a090;
 }
