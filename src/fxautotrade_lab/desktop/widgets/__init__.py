@@ -1,24 +1,23 @@
-"""Reusable desktop UI widgets.
-
-Lazily re-exports the factory-style components so that importing the package
-does not require PySide6 to be available at import time (module tests run
-headless).
-"""
+"""Reusable desktop UI widgets."""
 
 from __future__ import annotations
 
 __all__ = [
+    "AppStatusBar",
     "Banner",
     "Card",
     "Chip",
     "ChipField",
     "Detail",
-    "LabeledSuffixInput",
-    "SegmentedControl",
-    "SymbolChip",
-    "KpiTile",
     "GroupedNavList",
-    "AppStatusBar",
+    "KpiTile",
+    "LabeledSuffixInput",
+    "LogDock",
+    "SegmentedControl",
+    "Sidebar",
+    "StatusBar",
+    "SymbolChip",
+    "Topbar",
 ]
 
 
@@ -47,10 +46,16 @@ def __getattr__(name: str):  # pragma: no cover - thin import proxy
     if name == "KpiTile":
         from .kpi import KpiTile
         return KpiTile
-    if name == "GroupedNavList":
-        from .sidebar import GroupedNavList
-        return GroupedNavList
-    if name == "AppStatusBar":
-        from .statusbar import AppStatusBar
-        return AppStatusBar
+    if name in {"Sidebar", "GroupedNavList"}:
+        from .sidebar import Sidebar
+        return Sidebar
+    if name == "Topbar":
+        from .topbar import Topbar
+        return Topbar
+    if name in {"StatusBar", "AppStatusBar"}:
+        from .statusbar import StatusBar
+        return StatusBar
+    if name == "LogDock":
+        from .logdock import LogDock
+        return LogDock
     raise AttributeError(name)

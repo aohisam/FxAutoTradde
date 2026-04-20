@@ -605,3 +605,224 @@ QPushButton[role="tab"] {
 }
 QPushButton[role="tab"]:hover    { color: #0f172a; }
 QPushButton[role="tab"]:checked  { color: #0f172a; border-bottom-color: #14b8a6; }
+
+/* ============================================================================
+   Application shell: Sidebar / Topbar / StatusBar / LogDock
+   ============================================================================ */
+
+/* ---------- Sidebar ---------- */
+QWidget#Sidebar { background: #0f172a; border-right: 1px solid #e5e8ee; }
+QWidget#NavBody { background: transparent; }
+
+QWidget#Brand { background: transparent; border-bottom: 1px solid rgba(255,255,255,0.04); }
+QLabel#BrandMark {
+    background: #0f766e;
+    color: #ffffff;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 7px;
+}
+QLabel#BrandT1 {
+    color: #ffffff;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 13px; font-weight: 600;
+    background: transparent;
+}
+QLabel#BrandT2 {
+    color: #8591a6;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 10.5px; font-weight: 500;
+    letter-spacing: 1.2px;
+    background: transparent;
+}
+
+QWidget#Sidebar QScrollArea { background: transparent; border: none; }
+QWidget#Sidebar QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+QWidget#Sidebar QScrollBar::handle:vertical { background: rgba(255,255,255,0.08); border-radius: 3px; }
+QWidget#Sidebar QScrollBar::handle:vertical:hover { background: rgba(255,255,255,0.18); }
+QWidget#Sidebar QScrollBar::add-line, QWidget#Sidebar QScrollBar::sub-line { height: 0; background: none; }
+
+QLabel#NavSection {
+    color: #8591a6;
+    background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 1.5px;
+    padding: 14px 10px 6px;
+    text-transform: uppercase;
+}
+
+QWidget#NavItem {
+    background: transparent;
+    border-radius: 8px;
+    margin: 1px 0;
+    border-left: 3px solid transparent;
+}
+QWidget#NavItem:hover { background: #1b2740; }
+QWidget#NavItem[active="true"] {
+    background: #2a3a5c;
+    border-left: 3px solid #14b8a6;
+}
+QLabel#NavText {
+    background: transparent;
+    color: #d9dee8;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 13px; font-weight: 500;
+}
+QLabel#NavText[active="true"] { color: #ffffff; font-weight: 600; }
+QLabel#NavIcon { background: transparent; qproperty-alignment: AlignCenter; }
+QLabel#NavBadge {
+    background: rgba(255,255,255,0.08);
+    color: #d9dee8;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 10px; font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 999px;
+    min-width: 12px;
+    qproperty-alignment: AlignCenter;
+}
+QLabel#NavDot {
+    background: #0b8457;
+    border-radius: 3px;
+}
+
+QWidget#SidebarFooter { background: transparent; border-top: 1px solid rgba(255,255,255,0.05); }
+QLabel#FooterVer {
+    color: #8591a6; background: transparent;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 11px; font-weight: 400;
+}
+QLabel#FooterPill {
+    background: rgba(11,132,87,0.18);
+    color: #6fd2a3;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 11px; font-weight: 500;
+}
+QLabel#FooterPill[state="err"] {
+    background: rgba(181,52,31,0.20);
+    color: #f1a090;
+}
+
+/* ---------- Topbar ---------- */
+QWidget#Topbar { background: #ffffff; border-bottom: 1px solid #e5e8ee; }
+QLabel#CrumbSection {
+    color: #4a5568; background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 13px; font-weight: 500;
+}
+QLabel#CrumbSep {
+    color: #6b7587; background: transparent;
+    font-size: 13px; font-weight: 500;
+}
+QLabel#CrumbNow {
+    color: #0f172a; background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 13px; font-weight: 600;
+}
+
+QPushButton#TbSearch {
+    background: #eef0f3;
+    border: 1px solid #e5e8ee;
+    border-radius: 8px;
+    text-align: left;
+    padding: 0;
+    min-height: 0;
+}
+QPushButton#TbSearch:hover { background: #e6e9ef; }
+QLabel#TbSearchIcon { background: transparent; }
+QLabel#TbSearchPlaceholder {
+    color: #6b7587; background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 12.5px; font-weight: 400;
+}
+QLabel#TbKbd {
+    color: #6b7587;
+    background: #ffffff;
+    border: 1px solid #e5e8ee;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 10.5px; font-weight: 500;
+}
+
+QPushButton#TbBtn {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid #e5e8ee;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #0f172a;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 12.5px; font-weight: 500;
+}
+QPushButton#TbBtn:hover:enabled { background: #eef0f3; }
+QPushButton#TbBtn[variant="primary"] {
+    background: #14b8a6;
+    color: #ffffff;
+    border: 1px solid #14b8a6;
+    font-weight: 600;
+}
+QPushButton#TbBtn[variant="primary"]:hover:enabled { background: #0ea597; border-color: #0ea597; }
+QPushButton#TbBtn:disabled { color: #94a3b8; background: #f1f3f7; }
+QFrame#TbDivider { background: #e5e8ee; border: none; }
+
+/* ---------- StatusBar (grid-embedded) ---------- */
+QWidget#StatusBar { background: #ffffff; border-top: 1px solid #e5e8ee; }
+QWidget#StatusSeg { background: transparent; }
+QLabel#StatusDot { background: #0b8457; border-radius: 3px; }
+QLabel#StatusLabel {
+    color: #4a5568; background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 11.5px; font-weight: 500;
+}
+QWidget#StatusSeg[tone="pos"] QLabel#StatusLabel {
+    color: #0b8457;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+QWidget#StatusSeg[tone="neg"] QLabel#StatusLabel {
+    color: #b5341f;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+QPushButton#StatusLogBtn {
+    background: #eef0f3;
+    color: #4a5568;
+    border: 1px solid #e5e8ee;
+    border-radius: 6px;
+    padding: 0 10px;
+    min-height: 22px;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 11.5px; font-weight: 500;
+}
+QPushButton#StatusLogBtn:hover { background: #e6e9ef; }
+QPushButton#StatusLogBtn[active="true"] {
+    background: #d8efeb;
+    color: #064e47;
+    border-color: #d8efeb;
+}
+
+/* ---------- LogDock (bottom) ---------- */
+QDockWidget#LogDock { border-top: 1px solid #e5e8ee; }
+QWidget#LogTitleBar { background: #0f172a; }
+QLabel#LogTitle {
+    color: #d9dee8; background: transparent;
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.08em;
+}
+QToolButton#LogClose {
+    color: #d9dee8; background: transparent; border: none;
+    font-size: 16px; font-weight: 600;
+    padding: 0 8px;
+}
+QToolButton#LogClose:hover { color: #ffffff; }
+QPlainTextEdit#LogView {
+    background: #0b1220;
+    color: #d9dee8;
+    font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    font-size: 12px; font-weight: 400;
+    border: none;
+    padding: 10px 14px;
+}
