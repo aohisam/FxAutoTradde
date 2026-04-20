@@ -635,6 +635,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         log_message(f"バックテストエラー: {message}")
 
     def persist_fx_controls() -> None:
+        app_state.config.strategy.name = selected_strategy_name()
         app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled_box.isChecked()
         app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
             ml_mode_combo.currentData() or "rule_only"
@@ -654,7 +655,6 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             return
         page._active_task = "backtest"
         set_busy(True)
-        app_state.config.strategy.name = selected_strategy_name()
         app_state.config.backtest.use_custom_window = custom_window_box.isChecked()
         app_state.config.backtest.start_date = selected_start
         app_state.config.backtest.end_date = selected_end

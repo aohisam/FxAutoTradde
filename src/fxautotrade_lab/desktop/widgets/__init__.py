@@ -12,6 +12,7 @@ __all__ = [
     "Card",
     "Chip",
     "ChipField",
+    "Detail",
     "LabeledSuffixInput",
     "SegmentedControl",
     "SymbolChip",
@@ -34,6 +35,9 @@ def __getattr__(name: str):  # pragma: no cover - thin import proxy
     if name in {"ChipField", "SymbolChip"}:
         from . import chip_field
         return getattr(chip_field, name)
+    if name == "Detail":
+        from .detail import Detail
+        return Detail
     if name == "LabeledSuffixInput":
         from .suffix_input import LabeledSuffixInput
         return LabeledSuffixInput

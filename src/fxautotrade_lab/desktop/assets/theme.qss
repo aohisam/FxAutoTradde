@@ -48,6 +48,13 @@ QLabel[role="detail-value"] {
     font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
     font-size: 13px; font-weight: 600; color: #0f172a;
 }
+QLabel[role="detail-value"][variant="text"] {
+    font-family: "Inter", "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    font-weight: 400;
+    color: #334155;
+}
+QLabel[role="detail-value"][size="sm"] { font-size: 12.5px; }
+QLabel[role="help-body"] { color: #334155; font-size: 13px; }
 QLabel[role="section-caption"] {
     color: #64748b;
     font-size: 11px;
