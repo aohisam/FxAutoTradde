@@ -4,17 +4,38 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from pathlib import Path
 
-from fxautotrade_lab.desktop.runtime import DesktopProcessManager
+from fxautotrade_lab.desktop.runtime import DesktopProcessManager, append_runtime_log, log_runtime_exception
 from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 
 
 def _boot_log(message: str) -> None:
-    log_path = Path.home() / "Library" / "Application Support" / "FXAutoTradeLab" / "runtime" / "desktop_boot.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as handle:
-        handle.write(f"{message}\n")
+    append_runtime_log("desktop_boot.log", message)
+
+
+def _install_exception_hooks() -> None:
+    def handle_exception(exc_type, exc_value, exc_traceback) -> None:  # noqa: ANN001
+        log_runtime_exception("main_thread", (exc_type, exc_value, exc_traceback))
+
+    def handle_thread_exception(args) -> None:  # noqa: ANN001
+        log_runtime_exception(
+            f"thread:{getattr(args, 'thread', None).name if getattr(args, 'thread', None) else 'unknown'}",
+            (args.exc_type, args.exc_value, args.exc_traceback),
+        )
+
+    def handle_unraisable(unraisable) -> None:  # noqa: ANN001
+        exc_type = type(unraisable.exc_value)
+        log_runtime_exception(
+            f"unraisable:{getattr(unraisable, 'object', None)!r}",
+            (exc_type, unraisable.exc_value, unraisable.exc_traceback),
+        )
+
+    sys.excepthook = handle_exception
+    if hasattr(threading, "excepthook"):
+        threading.excepthook = handle_thread_exception
+    sys.unraisablehook = handle_unraisable
 
 
 def _prepare_qt_runtime() -> dict[str, str]:
@@ -135,6 +156,7 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     runtime_paths = _prepare_qt_runtime()
     process_manager = DesktopProcessManager()
     process_manager.prepare()
+    _install_exception_hooks()
     try:
         from PySide6.QtCore import QCoreApplication, QTimer
         from PySide6.QtGui import QIcon

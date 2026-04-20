@@ -59,8 +59,15 @@ class KpiTile(Card):
         self.body_layout.addLayout(self.note_row)
 
     def set_value(self, value: str, tone: str | None = None) -> None:
+        self.value.setTextFormat(Qt.AutoText)
         self.value.setText(value)
         self.value.setProperty("tone", tone or "")
+        repolish(self.value)
+
+    def set_value_html(self, html: str) -> None:
+        self.value.setTextFormat(Qt.RichText)
+        self.value.setText(html)
+        self.value.setProperty("tone", "")
         repolish(self.value)
 
     def set_note(self, note: str) -> None:

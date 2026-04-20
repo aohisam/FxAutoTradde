@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fxautotrade_lab.desktop.runtime import log_runtime_exception
+
 
 def load_worker_classes():  # pragma: no cover - UI helper
     from PySide6.QtCore import QObject, QRunnable, Signal, Slot
@@ -24,7 +26,8 @@ def load_worker_classes():  # pragma: no cover - UI helper
             try:
                 result = self.fn(*self.args, **self.kwargs)
             except Exception as exc:
-                self.signals.error.emit(str(exc))
+                log_runtime_exception("background_worker")
+                self.signals.error.emit(str(exc) or exc.__class__.__name__)
             else:
                 self.signals.finished.emit(result)
 

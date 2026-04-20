@@ -138,17 +138,29 @@ class MarketDataService:
     def sync(self) -> dict[str, object]:
         force_refresh = self._uses_gmo()
         sync_mode = "incremental" if self._uses_gmo() else self.config.data.source
-        symbols, symbol_details = self._sync_group("watchlist", self.config.watchlist.symbols, force_refresh)
+        sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] = {}
+        symbols, symbol_details = self._sync_group(
+            "watchlist",
+            self.config.watchlist.symbols,
+            force_refresh,
+            sync_results_cache,
+        )
         benchmarks, benchmark_details = self._sync_group(
             "benchmark",
             self.config.watchlist.benchmark_symbols,
             force_refresh,
+            sync_results_cache,
         )
-        sectors, sector_details = self._sync_group("sector", self.config.watchlist.sector_symbols, force_refresh)
+        sectors, sector_details = self._sync_group(
+            "sector",
+            self.config.watchlist.sector_symbols,
+            force_refresh,
+            sync_results_cache,
+        )
         return {
-            "symbols": len(symbols),
-            "benchmarks": len(benchmarks),
-            "sectors": len(sectors),
+            "symbols": symbols,
+            "benchmarks": benchmarks,
+            "sectors": sectors,
             "source": self.config.data.source,
             "force_refresh": force_refresh,
             "sync_mode": sync_mode,
@@ -163,14 +175,20 @@ class MarketDataService:
         category: str,
         symbols: list[str],
         force_refresh: bool,
-    ) -> tuple[dict[str, dict[TimeFrame, pd.DataFrame]], list[dict[str, object]]]:
-        frames_by_symbol: dict[str, dict[TimeFrame, pd.DataFrame]] = {}
+        sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] | None = None,
+    ) -> tuple[int, list[dict[str, object]]]:
+        results_cache = sync_results_cache if sync_results_cache is not None else {}
+        processed_symbols: set[str] = set()
         details: list[dict[str, object]] = []
         for symbol in symbols:
-            results = self._load_symbol_frame_results(symbol, force_refresh=force_refresh)
-            frames_by_symbol[symbol] = {timeframe: result.frame for timeframe, result in results.items()}
+            normalized_symbol = normalize_fx_symbol(symbol)
+            results = results_cache.get(normalized_symbol)
+            if results is None:
+                results = self._load_symbol_frame_results(normalized_symbol, force_refresh=force_refresh)
+                results_cache[normalized_symbol] = results
+            processed_symbols.add(normalized_symbol)
             details.extend(self._build_sync_details(category, symbol, results))
-        return frames_by_symbol, details
+        return len(processed_symbols), details
 
     def _build_sync_details(
         self,

@@ -8,7 +8,7 @@ from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, summarize_quote_bar_quality, validate_quote_bar_frame
-from fxautotrade_lab.data.service import MarketDataService
+from fxautotrade_lab.data.service import MarketDataFrameLoad, MarketDataService
 
 from tests.conftest import write_config
 
@@ -79,6 +79,50 @@ def test_sync_refreshes_gmo_cache_and_reports_quote_details(tmp_path, monkeypatc
     assert summary["sync_mode"] == "incremental"
     assert summary["symbols"] == 1
     assert summary["details"][0]["source"] == "gmo_incremental"
+
+
+def test_sync_reuses_loaded_results_when_watchlist_and_benchmark_overlap(tmp_path, monkeypatch):
+    config = load_app_config(
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
+        overrides={
+            "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": ["USD_JPY"], "sector_symbols": []},
+            "data": {
+                "source": "gmo",
+                "cache_dir": str(tmp_path / "cache"),
+                "timeframes": ["1Min"],
+                "start_date": "2026-04-14",
+                "end_date": "2026-04-14",
+            },
+            "strategy": {"entry_timeframe": "1Min"},
+        },
+    )
+    service = MarketDataService(config, EnvironmentConfig())
+    frame = _make_quote_frame("USD_JPY", "2026-04-14 09:00:00", 3)
+
+    calls: list[str] = []
+    cache_path = service.cache.path_for("USD_JPY", TimeFrame.MIN_1)
+
+    def fake_load_symbol_frame_results(symbol, **kwargs):  # noqa: ANN001
+        _ = kwargs
+        calls.append(symbol)
+        return {
+            TimeFrame.MIN_1: MarketDataFrameLoad(
+                frame=frame,
+                source="gmo_cache",
+                cache_path=cache_path,
+                refreshed=False,
+            )
+        }
+
+    monkeypatch.setattr(service, "_load_symbol_frame_results", fake_load_symbol_frame_results)
+    summary = service.sync()
+
+    assert calls == ["USD_JPY"]
+    assert summary["symbols"] == 1
+    assert summary["benchmarks"] == 1
+    detail_categories = {detail["category"] for detail in summary["details"]}
+    assert detail_categories == {"watchlist", "benchmark"}
+    assert str(cache_path) == summary["details"][0]["cache_path"]
 
 
 def test_runtime_load_refreshes_recent_intraday_window(tmp_path, monkeypatch):

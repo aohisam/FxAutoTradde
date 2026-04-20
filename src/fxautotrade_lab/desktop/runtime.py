@@ -9,7 +9,9 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 
@@ -24,6 +26,24 @@ PROCESS_SIGNATURES = (
 
 def _default_state_path() -> Path:
     return Path.home() / "Library" / "Application Support" / "FXAutoTradeLab" / "runtime" / "desktop_app_state.json"
+
+
+def runtime_dir() -> Path:
+    return _default_state_path().parent
+
+
+def append_runtime_log(filename: str, message: str) -> None:
+    log_path = runtime_dir() / filename
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{timestamp}] {message}\n")
+
+
+def log_runtime_exception(context: str, exc_info=None) -> None:
+    exception_info = exc_info or sys.exc_info()
+    formatted = "".join(traceback.format_exception(*exception_info)).strip()
+    append_runtime_log("desktop_error.log", f"{context}\n{formatted}")
 
 
 @dataclass(slots=True)

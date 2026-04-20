@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
+from fxautotrade_lab.desktop.runtime import log_runtime_exception
 
 
 NAV_GROUPS = [
@@ -165,7 +166,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 "監視通貨ペア": build_watchlist_page(self.app_state, self.log_message),
                 "データ同期": build_data_sync_page(self.app_state, self.submit_background_task, self.log_message),
                 "バックテスト": build_backtest_page(self.app_state, self.submit_background_task, self.log_message),
-                "シグナル分析": build_signals_page(self.app_state),
+                "シグナル分析": build_signals_page(
+                    self.app_state, self.submit_background_task, self.log_message
+                ),
                 "実時間シミュレーション": build_automation_page(
                     self.app_state, self.submit_background_task, self.log_message
                 ),
@@ -289,7 +292,11 @@ def load_main_window_class():  # pragma: no cover - UI helper
         def refresh_current_page(self) -> None:
             page = self.stack.currentWidget()
             if hasattr(page, "refresh"):
-                page.refresh()
+                try:
+                    page.refresh()
+                except Exception:  # noqa: BLE001
+                    log_runtime_exception("refresh_current_page")
+                    self.log_message("画面更新中にエラーが発生しました。詳細は runtime/desktop_error.log を確認してください。")
             index = self.stack.currentIndex()
             if 0 <= index < len(self.page_names):
                 name = self.page_names[index]
@@ -299,7 +306,11 @@ def load_main_window_class():  # pragma: no cover - UI helper
         def refresh_all_pages(self) -> None:
             for page in self.pages.values():
                 if hasattr(page, "refresh"):
-                    page.refresh()
+                    try:
+                        page.refresh()
+                    except Exception:  # noqa: BLE001
+                        log_runtime_exception("refresh_all_pages")
+                        self.log_message("一部の画面更新でエラーが発生しました。詳細は runtime/desktop_error.log を確認してください。")
 
         def log_message(self, message: str) -> None:
             self.log_output.append(message)
@@ -318,12 +329,26 @@ def load_main_window_class():  # pragma: no cover - UI helper
             def handle_finished(payload) -> None:  # noqa: ANN001
                 try:
                     on_finished(payload)
+                except Exception:  # noqa: BLE001
+                    log_runtime_exception("background_task:on_finished")
+                    QMessageBox.critical(
+                        self,
+                        "処理結果の反映エラー",
+                        "処理完了後の画面反映でエラーが発生しました。詳細は runtime/desktop_error.log を確認してください。",
+                    )
                 finally:
                     release_worker()
 
             def handle_error(message: str) -> None:
                 try:
                     on_error(message)
+                except Exception:  # noqa: BLE001
+                    log_runtime_exception("background_task:on_error")
+                    QMessageBox.critical(
+                        self,
+                        "エラー表示の反映失敗",
+                        "エラー内容の表示中に別のエラーが発生しました。詳細は runtime/desktop_error.log を確認してください。",
+                    )
                 finally:
                     release_worker()
 
