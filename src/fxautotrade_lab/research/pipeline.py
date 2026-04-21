@@ -438,6 +438,7 @@ class ResearchPipeline:
             self.env,
             backtest_start=variant.backtest.start_date or variant.data.start_date,
             backtest_end=variant.backtest.end_date or variant.data.end_date,
+            persist_ml_artifacts=False,
             progress_callback=progress_callback,
         )
 

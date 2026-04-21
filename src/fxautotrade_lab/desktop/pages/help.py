@@ -171,8 +171,12 @@ def build_help_page(app_state=None):  # pragma: no cover - UI helper
     shortcut_grid = QGridLayout()
     shortcut_grid.setHorizontalSpacing(16)
     shortcut_grid.setVerticalSpacing(12)
+    # Fixed-width cells + trailing spacer column so the shortcut group
+    # clusters on the left instead of stretching across the whole card.
     for column in range(4):
-        shortcut_grid.setColumnStretch(column, 1)
+        shortcut_grid.setColumnStretch(column, 0)
+        shortcut_grid.setColumnMinimumWidth(column, 180)
+    shortcut_grid.setColumnStretch(4, 1)
     for index, (label, key) in enumerate(shortcuts):
         shortcut_grid.addWidget(
             Detail(label, key, variant="mono", variant_size="sm"),

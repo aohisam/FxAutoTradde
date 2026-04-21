@@ -175,6 +175,7 @@ def _train_model_from_history(
     *,
     train_start: pd.Timestamp,
     train_end: pd.Timestamp,
+    persist_artifacts: bool = True,
     progress_callback=None,
 ) -> tuple[object, pd.DataFrame, dict[str, str]]:
     _emit_progress(
@@ -209,14 +210,24 @@ def _train_model_from_history(
         message="ML モデルを学習しています。",
     )
     model = fit_fx_filter_model(dataset, config)
-    _emit_progress(
-        progress_callback,
-        task="train",
-        current=4,
-        total=4,
-        message="モデルとデータセットを保存しています。",
-    )
-    paths = _save_model_and_dataset(model, dataset, config)
+    if persist_artifacts:
+        _emit_progress(
+            progress_callback,
+            task="train",
+            current=4,
+            total=4,
+            message="モデルとデータセットを保存しています。",
+        )
+        paths = _save_model_and_dataset(model, dataset, config)
+    else:
+        _emit_progress(
+            progress_callback,
+            task="train",
+            current=4,
+            total=4,
+            message="モデルをメモリ上に保持しています。",
+        )
+        paths = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
     return model, dataset, paths
 
 
@@ -236,6 +247,8 @@ def _apply_walk_forward_filter(
     }
     walk_rows: list[dict[str, object]] = []
     latest_paths: dict[str, str] = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
+    latest_model = None
+    latest_dataset = pd.DataFrame()
     for window_start, window_end in windows:
         train_start = _training_window_start(window_start, history_start, config)
         _emit_progress(
@@ -252,7 +265,10 @@ def _apply_walk_forward_filter(
             config,
             train_start=train_start,
             train_end=window_start,
+            persist_artifacts=False,
         )
+        latest_model = model
+        latest_dataset = dataset
         latest_paths = paths
         accepted = 0
         candidates = 0
@@ -280,6 +296,8 @@ def _apply_walk_forward_filter(
                 "coverage": accepted / candidates if candidates else 0.0,
             }
         )
+    if latest_model is not None and not latest_dataset.empty:
+        latest_paths = _save_model_and_dataset(latest_model, latest_dataset, config)
     return filtered, walk_rows, latest_paths
 
 
@@ -289,6 +307,7 @@ def run_fx_backtest(
     *,
     backtest_start: str,
     backtest_end: str,
+    persist_ml_artifacts: bool = True,
     progress_callback=None,
 ) -> BacktestResult:
     data_service = MarketDataService(config, env)
@@ -364,6 +383,7 @@ def run_fx_backtest(
             config,
             train_start=history_start,
             train_end=requested_start,
+            persist_artifacts=persist_ml_artifacts,
         )
         active_frames = {
             symbol: apply_fx_ml_filter(
@@ -400,6 +420,8 @@ def run_fx_backtest(
             history_start=history_start,
             progress_callback=progress_callback,
         )
+        if not persist_ml_artifacts:
+            model_paths = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
     else:
         raise ValueError(f"未対応の FX ML backtest mode です: {ml_cfg.backtest_mode}")
 

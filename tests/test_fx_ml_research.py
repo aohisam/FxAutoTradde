@@ -11,7 +11,14 @@ from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.enums import BrokerMode, OrderSide, TimeFrame
-from fxautotrade_lab.ml.fx_filter import FEATURE_COLUMNS, apply_fx_ml_filter, fit_fx_filter_model, load_filter_model
+from fxautotrade_lab.ml.fx_filter import (
+    FEATURE_COLUMNS,
+    STORAGE_COLUMNS,
+    apply_fx_ml_filter,
+    fit_fx_filter_model,
+    load_filter_model,
+    save_labeled_dataset,
+)
 from fxautotrade_lab.research.pipeline import ResearchPipeline
 
 
@@ -135,6 +142,7 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
         signal_frame[column] = 0.1
 
     train_windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    save_calls: list[int] = []
 
     class _DummyModel:
         def predict_proba(self, features: pd.DataFrame) -> pd.Series:
@@ -146,6 +154,10 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
     def fake_train_model(*args, **kwargs):
         train_windows.append((kwargs["train_start"], kwargs["train_end"]))
         return _DummyModel(), _synthetic_dataset(4), {"model_path": "", "latest_model_path": "", "dataset_path": ""}
+
+    def fake_save_model_and_dataset(model, dataset, config):
+        save_calls.append(len(dataset.index))
+        return {"model_path": "", "latest_model_path": "", "dataset_path": "labels.parquet"}
 
     def fake_sim_run(self, signal_frames, mode=BrokerMode.LOCAL_SIM):
         ordered = next(iter(signal_frames.values())).index[-10:]
@@ -167,6 +179,7 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._build_symbol_signals", fake_build_symbol_signals)
     monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model)
+    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._save_model_and_dataset", fake_save_model_and_dataset)
     monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run)
 
     result = run_fx_backtest(
@@ -178,8 +191,49 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
 
     assert result.walk_forward
     assert train_windows
+    assert save_calls == [4]
     for row in result.walk_forward:
         assert pd.Timestamp(row["train_end"]) <= pd.Timestamp(row["start"])
+
+
+def test_save_labeled_dataset_uses_compact_storage_schema(tmp_path: Path) -> None:
+    dataset = _synthetic_dataset(6)
+
+    saved = save_labeled_dataset(dataset, tmp_path / "labels.parquet")
+    loaded = pd.read_parquet(saved)
+
+    assert list(loaded.columns) == [column for column in STORAGE_COLUMNS if column in dataset.columns]
+    assert "entry_time" not in loaded.columns
+    assert "exit_time" not in loaded.columns
+    assert str(loaded["binary_label"].dtype) in {"int8", "Int8"}
+    assert str(loaded["realized_r_net"].dtype) == "float32"
+
+
+def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    calls: list[bool] = []
+
+    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+        calls.append(persist_ml_artifacts)
+        return SimpleNamespace(
+            metrics={"total_return": 0.0},
+            output_dir=str(tmp_path / "variant"),
+            trades=pd.DataFrame(),
+            signals=pd.DataFrame(),
+            equity_curve=pd.DataFrame(),
+        )
+
+    monkeypatch.setattr("fxautotrade_lab.research.pipeline.run_fx_backtest", fake_run_fx_backtest)
+
+    pipeline = ResearchPipeline(config, EnvironmentConfig(), mode="quick")
+    pipeline._run_backtest_variant(
+        mode_name="walk_forward_train",
+        output_dir=tmp_path / "research",
+        ml_enabled=True,
+        backtest_mode="walk_forward_train",
+    )
+
+    assert calls == [False]
 
 
 def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> None:

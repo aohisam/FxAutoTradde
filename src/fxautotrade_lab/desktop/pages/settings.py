@@ -87,16 +87,21 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(12)
-        grid.setColumnMinimumWidth(0, 160)
-        grid.setColumnStretch(1, 1)
+        # Column 0 = label (fixed), column 1 = field (natural size),
+        # column 2 = trailing spacer that absorbs extra card width so the
+        # form clusters on the left rather than getting pushed right.
+        grid.setColumnMinimumWidth(0, 140)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 0)
+        grid.setColumnStretch(2, 1)
         return widget, grid
 
     def add_row(grid: QGridLayout, label_text: str, field: QWidget) -> None:
         row = grid.rowCount()
         label = QLabel(label_text)
         label.setProperty("role", "form-label")
-        grid.addWidget(label, row, 0, Qt.AlignRight | Qt.AlignTop)
-        grid.addWidget(field, row, 1)
+        grid.addWidget(label, row, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        grid.addWidget(field, row, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
     def make_hint(text: str) -> QLabel:
         hint = QLabel(text)
@@ -211,9 +216,11 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     # ---- Card 3: 通知チャネル --------------------------------------------
     log_path_edit = QLineEdit()
     log_path_edit.setReadOnly(True)
+    log_path_edit.setMinimumWidth(360)
     log_open_btn = QPushButton("開く")
     log_open_btn.setProperty("variant", "ghost")
     log_row_widget = QWidget()
+    log_row_widget.setMinimumWidth(420)
     log_row = QHBoxLayout(log_row_widget)
     log_row.setContentsMargins(0, 0, 0, 0)
     log_row.setSpacing(6)
@@ -223,6 +230,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     slack_edit = QLineEdit()
     slack_edit.setEchoMode(QLineEdit.Password)
     slack_edit.setPlaceholderText("https://hooks.slack.com/...")
+    slack_edit.setMinimumWidth(360)
 
     level_seg = SegmentedControl(LEVEL_LABELS, current=2, data=LEVEL_KEYS)
 
@@ -269,12 +277,15 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     api_public = QLineEdit()
     api_public.setEchoMode(QLineEdit.Password)
     api_public.setReadOnly(True)
+    api_public.setMinimumWidth(320)
     api_private = QLineEdit()
     api_private.setEchoMode(QLineEdit.Password)
     api_private.setReadOnly(True)
     api_private.setPlaceholderText("未設定")
+    api_private.setMinimumWidth(320)
     storage_edit = QLineEdit()
     storage_edit.setReadOnly(True)
+    storage_edit.setMinimumWidth(280)
 
     gmo_left_body, gmo_left_grid = make_form_grid()
     add_row(gmo_left_grid, "API キー (public)", api_public)

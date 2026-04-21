@@ -30,6 +30,16 @@ FEATURE_COLUMNS = [
     "hour",
 ]
 
+STORAGE_COLUMNS = [
+    "symbol",
+    "signal_time",
+    "realized_r_net",
+    "binary_label",
+    "continuous_target",
+    "net_pnl",
+    *FEATURE_COLUMNS,
+]
+
 
 def _as_float_series(values: pd.Series) -> pd.Series:
     numeric = pd.to_numeric(values, errors="coerce")
@@ -159,10 +169,33 @@ def fit_fx_filter_model(dataset: pd.DataFrame, config: AppConfig) -> NumpyLogist
     )
 
 
+def _storage_ready_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
+    available = [column for column in STORAGE_COLUMNS if column in dataset.columns]
+    compact = dataset.loc[:, available].copy()
+    if compact.empty:
+        return compact
+    if "symbol" in compact.columns:
+        compact["symbol"] = compact["symbol"].astype("string").astype("category")
+    if "signal_time" in compact.columns:
+        compact["signal_time"] = pd.to_datetime(compact["signal_time"], errors="coerce", utc=True)
+    float_columns = [
+        "realized_r_net",
+        "continuous_target",
+        "net_pnl",
+        *FEATURE_COLUMNS,
+    ]
+    for column in float_columns:
+        if column in compact.columns:
+            compact[column] = pd.to_numeric(compact[column], errors="coerce").astype("float32")
+    if "binary_label" in compact.columns:
+        compact["binary_label"] = pd.to_numeric(compact["binary_label"], errors="coerce").fillna(0).astype("int8")
+    return compact
+
+
 def save_labeled_dataset(dataset: pd.DataFrame, path: str | Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    dataset.to_parquet(target, index=False)
+    _storage_ready_dataset(dataset).to_parquet(target, index=False)
     return target
 
 
