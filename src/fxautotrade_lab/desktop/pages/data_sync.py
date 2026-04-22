@@ -121,7 +121,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
-    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit
+    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit, default_popup_qdate
     from fxautotrade_lab.desktop.theme import Tokens
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.banner import Banner
@@ -197,10 +197,12 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         data=SEG_SOURCE_KEYS,
     )
 
-    start_date = create_popup_date_edit()
-    end_date = create_popup_date_edit()
-    start_date.setDate(QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd"))
-    end_date.setDate(QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd"))
+    start_date = create_popup_date_edit("start")
+    end_date = create_popup_date_edit("end")
+    configured_start = QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd")
+    configured_end = QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd")
+    start_date.setDate(configured_start if configured_start.isValid() else default_popup_qdate("start"))
+    end_date.setDate(configured_end if configured_end.isValid() else default_popup_qdate("end"))
 
     tf_seg = SegmentedControl(SEG_TF_LABELS, current=2, data=SEG_TF_LABELS)
     try:

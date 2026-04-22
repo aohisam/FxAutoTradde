@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 
-def create_popup_date_edit():  # pragma: no cover - UI helper
+def default_popup_qdate(role: str = "end"):  # pragma: no cover - UI helper
+    from PySide6.QtCore import QDate
+
+    today = QDate.currentDate()
+    if role == "start":
+        return today.addMonths(-1)
+    return today
+
+
+def create_popup_date_edit(role: str = "end"):  # pragma: no cover - UI helper
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QCalendarWidget, QDateEdit
 
     edit = QDateEdit()
     edit.setCalendarPopup(True)
     edit.setDisplayFormat("yyyy-MM-dd")
-    edit.setMinimumWidth(148)
+    edit.setMinimumWidth(164)
+    edit.setDate(default_popup_qdate(role))
+    edit.setToolTip("右端のカレンダー欄をクリックすると、カレンダーから日付を選べます。")
 
     calendar = QCalendarWidget()
     calendar.setGridVisible(False)

@@ -34,7 +34,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     )
 
     from fxautotrade_lab.desktop.models import load_dataframe_model_class
-    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit
+    from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit, default_popup_qdate
     from fxautotrade_lab.desktop.ml_labels import (
         ML_MODE_CHOICES,
         RESEARCH_MODE_CHOICES,
@@ -166,7 +166,6 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     left_form.addRow(labeled("戦略", "実行に使う売買ロジック"), strategy_combo)
     left_form.addRow(labeled("戦略説明"), strategy_hint)
     left_form.addRow(labeled("初期資産", "JPY 基準"), starting_cash_input)
-    left_form.addRow(labeled("期間指定"), custom_window_box)
     left_form.addRow(labeled("ML 参加フィルタ"), ml_enabled_box)
     left_form.addRow(labeled("ML の使い方"), ml_mode_combo)
     left_form.addRow(labeled("使用モデル"), model_select_combo)
@@ -176,10 +175,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     right_form.setVerticalSpacing(10)
     right_form.setLabelAlignment(Qt.AlignLeft)
 
-    start_date = create_popup_date_edit()
-    end_date = create_popup_date_edit()
+    start_date = create_popup_date_edit("start")
+    end_date = create_popup_date_edit("end")
     tf_seg = SegmentedControl(TF_SEG_LABELS, current=1, data=TF_SEG_LABELS)
 
+    right_form.addRow(labeled("期間指定"), custom_window_box)
     right_form.addRow(labeled("開始日"), start_date)
     right_form.addRow(labeled("終了日"), end_date)
     right_form.addRow(labeled("タイムフレーム"), tf_seg)
@@ -363,11 +363,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             text = text.rstrip("0").rstrip(".")
         return text
 
-    def parse_qdate(value: str, fallback: str) -> QDate:
+    def parse_qdate(value: str, fallback: QDate) -> QDate:
         parsed = QDate.fromString(value, "yyyy-MM-dd")
         if parsed.isValid():
             return parsed
-        return QDate.fromString(fallback, "yyyy-MM-dd")
+        return fallback
 
     def tone_for(value: float) -> str | None:
         if value > 0:
@@ -470,13 +470,13 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         start_date.setDate(
             parse_qdate(
                 app_state.config.backtest.start_date or app_state.config.data.start_date,
-                app_state.config.data.start_date,
+                default_popup_qdate("start"),
             )
         )
         end_date.setDate(
             parse_qdate(
                 app_state.config.backtest.end_date or app_state.config.data.end_date,
-                app_state.config.data.end_date,
+                default_popup_qdate("end"),
             )
         )
         try:
@@ -597,13 +597,13 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             research_btn.setToolTip(unsupported_tooltip)
 
     def update_window_enabled() -> None:
-        enabled = not page._busy
+        enabled = not page._busy and custom_window_box.isChecked()
         start_date.setEnabled(enabled)
         end_date.setEnabled(enabled)
         tooltip = (
             "期間指定を ON にすると、この日付範囲でバックテストします。"
             if custom_window_box.isChecked()
-            else "いまは未使用ですが、ON にするとこの日付範囲を使います。"
+            else "いまは未使用です。期間指定を ON にすると、この日付を選べます。"
         )
         start_date.setToolTip(tooltip)
         end_date.setToolTip(tooltip)
