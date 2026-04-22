@@ -70,18 +70,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     header_text.setSpacing(2)
     title = QLabel("バックテスト")
     title.setProperty("role", "h1")
-    subtitle = QLabel("戦略・期間・ML 設定を選び、単発バックテストや ML 学習、研究パイプラインを実行できます。")
+    subtitle = QLabel("バックテスト設定で単発検証を行い、別カードから ML モデル学習と研究パイプラインを実行できます。")
     subtitle.setProperty("role", "muted")
     subtitle.setWordWrap(True)
     header_text.addWidget(title)
     header_text.addWidget(subtitle)
     header.addLayout(header_text, 1)
-    reload_cfg_btn = QPushButton("前回設定を読込")
-    reload_cfg_btn.setProperty("variant", "ghost")
-    run_button = QPushButton("バックテスト実行")
-    run_button.setProperty("variant", "primary")
-    header.addWidget(reload_cfg_btn)
-    header.addWidget(run_button)
     layout.addLayout(header)
 
     def labeled(label_text: str, hint_text: str = "") -> QWidget:
@@ -107,13 +101,31 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         if index >= 0:
             combo.setCurrentIndex(index)
 
-    # ---- Config card (grid-2) ----
-    config_hint = QLabel("未チェック時はデータ同期と同じ期間で検証")
-    config_hint.setProperty("role", "muted2")
-    config_card = Card(title="実行設定", header_right=config_hint)
+    # ---- Backtest settings card (grid-2) ----
+    reload_cfg_btn = QPushButton("前回設定を読込")
+    reload_cfg_btn.setProperty("variant", "ghost")
+    run_button = QPushButton("バックテスト実行")
+    run_button.setProperty("variant", "primary")
+    config_tools = QWidget()
+    config_tools_layout = QHBoxLayout(config_tools)
+    config_tools_layout.setContentsMargins(0, 0, 0, 0)
+    config_tools_layout.setSpacing(8)
+    config_tools_layout.addWidget(reload_cfg_btn)
+    config_tools_layout.addWidget(run_button)
+    config_card = Card(title="バックテスト設定", header_right=config_tools)
 
     config_body = QWidget()
-    cols = QHBoxLayout(config_body)
+    config_body_layout = QVBoxLayout(config_body)
+    config_body_layout.setContentsMargins(0, 0, 0, 0)
+    config_body_layout.setSpacing(12)
+    config_hint = QLabel(
+        "ここで設定した戦略・期間・ML 参加フィルタは、"
+        "「バックテスト実行」を押したときだけ使います。未チェック時の期間はデータ同期と同じです。"
+    )
+    config_hint.setProperty("role", "muted2")
+    config_hint.setWordWrap(True)
+    config_body_layout.addWidget(config_hint)
+    cols = QHBoxLayout()
     cols.setContentsMargins(0, 0, 0, 0)
     cols.setSpacing(16)
 
@@ -136,11 +148,28 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     starting_cash_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     custom_window_box = QCheckBox("同期期間とは別にバックテスト期間を指定する")
+    ml_enabled_box = QCheckBox("ML 参加フィルタを有効化する")
+    ml_mode_combo = QComboBox()
+    for key, label in ML_MODE_CHOICES:
+        ml_mode_combo.addItem(label, key)
+    model_select_combo = QComboBox()
+    ml_mode_hint = QLabel()
+    ml_mode_hint.setProperty("role", "muted")
+    ml_mode_hint.setWordWrap(True)
+    ml_mode_hint.setMinimumHeight(72)
+    ml_mode_hint.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+    model_status_label = QLabel("-")
+    model_status_label.setProperty("role", "detail-value")
+    model_status_label.setWordWrap(True)
+    model_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
     left_form.addRow(labeled("戦略", "実行に使う売買ロジック"), strategy_combo)
     left_form.addRow(labeled("戦略説明"), strategy_hint)
     left_form.addRow(labeled("初期資産", "JPY 基準"), starting_cash_input)
     left_form.addRow(labeled("期間指定"), custom_window_box)
+    left_form.addRow(labeled("ML 参加フィルタ"), ml_enabled_box)
+    left_form.addRow(labeled("ML の使い方"), ml_mode_combo)
+    left_form.addRow(labeled("使用モデル"), model_select_combo)
 
     right_form = QFormLayout()
     right_form.setHorizontalSpacing(12)
@@ -154,6 +183,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     right_form.addRow(labeled("開始日"), start_date)
     right_form.addRow(labeled("終了日"), end_date)
     right_form.addRow(labeled("タイムフレーム"), tf_seg)
+    right_form.addRow(labeled("バックテスト用 ML 説明"), ml_mode_hint)
+    right_form.addRow(labeled("バックテストでの ML 状態"), model_status_label)
 
     left_wrap = QWidget()
     left_wrap.setLayout(left_form)
@@ -161,6 +192,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     right_wrap.setLayout(right_form)
     cols.addWidget(left_wrap, 1)
     cols.addWidget(right_wrap, 1)
+    config_body_layout.addLayout(cols)
     config_card.addBodyWidget(config_body)
     layout.addWidget(config_card)
 
@@ -173,7 +205,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     mt = QHBoxLayout(ml_tools)
     mt.setContentsMargins(0, 0, 0, 0)
     mt.setSpacing(8)
-    ml_hint = QLabel("バックテスト本体とは別に、ML 学習と research_run をここから操作します。")
+    ml_hint = QLabel("ここでは保存モデルの更新と研究レポート生成を行います。バックテスト用の ML 設定とは独立しています。")
     ml_hint.setProperty("role", "muted2")
     ml_hint.setWordWrap(True)
     mt.addWidget(ml_hint)
@@ -186,26 +218,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     ml_cols = QHBoxLayout(ml_body)
     ml_cols.setContentsMargins(0, 0, 0, 0)
     ml_cols.setSpacing(16)
-    ml_left = QFormLayout()
-    ml_left.setHorizontalSpacing(12)
-    ml_left.setVerticalSpacing(10)
-    ml_left.setLabelAlignment(Qt.AlignLeft)
-
-    ml_enabled_box = QCheckBox("ML 参加フィルタを有効化する")
-    ml_mode_combo = QComboBox()
-    for key, label in ML_MODE_CHOICES:
-        ml_mode_combo.addItem(label, key)
-    model_select_combo = QComboBox()
     research_seg = SegmentedControl(
         [label for _, label in RESEARCH_MODE_CHOICES],
         current=1,
         data=[key for key, _ in RESEARCH_MODE_CHOICES],
     )
-    ml_mode_hint = QLabel()
-    ml_mode_hint.setProperty("role", "muted")
-    ml_mode_hint.setWordWrap(True)
-    ml_mode_hint.setMinimumHeight(72)
-    ml_mode_hint.setAlignment(Qt.AlignTop | Qt.AlignLeft)
     research_mode_hint = QLabel()
     research_mode_hint.setProperty("role", "muted")
     research_mode_hint.setWordWrap(True)
@@ -216,31 +233,25 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     action_help_label.setWordWrap(True)
     action_help_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
-    ml_left.addRow(labeled("ML 有効化"), ml_enabled_box)
-    ml_left.addRow(labeled("ML の使い方"), ml_mode_combo)
-    ml_left.addRow(labeled("使用モデル"), model_select_combo)
+    ml_left = QFormLayout()
+    ml_left.setHorizontalSpacing(12)
+    ml_left.setVerticalSpacing(10)
+    ml_left.setLabelAlignment(Qt.AlignLeft)
     ml_left.addRow(labeled("Research モード"), research_seg)
-    ml_left.addRow(labeled("ML モード説明"), ml_mode_hint)
-    ml_left.addRow(labeled("Research 説明"), research_mode_hint)
+    ml_left.addRow(labeled("Research の説明"), research_mode_hint)
     ml_left.addRow(labeled("各ボタンの用途"), action_help_label)
 
     ml_right_cell = QWidget()
     mrc = QVBoxLayout(ml_right_cell)
     mrc.setContentsMargins(0, 0, 0, 0)
-    mrc.setSpacing(2)
-    mrc_label = QLabel("モデル状態")
-    mrc_label.setProperty("role", "eyebrow")
-    model_status_label = QLabel("-")
-    model_status_label.setProperty("role", "detail-value")
-    model_status_label.setWordWrap(True)
-    model_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-    mrc.addWidget(mrc_label)
-    mrc.addWidget(model_status_label)
-
+    mrc.setSpacing(6)
+    task_title = QLabel("処理状態")
+    task_title.setProperty("role", "eyebrow")
     task_status_label = QLabel("まだバックテスト / ML 学習 / 研究パイプラインは実行していません。")
     task_status_label.setProperty("role", "muted")
     task_status_label.setWordWrap(True)
     task_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    mrc.addWidget(task_title)
     mrc.addWidget(task_status_label)
     mrc.addStretch(1)
 
@@ -506,7 +517,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         selected_mode = selected_ml_mode()
         if not supports_fx_ml_research():
             model_status_label.setText(
-                "現在の戦略では ML 参加フィルタを使いません。\n"
+                "現在の戦略ではバックテスト用 ML 参加フィルタを使いません。\n"
                 "ML モデル学習 / 研究パイプラインを使う場合は、戦略を「FX ブレイクアウト押し目」に切り替えてください。"
             )
             ml_mode_hint.setText("この戦略では ML モード設定は未使用です。")
@@ -518,10 +529,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         elif selected_mode == "rule_only":
             selected_model_line = "使用モデル: ルールのみのため保存済みモデルは使いません。"
         elif selected_mode == "train_from_scratch":
-            selected_model_line = "使用モデル: 今回のバックテスト用にその場で学習した一時モデルを使います。"
+            selected_model_line = "使用モデル: 今回のバックテスト専用に、その場で学習した一時モデルを使います。"
         elif selected_mode == "walk_forward_train":
-            selected_model_line = "使用モデル: 各検証窓で学習した一時モデルを順番に使います。"
+            selected_model_line = "使用モデル: 各検証窓ごとに学習した一時モデルを順番に使います。"
         lines = [
+            "この欄はバックテスト実行時の ML 参加フィルタだけを説明します。",
             f"ML スイッチ: {'有効' if selected_enabled else '無効'}",
             f"このバックテストで ML を使う: {'はい' if applies_ml else 'いいえ'}",
             f"ML モード: {ml_mode_label(selected_mode)}",
@@ -539,25 +551,27 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def update_action_help() -> None:
         lines = [
+            "バックテスト設定カードの「ML 参加フィルタ / ML の使い方 / 使用モデル」は、バックテスト実行時だけ使います。",
             "バックテスト実行: 現在の設定で 1 回だけ検証し、取引結果を確認します。",
             "  バックテスト実行では保存済み latest モデルは更新しません。学習が必要なモードでも、その回の検証専用モデルとして扱います。",
-            "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。保存済み latest モデルを更新します。",
-            "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。研究内の学習ステップで latest モデルを更新します。",
+            "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。保存済み latest モデルを更新します。バックテスト用 ML 設定には影響されません。",
+            "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。Research モードだけを見て処理を分け、研究内の学習ステップで latest モデルを更新します。",
         ]
         if not supports_fx_ml_research():
             lines.append("現在の戦略では下2つは使えません。FX ブレイクアウト押し目戦略に切り替えると有効になります。")
         action_help_label.setText("\n".join(lines))
 
     def update_action_availability() -> None:
+        can_edit_backtest_ml = supports_fx_ml_research() and not page._busy
         can_run_ml = supports_fx_ml_research() and not page._busy
-        can_select_saved_model = can_run_ml and uses_saved_model_selection()
+        can_select_saved_model = can_edit_backtest_ml and uses_saved_model_selection()
         unsupported_tooltip = (
             ""
             if supports_fx_ml_research()
             else "ML モデル学習と研究パイプラインは FX ブレイクアウト押し目戦略でのみ利用できます。"
         )
-        ml_enabled_box.setEnabled(can_run_ml)
-        ml_mode_combo.setEnabled(can_run_ml)
+        ml_enabled_box.setEnabled(can_edit_backtest_ml)
+        ml_mode_combo.setEnabled(can_edit_backtest_ml)
         model_select_combo.setEnabled(can_select_saved_model)
         research_seg.setEnabled(can_run_ml)
         ml_enabled_box.setToolTip(unsupported_tooltip)
@@ -730,8 +744,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             task_status_label.setText(f"バックテストでエラーが発生しました。\n{message}")
         log_message(f"{_task_title(active_task)}エラー: {message}")
 
-    def persist_fx_controls() -> None:
+    def persist_shared_controls() -> None:
         app_state.config.strategy.name = selected_strategy_name()
+
+    def persist_backtest_controls() -> None:
+        persist_shared_controls()
         app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled_box.isChecked()
         app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
             ml_mode_combo.currentData() or "rule_only"
@@ -742,6 +759,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             if not selected_model_key or selected_model_key == _LATEST_MODEL_TOKEN
             else Path(selected_model_key)
         )
+
+    def persist_research_controls() -> None:
+        persist_shared_controls()
         app_state.config.research.mode = str(research_seg.currentData() or "standard")
 
     def run_backtest() -> None:
@@ -760,7 +780,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         app_state.config.backtest.use_custom_window = custom_window_box.isChecked()
         app_state.config.backtest.start_date = selected_start
         app_state.config.backtest.end_date = selected_end
-        persist_fx_controls()
+        persist_backtest_controls()
         app_state.save_config()
         run_id_hint.setText("実行中…")
         task_status_label.setText("バックテストを実行中...\n準備しています。")
@@ -787,13 +807,14 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         if not supports_fx_ml_research():
             on_error("ML モデル学習は FX ブレイクアウト押し目戦略でのみ利用できます。")
             return
-        persist_fx_controls()
+        persist_shared_controls()
         app_state.save_config()
         page._active_task = "train"
         set_busy(True)
         task_status_label.setText(
             "ML モデル学習を実行中...\n"
-            "保存済みモデルを更新し、次回の load_pretrained などで使えるようにします。"
+            "保存済みモデルを更新し、次回の load_pretrained などで使えるようにします。\n"
+            "バックテスト設定カードの ML 設定には影響されません。"
         )
         submit_task(app_state.train_fx_model, on_train_finished, on_error, on_progress)
 
@@ -817,14 +838,15 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         if not supports_fx_ml_research():
             on_error("研究パイプラインは FX ブレイクアウト押し目戦略でのみ利用できます。")
             return
-        persist_fx_controls()
+        persist_research_controls()
         app_state.save_config()
         page._active_task = "research"
         set_busy(True)
         selected_mode = str(research_seg.currentData() or "standard")
         task_status_label.setText(
             "研究パイプラインを実行中...\n"
-            f"モード: {research_mode_label(selected_mode)}"
+            f"モード: {research_mode_label(selected_mode)}\n"
+            "バックテスト設定カードの ML 設定ではなく、Research モードに従って進みます。"
         )
         submit_task(
             lambda: app_state.run_research(mode=selected_mode),
