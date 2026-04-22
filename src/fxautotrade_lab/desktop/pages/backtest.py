@@ -125,6 +125,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     config_hint.setProperty("role", "muted2")
     config_hint.setWordWrap(True)
     config_body_layout.addWidget(config_hint)
+    backtest_task_status_label = QLabel("まだバックテストは実行していません。")
+    backtest_task_status_label.setProperty("role", "muted")
+    backtest_task_status_label.setWordWrap(True)
+    backtest_task_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    config_body_layout.addWidget(backtest_task_status_label)
     cols = QHBoxLayout()
     cols.setContentsMargins(0, 0, 0, 0)
     cols.setSpacing(16)
@@ -698,6 +703,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             "research": "研究パイプライン",
         }.get(task_key or "", "処理")
 
+    def _set_backtest_status(text: str) -> None:
+        backtest_task_status_label.setText(text)
+
+    def _set_ml_research_status(text: str) -> None:
+        task_status_label.setText(text)
+
     def on_progress(payload) -> None:  # noqa: ANN001
         if not isinstance(payload, dict):
             return
@@ -717,7 +728,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         lines.append(message)
         if phase == "done":
             lines[0] = f"{title_text}が完了しました。"
-        task_status_label.setText("\n".join(lines))
+        status_text = "\n".join(lines)
+        if active_task == "backtest":
+            _set_backtest_status(status_text)
+        else:
+            _set_ml_research_status(status_text)
 
     def on_finished(result) -> None:  # noqa: ANN001
         _ = result
@@ -726,7 +741,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         tabs_seg.set_current(0)
         stack.setCurrentIndex(0)
         refresh_views()
-        task_status_label.setText("バックテストが完了しました。")
+        _set_backtest_status("バックテストが完了しました。")
         log_message("バックテストが完了しました。")
 
     def on_error(message: str) -> None:
@@ -737,11 +752,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         for tile in metric_tiles.values():
             tile.set_value("-")
         if active_task == "research":
-            task_status_label.setText(f"研究パイプラインでエラーが発生しました。\n{message}")
+            _set_ml_research_status(f"研究パイプラインでエラーが発生しました。\n{message}")
         elif active_task == "train":
-            task_status_label.setText(f"ML モデル学習でエラーが発生しました。\n{message}")
+            _set_ml_research_status(f"ML モデル学習でエラーが発生しました。\n{message}")
         elif active_task == "backtest":
-            task_status_label.setText(f"バックテストでエラーが発生しました。\n{message}")
+            _set_backtest_status(f"バックテストでエラーが発生しました。\n{message}")
         log_message(f"{_task_title(active_task)}エラー: {message}")
 
     def persist_shared_controls() -> None:
@@ -783,7 +798,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         persist_backtest_controls()
         app_state.save_config()
         run_id_hint.setText("実行中…")
-        task_status_label.setText("バックテストを実行中...\n準備しています。")
+        _set_backtest_status("バックテストを実行中...\n準備しています。")
         submit_task(app_state.run_backtest, on_finished, on_error, on_progress)
 
     def on_train_finished(summary) -> None:  # noqa: ANN001
@@ -791,7 +806,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         set_busy(False)
         refresh_controls()
         model_path = summary.get("latest_model_path") or summary.get("model_path") or ""
-        task_status_label.setText(
+        _set_ml_research_status(
             "\n".join(
                 [
                     f"学習完了: {summary.get('trained_rows', 0)} 行",
@@ -811,7 +826,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         app_state.save_config()
         page._active_task = "train"
         set_busy(True)
-        task_status_label.setText(
+        _set_ml_research_status(
             "ML モデル学習を実行中...\n"
             "保存済みモデルを更新し、次回の load_pretrained などで使えるようにします。\n"
             "バックテスト設定カードの ML 設定には影響されません。"
@@ -823,7 +838,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         set_busy(False)
         refresh_controls()
         uplift = summary.get("uplift", {}).get("total_return_delta", 0.0)
-        task_status_label.setText(
+        _set_ml_research_status(
             "\n".join(
                 [
                     f"research_run 完了: {summary.get('run_id', '-')}",
@@ -843,7 +858,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         page._active_task = "research"
         set_busy(True)
         selected_mode = str(research_seg.currentData() or "standard")
-        task_status_label.setText(
+        _set_ml_research_status(
             "研究パイプラインを実行中...\n"
             f"モード: {research_mode_label(selected_mode)}\n"
             "バックテスト設定カードの ML 設定ではなく、Research モードに従って進みます。"
