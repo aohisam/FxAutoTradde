@@ -307,6 +307,9 @@ class BacktestConfig(BaseModel):
     use_custom_window: bool = False
     start_date: str = ""
     end_date: str = ""
+    chunk_enabled: bool = True
+    chunk_window: str = "6m"
+    chunk_warmup: str = "45d"
 
 
 class UIConfig(BaseModel):

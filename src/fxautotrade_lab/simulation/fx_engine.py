@@ -67,6 +67,14 @@ class FxOpenPosition:
     lifecycle_state: str = "LONG_OPEN"
 
 
+@dataclass(slots=True)
+class FxSimulationState:
+    cash: float
+    positions: dict[str, FxOpenPosition]
+    pending_entries: dict[str, PendingEntry]
+    pending_exits: dict[str, PendingExit]
+
+
 class FxQuotePortfolioSimulator:
     """Bid/Ask aware simulator for the FX rule-only strategy."""
 
@@ -172,11 +180,20 @@ class FxQuotePortfolioSimulator:
         self,
         signal_frames: dict[str, pd.DataFrame],
         mode: BrokerMode = BrokerMode.LOCAL_SIM,
-    ) -> dict[str, pd.DataFrame]:
-        cash = float(self.config.risk.starting_cash)
-        positions: dict[str, FxOpenPosition] = {}
-        pending_entries: dict[str, PendingEntry] = {}
-        pending_exits: dict[str, PendingExit] = {}
+        *,
+        initial_state: FxSimulationState | None = None,
+        process_until: pd.Timestamp | None = None,
+    ) -> dict[str, object]:
+        state = initial_state or FxSimulationState(
+            cash=float(self.config.risk.starting_cash),
+            positions={},
+            pending_entries={},
+            pending_exits={},
+        )
+        cash = float(state.cash)
+        positions: dict[str, FxOpenPosition] = dict(state.positions)
+        pending_entries: dict[str, PendingEntry] = dict(state.pending_entries)
+        pending_exits: dict[str, PendingExit] = dict(state.pending_exits)
         order_records: list[dict[str, object]] = []
         fill_records: list[dict[str, object]] = []
         trade_records: list[dict[str, object]] = []
@@ -192,6 +209,8 @@ class FxQuotePortfolioSimulator:
             all_timestamps.update(working.index.tolist())
 
         for timestamp in sorted(all_timestamps):
+            if process_until is not None and timestamp >= process_until:
+                break
             prices: dict[str, float] = {}
             for symbol, frame in prepared.items():
                 if timestamp in frame.index:
@@ -355,6 +374,12 @@ class FxQuotePortfolioSimulator:
             "fills": pd.DataFrame(fill_records),
             "trades": pd.DataFrame(trade_records),
             "positions": pd.DataFrame(position_rows),
+            "state": FxSimulationState(
+                cash=cash,
+                positions=positions,
+                pending_entries=pending_entries,
+                pending_exits=pending_exits,
+            ),
         }
 
     def _entry_quantity(

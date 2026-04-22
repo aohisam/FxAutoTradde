@@ -401,7 +401,12 @@ class MarketDataService:
         normalized_symbol = normalize_fx_symbol(symbol)
         cache_path = self.cache.path_for(normalized_symbol, timeframe)
         start_ts, end_ts = self._requested_window(start, end)
-        cached = self.cache.load(normalized_symbol, timeframe)
+        cached = self.cache.load_window(
+            normalized_symbol,
+            timeframe,
+            start=start_ts,
+            end=end_ts,
+        )
         if cached is None or cached.empty:
             return MarketDataFrameLoad(
                 frame=self._empty_frame(start_ts),
@@ -409,9 +414,8 @@ class MarketDataService:
                 cache_path=cache_path,
                 refreshed=False,
             )
-        selection = self._slice_frame(cached, start_ts, end_ts)
         return MarketDataFrameLoad(
-            frame=selection,
+            frame=cached,
             source="csv_cache",
             cache_path=cache_path,
             refreshed=False,

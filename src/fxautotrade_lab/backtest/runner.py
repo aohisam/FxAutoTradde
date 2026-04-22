@@ -59,6 +59,7 @@ class BacktestRunner:
                 self.env,
                 backtest_start=backtest_start,
                 backtest_end=backtest_end,
+                persist_ml_artifacts=False,
                 progress_callback=progress_callback,
             )
         _emit_progress(

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.data.quality import validate_bar_frame
@@ -55,14 +56,45 @@ class ParquetBarCache:
         if not path.exists():
             return None
         frame = pd.read_parquet(path)
-        frame.index = pd.DatetimeIndex(frame.index)
-        return validate_bar_frame(frame)
+        return self._normalize_loaded_frame(frame)
+
+    def load_window(
+        self,
+        symbol: str,
+        timeframe: TimeFrame,
+        *,
+        start: pd.Timestamp,
+        end: pd.Timestamp,
+    ) -> pd.DataFrame | None:
+        path = self._path_for(symbol, timeframe)
+        if not path.exists():
+            return None
+        if self._supports_timestamp_filter(path):
+            frame = pd.read_parquet(
+                path,
+                filters=[
+                    ("timestamp", ">=", start),
+                    ("timestamp", "<", end),
+                ],
+            )
+            return self._normalize_loaded_frame(frame)
+        frame = self.load(symbol, timeframe)
+        if frame is None:
+            return None
+        try:
+            self.save(symbol, timeframe, frame)
+        except Exception:
+            pass
+        selection = frame.loc[(frame.index >= start) & (frame.index < end)]
+        return selection.copy()
 
     def save(self, symbol: str, timeframe: TimeFrame, frame: pd.DataFrame) -> Path:
         frame = validate_bar_frame(frame)
         path = self._path_for(symbol, timeframe)
         path.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_parquet(path)
+        payload = frame.copy()
+        payload["timestamp"] = frame.index
+        payload.to_parquet(path)
         return path
 
     def upsert(self, symbol: str, timeframe: TimeFrame, frame: pd.DataFrame) -> Path:
@@ -211,3 +243,22 @@ class ParquetBarCache:
             {"start": start.isoformat(), "end": end.isoformat()}
             for start, end in self._merge_ranges(ranges)
         ]
+
+    def _normalize_loaded_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        working = frame.copy()
+        if "timestamp" in working.columns:
+            timestamp = pd.to_datetime(working.pop("timestamp"), errors="coerce")
+            index = pd.DatetimeIndex(timestamp)
+        else:
+            index = pd.DatetimeIndex(working.index)
+        if index.tz is None:
+            index = index.tz_localize("Asia/Tokyo")
+        working.index = index
+        return validate_bar_frame(working)
+
+    def _supports_timestamp_filter(self, path: Path) -> bool:
+        try:
+            schema = pq.read_schema(path)
+        except Exception:
+            return False
+        return "timestamp" in schema.names

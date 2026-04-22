@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 TF_SEG_LABELS = ["5m", "15m", "1h", "4h"]
+_LATEST_MODEL_TOKEN = "__LATEST__"
 
 
 def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
@@ -192,6 +195,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     ml_mode_combo = QComboBox()
     for key, label in ML_MODE_CHOICES:
         ml_mode_combo.addItem(label, key)
+    model_select_combo = QComboBox()
     research_seg = SegmentedControl(
         [label for _, label in RESEARCH_MODE_CHOICES],
         current=1,
@@ -214,6 +218,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     ml_left.addRow(labeled("ML 有効化"), ml_enabled_box)
     ml_left.addRow(labeled("ML の使い方"), ml_mode_combo)
+    ml_left.addRow(labeled("使用モデル"), model_select_combo)
     ml_left.addRow(labeled("Research モード"), research_seg)
     ml_left.addRow(labeled("ML モード説明"), ml_mode_hint)
     ml_left.addRow(labeled("Research 説明"), research_mode_hint)
@@ -407,6 +412,42 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     def supports_fx_ml_research() -> bool:
         return selected_strategy_name() == "fx_breakout_pullback"
 
+    def selected_ml_mode() -> str:
+        return str(ml_mode_combo.currentData() or app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
+
+    def uses_saved_model_selection() -> bool:
+        return supports_fx_ml_research() and ml_enabled_box.isChecked() and selected_ml_mode() == "load_pretrained"
+
+    def refresh_model_choices() -> None:
+        status = app_state.model_status()
+        selected_key = str(status.get("selected_model_key") or _LATEST_MODEL_TOKEN)
+        model_select_combo.blockSignals(True)
+        model_select_combo.clear()
+        if not supports_fx_ml_research():
+            model_select_combo.addItem("この戦略では使用しません", "")
+        elif not ml_enabled_box.isChecked():
+            model_select_combo.addItem("ML 無効のため使用しません", "")
+        elif selected_ml_mode() == "rule_only":
+            model_select_combo.addItem("ルールのみのため使用しません", "")
+        elif selected_ml_mode() == "train_from_scratch":
+            model_select_combo.addItem("今回その場で学習したモデルを使います", "")
+        elif selected_ml_mode() == "walk_forward_train":
+            model_select_combo.addItem("各期間でその都度学習したモデルを使います", "")
+        else:
+            available_models = list(status.get("available_models") or [])
+            if not available_models:
+                model_select_combo.addItem("保存済みモデルがありません", _LATEST_MODEL_TOKEN)
+            else:
+                for entry in available_models:
+                    label = str(entry.get("label") or entry.get("path") or "-")
+                    if not bool(entry.get("exists")):
+                        label = f"{label} / 未作成"
+                    model_select_combo.addItem(label, str(entry.get("key") or ""))
+                _set_combo_by_data(model_select_combo, selected_key)
+                if model_select_combo.currentIndex() < 0:
+                    model_select_combo.setCurrentIndex(0)
+        model_select_combo.blockSignals(False)
+
     def refresh_controls() -> None:
         _set_combo_by_data(strategy_combo, app_state.config.strategy.name)
         custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
@@ -435,6 +476,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         except Exception:  # noqa: BLE001
             pass
         update_strategy_status()
+        refresh_model_choices()
         update_model_status()
         update_research_mode_status()
         update_action_help()
@@ -461,7 +503,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     def update_model_status() -> None:
         status = app_state.model_status()
         selected_enabled = ml_enabled_box.isChecked()
-        selected_mode = str(ml_mode_combo.currentData() or status.get("backtest_mode", "-"))
+        selected_mode = selected_ml_mode()
         if not supports_fx_ml_research():
             model_status_label.setText(
                 "現在の戦略では ML 参加フィルタを使いません。\n"
@@ -470,11 +512,21 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             ml_mode_hint.setText("この戦略では ML モード設定は未使用です。")
             return
         applies_ml = selected_enabled and selected_mode != "rule_only"
+        selected_model_line = ""
+        if selected_mode == "load_pretrained":
+            selected_model_line = f"使用する保存済みモデル: {status.get('selected_model_label', '-')}"
+        elif selected_mode == "rule_only":
+            selected_model_line = "使用モデル: ルールのみのため保存済みモデルは使いません。"
+        elif selected_mode == "train_from_scratch":
+            selected_model_line = "使用モデル: 今回のバックテスト用にその場で学習した一時モデルを使います。"
+        elif selected_mode == "walk_forward_train":
+            selected_model_line = "使用モデル: 各検証窓で学習した一時モデルを順番に使います。"
         lines = [
             f"ML スイッチ: {'有効' if selected_enabled else '無効'}",
             f"このバックテストで ML を使う: {'はい' if applies_ml else 'いいえ'}",
             f"ML モード: {ml_mode_label(selected_mode)}",
             ml_mode_description(selected_mode),
+            selected_model_line,
             f"モデル保存先: {status.get('model_path', '-')}",
             f"存在: {'あり' if status.get('exists') else 'なし'}",
         ]
@@ -488,8 +540,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     def update_action_help() -> None:
         lines = [
             "バックテスト実行: 現在の設定で 1 回だけ検証し、取引結果を確認します。",
-            "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。バックテストは走りません。",
-            "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。",
+            "  バックテスト実行では保存済み latest モデルは更新しません。学習が必要なモードでも、その回の検証専用モデルとして扱います。",
+            "ML モデル学習: FX breakout 戦略用の ML フィルタだけを学習して保存します。保存済み latest モデルを更新します。",
+            "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。研究内の学習ステップで latest モデルを更新します。",
         ]
         if not supports_fx_ml_research():
             lines.append("現在の戦略では下2つは使えません。FX ブレイクアウト押し目戦略に切り替えると有効になります。")
@@ -497,6 +550,7 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def update_action_availability() -> None:
         can_run_ml = supports_fx_ml_research() and not page._busy
+        can_select_saved_model = can_run_ml and uses_saved_model_selection()
         unsupported_tooltip = (
             ""
             if supports_fx_ml_research()
@@ -504,9 +558,20 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         )
         ml_enabled_box.setEnabled(can_run_ml)
         ml_mode_combo.setEnabled(can_run_ml)
+        model_select_combo.setEnabled(can_select_saved_model)
         research_seg.setEnabled(can_run_ml)
         ml_enabled_box.setToolTip(unsupported_tooltip)
         ml_mode_combo.setToolTip(unsupported_tooltip)
+        if not supports_fx_ml_research():
+            model_select_combo.setToolTip(unsupported_tooltip)
+        elif not ml_enabled_box.isChecked():
+            model_select_combo.setToolTip("ML 無効のため、保存済みモデルは使いません。")
+        elif selected_ml_mode() == "rule_only":
+            model_select_combo.setToolTip("ルールのみのため、保存済みモデルは使いません。")
+        elif selected_ml_mode() != "load_pretrained":
+            model_select_combo.setToolTip("この ML モードでは保存済みモデルではなく、その場で学習したモデルを使います。")
+        else:
+            model_select_combo.setToolTip("load_pretrained で使う保存済みモデルを選びます。")
         research_seg.setToolTip(unsupported_tooltip)
         if page._busy:
             set_button_enabled(train_btn, False, busy=True)
@@ -671,6 +736,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
             ml_mode_combo.currentData() or "rule_only"
         )
+        selected_model_key = str(model_select_combo.currentData() or "").strip()
+        app_state.config.strategy.fx_breakout_pullback.ml_filter.pretrained_model_path = (
+            None
+            if not selected_model_key or selected_model_key == _LATEST_MODEL_TOKEN
+            else Path(selected_model_key)
+        )
         app_state.config.research.mode = str(research_seg.currentData() or "standard")
 
     def run_backtest() -> None:
@@ -771,12 +842,18 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     train_btn.clicked.connect(run_train)
     research_btn.clicked.connect(run_research)
     custom_window_box.toggled.connect(lambda _checked=None: update_window_enabled())
+    ml_enabled_box.toggled.connect(lambda _checked=None: refresh_model_choices())
     ml_enabled_box.toggled.connect(lambda _checked=None: update_model_status())
+    ml_enabled_box.toggled.connect(lambda _checked=None: update_action_availability())
+    ml_mode_combo.currentIndexChanged.connect(lambda _index=None: refresh_model_choices())
     ml_mode_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
+    ml_mode_combo.currentIndexChanged.connect(lambda _index=None: update_action_availability())
     strategy_combo.currentIndexChanged.connect(lambda _index=None: update_strategy_status())
     strategy_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
     strategy_combo.currentIndexChanged.connect(lambda _index=None: update_action_help())
+    strategy_combo.currentIndexChanged.connect(lambda _index=None: refresh_model_choices())
     strategy_combo.currentIndexChanged.connect(lambda _index=None: update_action_availability())
+    model_select_combo.currentIndexChanged.connect(lambda _index=None: update_model_status())
     research_seg.currentChanged.connect(lambda _index=None: update_research_mode_status())
 
     page.refresh = refresh_page

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from fxautotrade_lab.backtest.chunking import TimeChunk, plan_time_chunks
 from fxautotrade_lab.backtest.metrics import compute_drawdown, compute_metrics
 from fxautotrade_lab.backtest.walk_forward import rolling_walk_forward, split_in_out_sample
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
@@ -26,7 +27,7 @@ from fxautotrade_lab.ml.fx_filter import (
     save_labeled_dataset,
 )
 from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
-from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
+from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator, FxSimulationState
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 
 
@@ -88,6 +89,85 @@ def _slice_window(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -
     return frame.loc[(frame.index >= start) & (frame.index < end)].copy()
 
 
+def _slice_window_with_lookahead(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    base = _slice_window(frame, start, end)
+    lookahead = frame.loc[frame.index >= end].head(1)
+    if lookahead.empty:
+        return base
+    return _concat_dataframes([base, lookahead], sort_index=True)
+
+
+def _concat_dataframes(frames: list[pd.DataFrame], *, sort_index: bool = False) -> pd.DataFrame:
+    non_empty = [frame for frame in frames if frame is not None and not frame.empty]
+    if not non_empty:
+        return pd.DataFrame()
+    combined = pd.concat(non_empty)
+    if sort_index:
+        combined = combined.sort_index()
+        combined = combined.loc[~combined.index.duplicated(keep="last")]
+    return combined
+
+
+def _feature_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestamp) -> list[TimeChunk]:
+    if not config.backtest.chunk_enabled:
+        return [
+            TimeChunk(
+                index=1,
+                total=1,
+                start=start,
+                end=end,
+                warmup_start=start,
+                label=f"{start:%Y-%m-%d}〜{(end - pd.Timedelta(minutes=1)):%Y-%m-%d}",
+            )
+        ]
+    return plan_time_chunks(
+        start,
+        end,
+        chunk_window=config.backtest.chunk_window,
+        warmup_window=config.backtest.chunk_warmup,
+        minimum_start=start,
+    )
+
+
+def _simulation_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestamp) -> list[TimeChunk]:
+    if not config.backtest.chunk_enabled:
+        return [
+            TimeChunk(
+                index=1,
+                total=1,
+                start=start,
+                end=end,
+                warmup_start=start,
+                label=f"{start:%Y-%m-%d}〜{(end - pd.Timedelta(minutes=1)):%Y-%m-%d}",
+            )
+        ]
+    return plan_time_chunks(
+        start,
+        end,
+        chunk_window=config.backtest.chunk_window,
+        warmup_window="0d",
+        minimum_start=start,
+    )
+
+
+def _emit_chunk_progress(
+    progress_callback,
+    *,
+    task: str,
+    chunk: TimeChunk,
+    message_prefix: str,
+    phase: str = "running",
+) -> None:
+    _emit_progress(
+        progress_callback,
+        task=task,
+        current=chunk.index,
+        total=max(chunk.total, 1),
+        message=f"{message_prefix} {chunk.index}/{chunk.total}: {chunk.label}",
+        phase=phase,
+    )
+
+
 def _resolve_model_path(config: AppConfig) -> Path:
     ml_cfg = config.strategy.fx_breakout_pullback.ml_filter
     if ml_cfg.pretrained_model_path is not None:
@@ -127,24 +207,64 @@ def _build_symbol_signals(
     config: AppConfig,
     data_service: MarketDataService,
     *,
-    history_start: str,
-    backtest_end: str,
+    history_start: pd.Timestamp,
+    backtest_end: pd.Timestamp,
+    chart_start: pd.Timestamp | None = None,
+    progress_callback=None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, dict[str, pd.DataFrame]], dict[str, pd.DataFrame]]:
     strategy = FxBreakoutPullbackStrategy(config)
     signal_frames: dict[str, pd.DataFrame] = {}
     chart_frames: dict[str, dict[str, pd.DataFrame]] = {}
     raw_execution_frames: dict[str, pd.DataFrame] = {}
+    chunks = _feature_chunk_plan(config, history_start, backtest_end)
+    chart_window_start = chart_start or history_start
+    total_symbol_chunks = max(len(config.watchlist.symbols) * max(len(chunks), 1), 1)
+    progress_index = 0
     for symbol in config.watchlist.symbols:
-        frames = data_service.load_symbol_frames(symbol, start=history_start, end=backtest_end)
-        feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False)
-        signals = strategy.generate_signal_frame(feature_set.execution_frame)
-        signal_frames[symbol] = signals
-        raw_execution_frames[symbol] = feature_set.execution_frame
-        chart_frames[symbol] = {
-            config.strategy.fx_breakout_pullback.execution_timeframe.value: signals.copy(),
-            config.strategy.fx_breakout_pullback.signal_timeframe.value: feature_set.signal_frame.copy(),
-            config.strategy.fx_breakout_pullback.trend_timeframe.value: feature_set.trend_frame.copy(),
-        }
+        signal_parts: list[pd.DataFrame] = []
+        execution_parts: list[pd.DataFrame] = []
+        signal_chart_parts: list[pd.DataFrame] = []
+        trend_chart_parts: list[pd.DataFrame] = []
+        for chunk in chunks:
+            progress_index += 1
+            _emit_progress(
+                progress_callback,
+                task="signals",
+                current=progress_index,
+                total=total_symbol_chunks,
+                message=f"{symbol} のシグナル候補を chunk {chunk.index}/{chunk.total} で構築しています。",
+            )
+            frames = data_service.load_symbol_frames(
+                symbol,
+                start=chunk.warmup_start.isoformat(),
+                end=chunk.end.isoformat(),
+            )
+            feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False)
+            signals = strategy.generate_signal_frame(feature_set.execution_frame)
+            signal_parts.append(_slice_window(signals, chunk.start, chunk.end))
+            execution_parts.append(_slice_window(feature_set.execution_frame, chunk.start, chunk.end))
+            chart_slice_start = max(chunk.start, chart_window_start)
+            if chart_slice_start < chunk.end:
+                signal_chart_parts.append(_slice_window(feature_set.signal_frame, chart_slice_start, chunk.end))
+                trend_chart_parts.append(_slice_window(feature_set.trend_frame, chart_slice_start, chunk.end))
+        signal_frames[symbol] = _concat_dataframes(signal_parts, sort_index=True)
+        raw_execution_frames[symbol] = _concat_dataframes(execution_parts, sort_index=True)
+        if chart_start is not None:
+            chart_frames[symbol] = {
+                config.strategy.fx_breakout_pullback.execution_timeframe.value: _slice_window(
+                    signal_frames[symbol],
+                    chart_window_start,
+                    backtest_end,
+                ),
+                config.strategy.fx_breakout_pullback.signal_timeframe.value: _concat_dataframes(
+                    signal_chart_parts,
+                    sort_index=True,
+                ),
+                config.strategy.fx_breakout_pullback.trend_timeframe.value: _concat_dataframes(
+                    trend_chart_parts,
+                    sort_index=True,
+                ),
+            }
     return signal_frames, chart_frames, raw_execution_frames
 
 
@@ -167,6 +287,55 @@ def _benchmark_curve(
         },
         index=equity_curve.index,
     )
+
+
+def _run_fx_simulation(
+    config: AppConfig,
+    signal_frames: dict[str, pd.DataFrame],
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    progress_callback=None,
+    progress_message_prefix: str = "約定シミュレーションを実行しています。",
+) -> dict[str, pd.DataFrame]:
+    simulator = FxQuotePortfolioSimulator(config)
+    chunks = _simulation_chunk_plan(config, start, end)
+    state: FxSimulationState | None = None
+    equity_parts: list[pd.DataFrame] = []
+    order_parts: list[pd.DataFrame] = []
+    fill_parts: list[pd.DataFrame] = []
+    trade_parts: list[pd.DataFrame] = []
+    position_parts: list[pd.DataFrame] = []
+    for chunk in chunks:
+        _emit_chunk_progress(
+            progress_callback,
+            task="backtest_chunk",
+            chunk=chunk,
+            message_prefix=progress_message_prefix,
+        )
+        chunk_frames = {
+            symbol: _slice_window_with_lookahead(frame, chunk.start, chunk.end)
+            for symbol, frame in signal_frames.items()
+        }
+        outputs = simulator.run(
+            chunk_frames,
+            mode=config.broker.mode,
+            initial_state=state,
+            process_until=chunk.end,
+        )
+        state = outputs.get("state", state)
+        equity_parts.append(outputs.get("equity_curve", pd.DataFrame()))
+        order_parts.append(outputs.get("orders", pd.DataFrame()))
+        fill_parts.append(outputs.get("fills", pd.DataFrame()))
+        trade_parts.append(outputs.get("trades", pd.DataFrame()))
+        position_parts.append(outputs.get("positions", pd.DataFrame()))
+    return {
+        "equity_curve": _concat_dataframes(equity_parts, sort_index=True),
+        "orders": _concat_dataframes(order_parts),
+        "fills": _concat_dataframes(fill_parts),
+        "trades": _concat_dataframes(trade_parts),
+        "positions": _concat_dataframes(position_parts),
+    }
 
 
 def _train_model_from_history(
@@ -196,7 +365,14 @@ def _train_model_from_history(
         total=4,
         message="ラベル付きデータを構築しています。",
     )
-    baseline_outputs = FxQuotePortfolioSimulator(config).run(training_slices)
+    baseline_outputs = _run_fx_simulation(
+        config,
+        training_slices,
+        start=train_start,
+        end=train_end,
+        progress_callback=progress_callback,
+        progress_message_prefix="学習用シミュレーションを chunk で実行しています。",
+    )
     datasets = [
         build_labeled_dataset(frame, baseline_outputs["trades"], config, require_exit_before=train_end)
         for frame in training_slices.values()
@@ -266,6 +442,7 @@ def _apply_walk_forward_filter(
             train_start=train_start,
             train_end=window_start,
             persist_artifacts=False,
+            progress_callback=progress_callback,
         )
         latest_model = model
         latest_dataset = dataset
@@ -331,8 +508,10 @@ def run_fx_backtest(
     signal_frames, chart_frames, _ = _build_symbol_signals(
         config,
         data_service,
-        history_start=history_start.isoformat(),
-        backtest_end=requested_end.isoformat(),
+        history_start=history_start,
+        backtest_end=requested_end,
+        chart_start=requested_start,
+        progress_callback=progress_callback,
     )
 
     active_frames: dict[str, pd.DataFrame]
@@ -432,7 +611,14 @@ def run_fx_backtest(
         total=5,
         message="約定シミュレーションを実行しています。",
     )
-    sim_outputs = FxQuotePortfolioSimulator(config).run(active_frames, mode=config.broker.mode)
+    sim_outputs = _run_fx_simulation(
+        config,
+        active_frames,
+        start=requested_start,
+        end=requested_end,
+        progress_callback=progress_callback,
+        progress_message_prefix="約定シミュレーションを chunk で実行しています。",
+    )
     equity_curve = sim_outputs["equity_curve"]
     if not equity_curve.empty:
         equity_curve["drawdown"] = compute_drawdown(equity_curve["equity"])
@@ -529,8 +715,10 @@ def train_fx_filter_model_run(
     signal_frames, _, _ = _build_symbol_signals(
         config,
         data_service,
-        history_start=history_start.isoformat(),
-        backtest_end=train_end.isoformat(),
+        history_start=history_start,
+        backtest_end=train_end,
+        chart_start=None,
+        progress_callback=progress_callback,
     )
     model, dataset, paths = _train_model_from_history(
         signal_frames,

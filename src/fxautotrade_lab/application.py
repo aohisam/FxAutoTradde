@@ -101,6 +101,35 @@ def _resolve_timeframe(value: TimeFrame | str) -> TimeFrame:
         raise ValueError(f"未対応の時間足です: {normalized}") from None
 
 
+def _saved_fx_model_entries(config: AppConfig) -> list[dict[str, object]]:
+    ml_cfg = config.strategy.fx_breakout_pullback.ml_filter
+    model_dir = ml_cfg.model_dir
+    latest_path = model_dir / ml_cfg.latest_model_alias
+    entries: list[dict[str, object]] = [
+        {
+            "key": "__LATEST__",
+            "label": "最新モデル (latest_model.json)",
+            "path": str(latest_path),
+            "exists": latest_path.exists(),
+            "is_latest": True,
+        }
+    ]
+    if not model_dir.exists():
+        return entries
+    for path in sorted(model_dir.glob("fx_filter_*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+        entries.append(
+            {
+                "key": str(path),
+                "label": f"{modified_at} / {path.name}",
+                "path": str(path),
+                "exists": True,
+                "is_latest": False,
+            }
+        )
+    return entries
+
+
 @dataclass(slots=True)
 class LabApplication:
     config_path: Path | None = None
@@ -196,12 +225,20 @@ class LabApplication:
 
     def model_status(self) -> dict[str, object]:
         ml_cfg = self.config.strategy.fx_breakout_pullback.ml_filter
-        model_path = ml_cfg.pretrained_model_path or (ml_cfg.model_dir / ml_cfg.latest_model_alias)
+        selected_key = "__LATEST__" if ml_cfg.pretrained_model_path is None else str(ml_cfg.pretrained_model_path)
+        available_models = _saved_fx_model_entries(self.config)
+        selected_entry = next((entry for entry in available_models if entry["key"] == selected_key), None)
+        model_path = Path(str(selected_entry["path"])) if selected_entry is not None else (
+            ml_cfg.pretrained_model_path or (ml_cfg.model_dir / ml_cfg.latest_model_alias)
+        )
         return {
             "enabled": ml_cfg.enabled,
             "backtest_mode": ml_cfg.backtest_mode,
             "model_path": str(model_path),
             "exists": model_path.exists(),
+            "selected_model_key": selected_key,
+            "selected_model_label": str(selected_entry["label"]) if selected_entry is not None else str(model_path.name),
+            "available_models": available_models,
         }
 
     def run_research(self, *, mode: str | None = None, progress_callback=None) -> dict[str, object]:

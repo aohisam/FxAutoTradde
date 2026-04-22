@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 from fxautotrade_lab.application import LabApplication
+from fxautotrade_lab.backtest.runner import BacktestRunner
 from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
@@ -159,7 +160,8 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
         save_calls.append(len(dataset.index))
         return {"model_path": "", "latest_model_path": "", "dataset_path": "labels.parquet"}
 
-    def fake_sim_run(self, signal_frames, mode=BrokerMode.LOCAL_SIM):
+    def fake_sim_run(self, signal_frames, mode=BrokerMode.LOCAL_SIM, **kwargs):
+        _ = kwargs
         ordered = next(iter(signal_frames.values())).index[-10:]
         equity = pd.DataFrame(
             {
@@ -234,6 +236,60 @@ def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(tmp
     )
 
     assert calls == [False]
+
+
+def test_backtest_runner_does_not_persist_ml_artifacts(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    calls: list[bool] = []
+
+    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+        calls.append(persist_ml_artifacts)
+        return SimpleNamespace(
+            metrics={"total_return": 0.0},
+            output_dir=str(tmp_path / "variant"),
+            trades=pd.DataFrame(),
+            signals=pd.DataFrame(),
+            equity_curve=pd.DataFrame(),
+            drawdown_curve=pd.DataFrame(),
+            orders=pd.DataFrame(),
+            fills=pd.DataFrame(),
+            positions=pd.DataFrame(),
+            benchmark_curve=None,
+            in_sample_metrics={},
+            out_of_sample_metrics={},
+            walk_forward=[],
+            chart_frames={},
+            run_id="unit",
+        )
+
+    monkeypatch.setattr("fxautotrade_lab.backtest.runner.run_fx_backtest", fake_run_fx_backtest)
+
+    BacktestRunner(config, EnvironmentConfig()).run()
+
+    assert calls == [False]
+
+
+def test_lab_application_model_status_lists_available_models(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    model_dir = config.strategy.fx_breakout_pullback.ml_filter.model_dir
+    model_dir.mkdir(parents=True, exist_ok=True)
+    latest = model_dir / "latest_model.json"
+    latest.write_text("{}", encoding="utf-8")
+    older = model_dir / "fx_filter_20260422_204906.json"
+    older.write_text("{}", encoding="utf-8")
+    chosen = model_dir / "fx_filter_20260423_101500.json"
+    chosen.write_text("{}", encoding="utf-8")
+    config.strategy.fx_breakout_pullback.ml_filter.pretrained_model_path = chosen
+
+    app = LabApplication.__new__(LabApplication)
+    app.config = config
+
+    status = LabApplication.model_status(app)
+
+    assert status["model_path"] == str(chosen)
+    assert status["selected_model_key"] == str(chosen)
+    assert any(entry["key"] == "__LATEST__" for entry in status["available_models"])
+    assert any(entry["key"] == str(chosen) for entry in status["available_models"])
 
 
 def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> None:

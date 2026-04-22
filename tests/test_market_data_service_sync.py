@@ -7,6 +7,7 @@ from fxautotrade_lab.config.loader import load_app_config
 from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
+from fxautotrade_lab.data.cache import ParquetBarCache
 from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, summarize_quote_bar_quality, validate_quote_bar_frame
 from fxautotrade_lab.data.service import MarketDataFrameLoad, MarketDataService
 
@@ -79,6 +80,24 @@ def test_sync_refreshes_gmo_cache_and_reports_quote_details(tmp_path, monkeypatc
     assert summary["sync_mode"] == "incremental"
     assert summary["symbols"] == 1
     assert summary["details"][0]["source"] == "gmo_incremental"
+
+
+def test_parquet_cache_load_window_returns_requested_slice(tmp_path) -> None:
+    cache = ParquetBarCache(tmp_path / "cache")
+    frame = _make_quote_frame("USD_JPY", "2026-04-14 09:00:00", 30)
+
+    cache.save("USD_JPY", TimeFrame.MIN_1, frame)
+    sliced = cache.load_window(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        start=pd.Timestamp("2026-04-14 09:10:00", tz=ASIA_TOKYO),
+        end=pd.Timestamp("2026-04-14 09:20:00", tz=ASIA_TOKYO),
+    )
+
+    assert sliced is not None
+    assert len(sliced.index) == 10
+    assert sliced.index.min() == pd.Timestamp("2026-04-14 09:10:00", tz=ASIA_TOKYO)
+    assert sliced.index.max() == pd.Timestamp("2026-04-14 09:19:00", tz=ASIA_TOKYO)
 
 
 def test_sync_reuses_loaded_results_when_watchlist_and_benchmark_overlap(tmp_path, monkeypatch):

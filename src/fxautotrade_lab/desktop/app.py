@@ -173,7 +173,7 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     process_manager.prepare()
     _install_exception_hooks()
     try:
-        from PySide6.QtCore import QCoreApplication, QTimer
+        from PySide6.QtCore import QCoreApplication, QTimer, Qt
         from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:
@@ -205,9 +205,14 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     _boot_log("launch:window_created")
 
     def present_window() -> None:
+        window.setWindowState(window.windowState() & ~Qt.WindowMinimized)
         window.showNormal()
         window.raise_()
         window.activateWindow()
+        app.setActiveWindow(window)
+        handle = window.windowHandle()
+        if handle is not None:
+            handle.requestActivate()
         app.processEvents()
         _boot_log(
             "launch:window_presented "
@@ -217,5 +222,6 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     present_window()
     QTimer.singleShot(0, present_window)
     QTimer.singleShot(250, present_window)
+    QTimer.singleShot(750, present_window)
     _boot_log("launch:exec")
     app.exec()

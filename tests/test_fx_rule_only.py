@@ -552,6 +552,80 @@ def test_fx_engine_conservative_same_bar_stop_after_entry(tmp_path: Path) -> Non
     assert positions.empty
 
 
+def test_fx_engine_chunked_runs_preserve_position_and_pending_exit_state(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    config.risk.slippage_bps = 0.0
+    simulator = FxQuotePortfolioSimulator(config)
+    index = pd.date_range("2026-01-06 09:00:00", periods=4, freq="1min", tz="Asia/Tokyo")
+    frame = pd.DataFrame(
+        {
+            "ask_open": [100.0, 100.8, 101.8, 102.0],
+            "ask_high": [100.2, 101.1, 102.0, 102.1],
+            "ask_low": [99.9, 100.7, 101.7, 101.9],
+            "ask_close": [100.1, 100.95, 101.9, 102.0],
+            "bid_open": [99.96, 100.76, 101.7, 101.9],
+            "bid_high": [100.1, 100.9, 101.9, 102.0],
+            "bid_low": [99.9, 100.6, 101.6, 101.8],
+            "bid_close": [100.0, 100.85, 101.8, 101.95],
+            "open": [99.98, 100.78, 101.75, 101.95],
+            "high": [100.15, 101.0, 101.95, 102.05],
+            "low": [99.9, 100.6, 101.6, 101.8],
+            "close": [100.05, 100.9, 101.85, 101.98],
+            "volume": [220.0, 220.0, 220.0, 220.0],
+            "entry_signal": [True, False, False, False],
+            "entry_trigger_price": [101.0, pd.NA, pd.NA, pd.NA],
+            "initial_stop_price": [99.5, pd.NA, pd.NA, pd.NA],
+            "initial_risk_price": [1.5, pd.NA, pd.NA, pd.NA],
+            "breakout_atr_15m": [0.5, 0.5, 0.5, 0.5],
+            "breakout_level_15m": [100.7, 100.7, 100.7, 100.7],
+            "atr_15m": [0.5, 0.5, 0.5, 0.5],
+            "signal_score": [0.8, 0.0, 0.0, 0.0],
+            "explanation_ja": ["entry", "", "", ""],
+            "entry_context_ok": [True, True, True, True],
+            "exit_signal": [False, True, False, False],
+            "partial_exit_signal": [False, False, False, False],
+        },
+        index=index,
+    )
+
+    full_outputs = simulator.run({"USD_JPY": frame}, mode=BrokerMode.LOCAL_SIM)
+    first_chunk = simulator.run(
+        {"USD_JPY": frame.iloc[:3]},
+        mode=BrokerMode.LOCAL_SIM,
+        process_until=index[2],
+    )
+    second_chunk = simulator.run(
+        {"USD_JPY": frame.iloc[2:]},
+        mode=BrokerMode.LOCAL_SIM,
+        initial_state=first_chunk["state"],
+    )
+
+    chunked_trades = pd.concat([first_chunk["trades"], second_chunk["trades"]], ignore_index=True)
+    chunked_orders = pd.concat([first_chunk["orders"], second_chunk["orders"]], ignore_index=True)
+    chunked_fills = pd.concat([first_chunk["fills"], second_chunk["fills"]], ignore_index=True)
+
+    comparable_columns = [
+        "symbol",
+        "signal_time",
+        "entry_time",
+        "exit_time",
+        "position_side",
+        "quantity",
+        "initial_quantity",
+        "entry_price",
+        "exit_price",
+        "entry_order_side",
+        "exit_order_side",
+        "net_pnl",
+        "exit_reason",
+    ]
+    assert chunked_trades[comparable_columns].to_dict("records") == full_outputs["trades"].reset_index(drop=True)[
+        comparable_columns
+    ].to_dict("records")
+    assert len(chunked_orders.index) == len(full_outputs["orders"].index)
+    assert len(chunked_fills.index) == len(full_outputs["fills"].index)
+
+
 def test_fx_pipeline_spread_filter_excludes_current_bar(tmp_path: Path) -> None:
     config = _make_fx_config(tmp_path)
     index = pd.date_range("2026-01-01 00:00:00", periods=60 * 24 * 3, freq="1min", tz="Asia/Tokyo")
