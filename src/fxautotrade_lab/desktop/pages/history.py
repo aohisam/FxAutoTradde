@@ -75,7 +75,7 @@ def _pnl_value(text: str) -> float:
         return 0.0
 
 
-def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # pragma: no cover - UI helper
+def build_history_page(app_state, submit_task=None, log_message=None, on_go_to_reports=None):  # pragma: no cover - UI helper
     from PySide6.QtCore import QSortFilterProxyModel, Qt, QUrl
     from PySide6.QtGui import QColor, QDesktopServices
     from PySide6.QtWidgets import (
@@ -122,7 +122,7 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
             super().initStyleOption(option, index)
             option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
             option.font.setFamily("JetBrains Mono")
-            text = str(option.text or "").strip()
+            text = str(index.data(Qt.DisplayRole) or "").strip()
             if not text or text == "-":
                 return
             if text.startswith("+"):
@@ -168,6 +168,7 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
     layout = QVBoxLayout(page)
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
+    page._delegates = []  # type: ignore[attr-defined]
 
     # Header
     header = QHBoxLayout()
@@ -235,21 +236,20 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
     log_view.verticalHeader().setVisible(False)
     hdr = log_view.horizontalHeader()
     hdr.setStretchLastSection(True)
-    hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
+    hdr.setSectionResizeMode(QHeaderView.Interactive)
+    log_view.setWordWrap(False)
+    log_view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    log_view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     log_view.setMinimumHeight(360)
     log_view.setModel(proxy)
 
-    log_view.setItemDelegateForColumn(2, SymbolDelegate(log_view))
-    for column in (4, 5, 6, 9):
-        log_view.setItemDelegateForColumn(column, MonoRightDelegate(log_view))
-    log_view.setItemDelegateForColumn(7, PnLDelegate(log_view))
-    log_view.setItemDelegateForColumn(8, PnLDelegate(log_view))
     log_card.addBodyWidget(log_view)
     layout.addWidget(log_card, 1)
 
     # ---- Helpers -----------------------------------------------------------
 
     page._current_df = None  # type: ignore[attr-defined]
+    page._loading = False  # type: ignore[attr-defined]
 
     def _log(message: str) -> None:
         if log_message is not None:
@@ -300,7 +300,43 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
                 if run_combo.itemData(index) == current_data:
                     run_combo.setCurrentIndex(index)
                     break
+        elif run_combo.count() > 1:
+            run_combo.setCurrentIndex(1)
         run_combo.blockSignals(False)
+
+    def _set_loading(is_loading: bool) -> None:
+        page._loading = is_loading
+        run_combo.setEnabled(not is_loading)
+        filter_pair.setEnabled(not is_loading)
+        wl_seg.setEnabled(not is_loading)
+        export_btn.setEnabled(not is_loading)
+        report_btn.setEnabled(not is_loading)
+        subtitle.setText("保存済み実行から、確定した取引と損益を確認できます。" if not is_loading else "取引履歴を読み込んでいます...")
+
+    def _apply_log_table_widths() -> None:
+        width_map = {
+            0: 110,
+            1: 110,
+            2: 90,
+            3: 70,
+            4: 84,
+            5: 92,
+            6: 88,
+            7: 92,
+            8: 72,
+            9: 280,
+        }
+        header = log_view.horizontalHeader()
+        for column, width in width_map.items():
+            if column < log_model.columnCount():
+                header.resizeSection(column, width)
+
+    def _apply_loaded_df(df: pd.DataFrame | None, initial_cash: float) -> None:
+        page._current_df = df
+        log_model.set_frame(_history_frame(df))
+        _apply_log_table_widths()
+        _update_kpis(df, initial_cash)
+        _apply_filters()
 
     def _load_selected_run() -> None:
         try:
@@ -316,13 +352,45 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
                 if trades is not None and not trades.empty:
                     frames.append(trades)
             combined = pd.concat(frames, ignore_index=True) if frames else None
-            page._current_df = combined
+            _apply_loaded_df(combined, initial_cash)
         else:
             row = next((r for r in runs if str(r.get("run_id", "")) == run_id), None)
-            page._current_df = _load_trades_for_run(row) if row else None
-        log_model.set_frame(_history_frame(page._current_df))
-        _update_kpis(page._current_df, initial_cash)
-        _apply_filters()
+            _apply_loaded_df(_load_trades_for_run(row) if row else None, initial_cash)
+
+    def _load_selected_run_async() -> None:
+        if submit_task is None or not page.isVisible():
+            _load_selected_run()
+            return
+        _set_loading(True)
+
+        def _worker():
+            try:
+                runs = app_state.list_runs() or []
+            except Exception:  # noqa: BLE001
+                runs = []
+            run_id = run_combo.currentData()
+            initial_cash = float(getattr(app_state.config.risk, "starting_cash", 0.0) or 0.0)
+            if run_id is None:
+                frames = []
+                for row in runs:
+                    trades = _load_trades_for_run(row)
+                    if trades is not None and not trades.empty:
+                        frames.append(trades)
+                combined = pd.concat(frames, ignore_index=True) if frames else None
+                return combined, initial_cash
+            row = next((r for r in runs if str(r.get("run_id", "")) == run_id), None)
+            return (_load_trades_for_run(row) if row else None, initial_cash)
+
+        def _on_loaded(payload) -> None:  # noqa: ANN001
+            df, initial_cash = payload
+            _set_loading(False)
+            _apply_loaded_df(df, float(initial_cash))
+
+        def _on_error(message: str) -> None:
+            _set_loading(False)
+            _log(f"取引履歴の読込に失敗しました: {message}")
+
+        submit_task(_worker, _on_loaded, _on_error)
 
     def _update_kpis(df: pd.DataFrame | None, initial_cash: float) -> None:
         if df is None or df.empty:
@@ -428,12 +496,14 @@ def build_history_page(app_state, log_message=None, on_go_to_reports=None):  # p
         )
 
     def refresh() -> None:
+        if not page.isVisible():
+            return
         _populate_run_combo()
-        _load_selected_run()
+        _load_selected_run_async()
 
     # ---- Wiring ------------------------------------------------------------
 
-    run_combo.currentIndexChanged.connect(lambda _=None: _load_selected_run())
+    run_combo.currentIndexChanged.connect(lambda _=None: _load_selected_run_async())
     filter_pair.textChanged.connect(lambda _=None: _apply_filters())
     wl_seg.currentChanged.connect(lambda _=None: _apply_filters())
     export_btn.clicked.connect(_export_csv)

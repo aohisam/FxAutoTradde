@@ -104,6 +104,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.thread_pool = QThreadPool.globalInstance()
             self.worker_class = FunctionWorker
             self._active_workers: set[object] = set()
+            self._saved_result_restore_requested = False
 
             app_instance = QApplication.instance()
             if app_instance is not None:
@@ -200,6 +201,7 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 ),
                 "history": build_history_page(
                     self.app_state,
+                    self.submit_background_task,
                     self.log_message,
                     on_go_to_reports=lambda: self.goto_page("reports"),
                 ),
@@ -271,6 +273,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
                 self.log_dock.setVisible(LogDock.is_visible_preference())
                 self._sync_log_toggle_state()
                 self._log_dock_restored = True
+            if not self._saved_result_restore_requested:
+                self._saved_result_restore_requested = True
+                QTimer.singleShot(0, self._restore_latest_saved_backtest)
 
         def _toggle_log_dock(self) -> None:
             self.log_dock.setVisible(not self.log_dock.isVisible())
@@ -278,6 +283,21 @@ def load_main_window_class():  # pragma: no cover - UI helper
 
         def _sync_log_toggle_state(self) -> None:
             self.statusbar_w.set_log_active(self.log_dock.isVisible())
+
+        def _restore_latest_saved_backtest(self) -> None:
+            if self.app_state.last_result is not None:
+                return
+            self.submit_background_task(
+                self.app_state.load_saved_backtest_result,
+                self._after_restore_latest_saved_backtest,
+                lambda msg: self.log_message(f"保存済みバックテスト結果の読込に失敗しました: {msg}"),
+            )
+
+        def _after_restore_latest_saved_backtest(self, result) -> None:  # noqa: ANN001
+            if result is None:
+                return
+            self.log_message(f"保存済みバックテスト結果を読み込みました: {result.run_id}")
+            self.refresh_current_page()
 
         # ---- Top-bar / shell actions --------------------------------------
         def _open_command_palette(self) -> None:

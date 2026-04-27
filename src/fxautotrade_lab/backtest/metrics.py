@@ -22,9 +22,12 @@ def compute_metrics(
     if equity_curve.empty:
         return {}
     equity = equity_curve["equity"]
+    starting_equity = float(equity.iloc[0])
+    ending_equity = float(equity.iloc[-1])
     returns = equity.pct_change(fill_method=None).dropna()
     daily_returns = equity.resample("1D").last().pct_change(fill_method=None).dropna()
-    total_return = float(equity.iloc[-1] / equity.iloc[0] - 1)
+    total_return = float(ending_equity / starting_equity - 1)
+    net_profit = ending_equity - starting_equity
     elapsed_days = max((equity.index[-1] - equity.index[0]).days, 1)
     annualized_return = float((1 + total_return) ** (365 / elapsed_days) - 1)
     daily_std = float(daily_returns.std()) if not daily_returns.empty else 0.0
@@ -58,6 +61,9 @@ def compute_metrics(
         )
     return {
         "total_return": total_return,
+        "net_profit": net_profit,
+        "starting_equity": starting_equity,
+        "ending_equity": ending_equity,
         "annualized_return": annualized_return,
         "sharpe": sharpe,
         "sortino": sortino,

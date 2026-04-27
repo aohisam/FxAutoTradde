@@ -1,6 +1,7 @@
 .DS_Store
 .env
 .pytest_cache/
+.claude/
 .venv/
 .venv_gui/
 __pycache__/
@@ -20,6 +21,7 @@ src/*.egg-info/
 src/**/*.egg-info/
 
 data_cache/
+csv/
 datasets/
 imports/
 models/
@@ -27,3 +29,10 @@ reports/
 research_cache/
 research_runs/
 runtime/
+tick_cache/
+
+scripts/deployment/
+scripts/deployment_bundle/
+scripts/desktop_entry_bundle.py
+scripts/dummy.qml
+scripts/pysidedeploy_*_temp.spec

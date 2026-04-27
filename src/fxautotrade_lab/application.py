@@ -8,30 +8,43 @@ import os
 from pathlib import Path
 import shutil
 import sys
-from time import monotonic
+from time import monotonic, sleep
 
 import pandas as pd
+import yaml
 
 from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.backtest.fx_backtest import train_fx_filter_model_run
 from fxautotrade_lab.backtest.runner import BacktestRunner
+from fxautotrade_lab.backtest.scalping_backtest import execution_config_from_app, run_scalping_pipeline, training_config_from_app
 from fxautotrade_lab.config.loader import load_app_config, load_environment, save_app_config
 from fxautotrade_lab.config.models import AppConfig
-from fxautotrade_lab.core.enums import BrokerMode, OrderSizingMode, TimeFrame
+from fxautotrade_lab.core.constants import ASIA_TOKYO
+from fxautotrade_lab.core.enums import BrokerMode, OrderSizingMode, RunKind, TimeFrame
 from fxautotrade_lab.core.models import BacktestResult
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
+from fxautotrade_lab.data.cache import timeframe_coverage_delta
 from fxautotrade_lab.data.gmo import GmoForexPublicClient
+from fxautotrade_lab.data.gmo_tick_stream import GmoPublicWebSocketTickRecorder
 from fxautotrade_lab.data.jforex import JForexCsvImporter
 from fxautotrade_lab.data.service import MarketDataService
+from fxautotrade_lab.data.ticks import JForexTickCsvImporter, ParquetTickCache
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
+from fxautotrade_lab.features.scalping import pip_size_for_symbol
+from fxautotrade_lab.ml.scalping import load_scalping_model_bundle
 from fxautotrade_lab.persistence.sqlite_store import SQLiteStore
 from fxautotrade_lab.research.pipeline import ResearchPipeline
+from fxautotrade_lab.reporting.signal_snapshot import (
+    load_signal_snapshot_artifacts,
+    write_signal_snapshot_artifacts,
+)
 from fxautotrade_lab.security.keychain import (
     delete_private_gmo_credentials,
     resolve_private_gmo_credentials,
     save_private_gmo_credentials,
 )
+from fxautotrade_lab.simulation.scalping_realtime import ScalpingRealtimePaperEngine
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 from fxautotrade_lab.strategies.registry import create_strategy
 
@@ -62,6 +75,152 @@ _TIMEFRAME_ALIASES: dict[str, TimeFrame] = {
     "1month": TimeFrame.MONTH_1,
     "1mo": TimeFrame.MONTH_1,
 }
+
+_ML_MODE_LABELS: dict[str, str] = {
+    "rule_only": "ルールのみ",
+    "load_pretrained": "学習済みモデルを使う",
+    "train_from_scratch": "その場で再学習して使う",
+    "walk_forward_train": "期間をずらしながら逐次学習する",
+}
+
+_STRATEGY_LABELS: dict[str, str] = {
+    "fx_breakout_pullback": "FX ブレイクアウト押し目",
+    "baseline_trend_pullback": "ベースライン順張り押し目",
+    "multi_timeframe_pattern_scoring": "マルチタイムフレーム総合スコア",
+}
+
+_REPORT_TABLE_FILES: dict[str, str] = {
+    "trades": "trades.csv",
+    "orders": "orders.csv",
+    "fills": "fills.csv",
+    "positions": "positions.csv",
+    "signals": "signal_log.csv",
+}
+
+
+def _safe_yaml_mapping(payload: str | None) -> dict[str, object]:
+    if not payload:
+        return {}
+    try:
+        parsed = yaml.safe_load(payload) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _mapping_get(mapping: dict[str, object], *keys: str) -> object:
+    current: object = mapping
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _load_report_snapshot(output_dir: Path | None) -> dict[str, object]:
+    if output_dir is None:
+        return {}
+    snapshot_path = output_dir / "config_snapshot.yaml"
+    if not snapshot_path.exists():
+        return {}
+    try:
+        return _safe_yaml_mapping(snapshot_path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+
+def _saved_run_period(snapshot: dict[str, object], row: dict[str, object]) -> tuple[str, str]:
+    backtest_cfg = _mapping_get(snapshot, "backtest")
+    data_cfg = _mapping_get(snapshot, "data")
+    backtest = backtest_cfg if isinstance(backtest_cfg, dict) else {}
+    data = data_cfg if isinstance(data_cfg, dict) else {}
+    use_custom_window = bool(backtest.get("use_custom_window"))
+    start = str((backtest if use_custom_window else data).get("start_date") or "") if isinstance(backtest if use_custom_window else data, dict) else ""
+    end = str((backtest if use_custom_window else data).get("end_date") or "") if isinstance(backtest if use_custom_window else data, dict) else ""
+    if not start:
+        start = str(row.get("started_at", ""))[:10]
+    if not end:
+        end = str(row.get("finished_at", ""))[:10]
+    return start, end
+
+
+def _saved_run_starting_cash(snapshot: dict[str, object]) -> float:
+    raw = _mapping_get(snapshot, "risk", "starting_cash")
+    try:
+        return float(raw or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _saved_run_symbols(snapshot: dict[str, object], row: dict[str, object]) -> list[str]:
+    raw = row.get("symbols")
+    if isinstance(raw, list) and raw:
+        return [str(symbol) for symbol in raw]
+    watchlist_cfg = _mapping_get(snapshot, "watchlist")
+    if isinstance(watchlist_cfg, dict):
+        symbols = watchlist_cfg.get("symbols")
+        if isinstance(symbols, list) and symbols:
+            return [str(symbol) for symbol in symbols]
+    return []
+
+
+def _saved_run_ml_details(snapshot: dict[str, object]) -> dict[str, object]:
+    ml_cfg = _mapping_get(snapshot, "strategy", "fx_breakout_pullback", "ml_filter")
+    ml = ml_cfg if isinstance(ml_cfg, dict) else {}
+    enabled = bool(ml.get("enabled", False))
+    mode = str(ml.get("backtest_mode") or "rule_only")
+    pretrained_model_path = str(ml.get("pretrained_model_path") or "").strip()
+    latest_alias = str(ml.get("latest_model_alias") or "latest_model.json")
+    if not enabled or mode == "rule_only":
+        label = "ML未使用"
+    elif mode == "load_pretrained":
+        model_name = Path(pretrained_model_path).name if pretrained_model_path else latest_alias
+        label = f"学習済みモデル: {model_name}"
+    elif mode == "train_from_scratch":
+        label = "今回その場で再学習したモデル"
+    elif mode == "walk_forward_train":
+        label = "各期間でその都度学習したモデル"
+    else:
+        label = f"MLモード: {mode}"
+    return {
+        "enabled": enabled,
+        "mode": mode,
+        "mode_label": _ML_MODE_LABELS.get(mode, mode or "-"),
+        "model_path": pretrained_model_path,
+        "model_label": label,
+    }
+
+
+def _saved_run_label(row: dict[str, object]) -> str:
+    finished_at = str(row.get("finished_at") or "")
+    try:
+        finished_label = pd.Timestamp(finished_at).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001
+        finished_label = finished_at or "-"
+    strategy_name = str(row.get("strategy_name") or "")
+    strategy_label = _STRATEGY_LABELS.get(strategy_name, strategy_name or "-")
+    start = str(row.get("start_date") or "")
+    end = str(row.get("end_date") or "")
+    if start and end:
+        return f"{finished_label} / {strategy_label} / {start} → {end}"
+    return f"{finished_label} / {strategy_label}"
+
+
+def _load_report_frame(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        frame = pd.read_csv(path)
+    except Exception:  # noqa: BLE001
+        return pd.DataFrame()
+    if not frame.empty:
+        first_column = str(frame.columns[0])
+        if first_column.startswith("Unnamed:"):
+            index_series = pd.to_datetime(frame.iloc[:, 0], errors="coerce")
+            if index_series.notna().any():
+                frame = frame.iloc[:, 1:].copy()
+                frame.index = index_series
+    return frame
 
 
 def _emit_progress(
@@ -153,6 +312,10 @@ class LabApplication:
         init=False,
         repr=False,
     )
+    _runs_cache: list[dict[str, object]] | None = field(default=None, init=False, repr=False)
+    _backtest_runs_cache: list[dict[str, object]] | None = field(default=None, init=False, repr=False)
+    _saved_signals_cache: dict[str, pd.DataFrame] = field(default_factory=dict, init=False, repr=False)
+    _saved_signal_snapshot_cache: dict[str, dict[str, object]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.config_path = self._prepare_writable_config_path(self.config_path)
@@ -164,6 +327,10 @@ class LabApplication:
         self.store = SQLiteStore(self.config.persistence.sqlite_path)
         self._invalidate_runtime_cache()
         self._invalidate_chart_cache()
+        self._invalidate_run_listing_cache()
+        self._saved_signals_cache.clear()
+        self._saved_signal_snapshot_cache.clear()
+        self.last_result = None
 
     def save_config(self) -> None:
         if self.config_path is not None:
@@ -199,6 +366,10 @@ class LabApplication:
         self.last_result = BacktestRunner(self.config, self.env).run(progress_callback=progress_callback)
         if self.config.persistence.enabled:
             self.store.save_backtest_result(self.last_result, self.config)
+            self._invalidate_run_listing_cache()
+            self._saved_signals_cache.pop(self.last_result.run_id, None)
+            self._saved_signal_snapshot_cache.pop(self.last_result.run_id, None)
+        self._compact_backtest_result_for_ui()
         _emit_progress(
             progress_callback,
             task="backtest",
@@ -279,6 +450,7 @@ class LabApplication:
                 config=self.config,
                 output_dir=result.output_dir or "",
             )
+            self._invalidate_run_listing_cache()
         return {"result": result, "logs": logs}
 
     def run_realtime_sim(self, max_cycles: int | None = None) -> list:
@@ -295,6 +467,7 @@ class LabApplication:
                 events=events,
                 config=self.config,
             )
+            self._invalidate_run_listing_cache()
         return events
 
     def start_automation(self) -> AutomationController:
@@ -334,6 +507,7 @@ class LabApplication:
                 config=self.config,
                 output_dir=self.last_result.output_dir if self.last_result else "",
             )
+            self._invalidate_run_listing_cache()
 
     def update_watchlist(
         self,
@@ -479,34 +653,28 @@ class LabApplication:
             if cached is not None:
                 return cached
         data_service = MarketDataService(self.config, self.env)
-        loader = data_service.load_runtime_symbol_frames if runtime_mode else data_service.load_symbol_frames
-        symbol_frames = loader(selected_symbol)
-        benchmark_frames = loader(self.config.watchlist.benchmark_symbols[0]) if self.config.watchlist.benchmark_symbols else None
-        sector_frames = loader(self.config.watchlist.sector_symbols[0]) if self.config.watchlist.sector_symbols else None
-        selected_frame = symbol_frames.get(selected_timeframe, pd.DataFrame()).copy()
-        if self.config.strategy.name == FxBreakoutPullbackStrategy.name:
-            fx_feature_set = build_fx_feature_set(
-                symbol=selected_symbol,
-                bars_by_timeframe=symbol_frames,
-                config=self.config,
-                runtime_mode=runtime_mode,
-            )
-            if selected_timeframe == self.config.strategy.fx_breakout_pullback.execution_timeframe:
-                selected_frame = create_strategy(self.config).generate_signal_frame(fx_feature_set.execution_frame)
+        loader = (
+            data_service.load_runtime_symbol_frames
+            if runtime_mode
+            else data_service.load_symbol_frames
+        )
+        start_ts, end_ts = self._chart_dataset_window(selected_timeframe, runtime_mode=runtime_mode)
+        loader_kwargs: dict[str, object] = {
+            "timeframes": [selected_timeframe],
+            "start": start_ts.isoformat(),
+        }
+        if runtime_mode:
+            loader_kwargs["as_of"] = end_ts
         else:
-            feature_set = build_multi_timeframe_feature_set(
-                symbol=selected_symbol,
-                bars_by_timeframe=symbol_frames,
-                benchmark_bars=benchmark_frames,
-                sector_bars=sector_frames,
-                config=self.config,
-            )
-            if selected_timeframe == self.config.strategy.entry_timeframe:
-                signal_frame = create_strategy(self.config).generate_signal_frame(feature_set.entry_frame)
-                for column in feature_set.entry_frame.columns:
-                    if column not in signal_frame.columns:
-                        signal_frame[column] = feature_set.entry_frame[column]
-                selected_frame = signal_frame
+            loader_kwargs["end"] = end_ts.isoformat()
+        try:
+            symbol_frames = loader(selected_symbol, **loader_kwargs)
+        except TypeError as exc:
+            if "unexpected keyword" not in str(exc):
+                raise
+            symbol_frames = loader(selected_symbol)
+        selected_frame = symbol_frames.get(selected_timeframe, pd.DataFrame())
+        selected_frame = self._trim_chart_frame_for_ui(selected_frame)
         fills_frame = pd.DataFrame(runtime_snapshot.get("recent_fills", []))
         payload = {
             "frame": selected_frame,
@@ -544,10 +712,213 @@ class LabApplication:
         return sorted(output_dir.iterdir(), reverse=True)
 
     def list_runs(self) -> list[dict[str, object]]:
-        return self.store.list_runs()
+        if self._runs_cache is None:
+            self._runs_cache = self.store.list_runs()
+        return [dict(row) for row in self._runs_cache]
+
+    def list_backtest_runs(self) -> list[dict[str, object]]:
+        if self._backtest_runs_cache is not None:
+            return [dict(row) for row in self._backtest_runs_cache]
+        rows = [row for row in self.list_runs() if str(row.get("run_kind", "")) == RunKind.BACKTEST.value]
+        enriched: list[dict[str, object]] = []
+        for index, row in enumerate(rows):
+            output_dir_value = str(row.get("output_dir") or "").strip()
+            output_dir = Path(output_dir_value) if output_dir_value else None
+            snapshot = _safe_yaml_mapping(self.store.load_config_snapshot(str(row.get("run_id", "")))) or _load_report_snapshot(output_dir)
+            start_date, end_date = _saved_run_period(snapshot, row)
+            ml_details = _saved_run_ml_details(snapshot)
+            enriched_row = dict(row)
+            enriched_row.update(
+                {
+                    "is_latest": index == 0,
+                    "output_dir_path": output_dir,
+                    "config_snapshot": snapshot,
+                    "strategy_label": _STRATEGY_LABELS.get(str(row.get("strategy_name") or ""), str(row.get("strategy_name") or "-")),
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "starting_cash": _saved_run_starting_cash(snapshot),
+                    "symbols": _saved_run_symbols(snapshot, row),
+                    "ml_enabled": ml_details["enabled"],
+                    "ml_mode": ml_details["mode"],
+                    "ml_mode_label": ml_details["mode_label"],
+                    "ml_model_path": ml_details["model_path"],
+                    "ml_model_label": ml_details["model_label"],
+                }
+            )
+            enriched_row["display_label"] = _saved_run_label(enriched_row)
+            enriched.append(enriched_row)
+        self._backtest_runs_cache = [dict(row) for row in enriched]
+        return [dict(row) for row in self._backtest_runs_cache]
+
+    def load_saved_backtest_result(self, run_id: str | None = None) -> BacktestResult | None:
+        runs = self.list_backtest_runs()
+        if not runs:
+            self.last_result = None
+            return None
+        selected = runs[0] if run_id is None else next((row for row in runs if str(row.get("run_id")) == run_id), None)
+        if selected is None:
+            raise ValueError("指定された保存済みバックテスト結果が見つかりません。")
+        if self.last_result is not None and self.last_result.run_id == str(selected.get("run_id")):
+            return self.last_result
+
+        run_id_value = str(selected.get("run_id") or "")
+        record = self.store.load_run_record(run_id_value) or selected
+        output_dir_value = str(record.get("output_dir") or "").strip()
+        output_dir = Path(output_dir_value) if output_dir_value else None
+        snapshot = _safe_yaml_mapping(str(record.get("config_snapshot_yaml") or "")) or _load_report_snapshot(output_dir)
+        start_date, end_date = _saved_run_period(snapshot, record)
+
+        def _table(table_name: str) -> pd.DataFrame:
+            frame = self.store.load_table(run_id_value, table_name)
+            if frame.empty and output_dir is not None:
+                file_name = _REPORT_TABLE_FILES.get(table_name)
+                if file_name:
+                    return _load_report_frame(output_dir / file_name)
+            return frame
+
+        def _signals_table() -> pd.DataFrame:
+            frame = self.store.load_recent_table(run_id_value, "signals", 300)
+            if frame.empty and output_dir is not None:
+                report_frame = _load_report_frame(output_dir / _REPORT_TABLE_FILES["signals"])
+                if not report_frame.empty:
+                    frame = report_frame.tail(300).reset_index(drop=True)
+            return frame
+
+        equity_curve = _load_report_frame(output_dir / "equity_curve.csv") if output_dir is not None else pd.DataFrame()
+        drawdown_curve = _load_report_frame(output_dir / "drawdown.csv") if output_dir is not None else pd.DataFrame()
+        self.last_result = BacktestResult(
+            run_id=run_id_value,
+            strategy_name=str(record.get("strategy_name") or ""),
+            mode=BrokerMode(str(record.get("mode") or BrokerMode.LOCAL_SIM.value)),
+            symbols=_saved_run_symbols(snapshot, record),
+            backtest_start=start_date,
+            backtest_end=end_date,
+            starting_cash=_saved_run_starting_cash(snapshot),
+            metrics=dict(record.get("metrics") or {}),
+            equity_curve=equity_curve,
+            drawdown_curve=drawdown_curve,
+            trades=_table("trades"),
+            # 起動直後の UI では orders / fills / positions を参照しないため、
+            # 保存済み結果の復元では読み込まずにメインスレッド負荷を下げる。
+            orders=pd.DataFrame(),
+            fills=pd.DataFrame(),
+            positions=pd.DataFrame(),
+            signals=_signals_table(),
+            benchmark_curve=None,
+            in_sample_metrics=dict(record.get("in_sample_metrics") or {}),
+            out_of_sample_metrics=dict(record.get("out_of_sample_metrics") or {}),
+            walk_forward=list(record.get("walk_forward") or []),
+            chart_frames={},
+            output_dir=output_dir_value or None,
+        )
+        self._invalidate_chart_cache()
+        return self.last_result
 
     def load_run_table(self, run_id: str, table: str):
         return self.store.load_table(run_id, table)
+
+    def load_saved_run_signals(self, run_id: str) -> pd.DataFrame:
+        cached = self._saved_signals_cache.get(run_id)
+        if cached is not None:
+            return cached.copy()
+        frame = self.store.load_table(run_id, "signals")
+        if frame.empty:
+            record = self.store.load_run_record(run_id)
+            output_dir_value = str(record.get("output_dir") or "").strip() if record is not None else ""
+            output_dir = Path(output_dir_value) if output_dir_value else None
+            if output_dir is not None:
+                frame = _load_report_frame(output_dir / _REPORT_TABLE_FILES["signals"])
+        self._saved_signals_cache[run_id] = frame.copy()
+        return frame
+
+    def load_saved_run_signal_snapshot(self, run_id: str) -> dict[str, object]:
+        cached = self._saved_signal_snapshot_cache.get(run_id)
+        if cached is not None:
+            snapshot = dict(cached)
+            snapshot["recent_signals"] = cached.get("recent_signals", pd.DataFrame()).copy()
+            snapshot["symbol_frame"] = cached.get("symbol_frame", pd.DataFrame()).copy()
+            return snapshot
+        snapshot: dict[str, object] | None = None
+        record = self.store.load_run_record(run_id)
+        output_dir_value = str(record.get("output_dir") or "").strip() if record is not None else ""
+        output_dir = Path(output_dir_value) if output_dir_value else None
+        if output_dir is not None and output_dir.exists():
+            snapshot = load_signal_snapshot_artifacts(output_dir)
+        if snapshot is None:
+            snapshot = self.store.load_signal_snapshot(run_id, threshold=0.55, recent_limit=300, bins=11, symbol_limit=5)
+            if output_dir is not None and output_dir.exists():
+                try:
+                    write_signal_snapshot_artifacts(output_dir, snapshot)
+                except OSError:
+                    pass
+        self._saved_signal_snapshot_cache[run_id] = {
+            "recent_signals": snapshot.get("recent_signals", pd.DataFrame()).copy(),
+            "summary": dict(snapshot.get("summary") or {}),
+            "histogram": dict(snapshot.get("histogram") or {}),
+            "symbol_frame": snapshot.get("symbol_frame", pd.DataFrame()).copy(),
+        }
+        return {
+            "recent_signals": self._saved_signal_snapshot_cache[run_id]["recent_signals"].copy(),
+            "summary": dict(self._saved_signal_snapshot_cache[run_id]["summary"]),
+            "histogram": dict(self._saved_signal_snapshot_cache[run_id]["histogram"]),
+            "symbol_frame": self._saved_signal_snapshot_cache[run_id]["symbol_frame"].copy(),
+        }
+
+    def _compact_backtest_result_for_ui(self) -> None:
+        if self.last_result is None:
+            return
+        if self.last_result.signals is not None and not self.last_result.signals.empty:
+            self.last_result.signals = self.last_result.signals.tail(300).reset_index(drop=True)
+        if self.last_result.chart_frames:
+            self.last_result.chart_frames = {
+                symbol: {
+                    timeframe: self._trim_chart_frame_for_ui(frame)
+                    for timeframe, frame in frames.items()
+                }
+                for symbol, frames in self.last_result.chart_frames.items()
+            }
+
+    def _chart_dataset_window(
+        self,
+        timeframe: TimeFrame,
+        *,
+        runtime_mode: bool,
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
+        end_ts = (
+            pd.Timestamp.now(tz=ASIA_TOKYO)
+            if runtime_mode
+            else self._coerce_chart_window_timestamp(self.config.data.end_date, is_end=True)
+        )
+        config_start = self._coerce_chart_window_timestamp(
+            self.config.data.start_date,
+            is_end=False,
+        )
+        max_bars = max(500, int(self.config.data.max_bars_per_symbol or 5000))
+        start_ts = end_ts - timeframe_coverage_delta(timeframe) * max_bars
+        return max(config_start, start_ts), end_ts
+
+    def _coerce_chart_window_timestamp(
+        self,
+        value: str | pd.Timestamp,
+        *,
+        is_end: bool,
+    ) -> pd.Timestamp:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize(ASIA_TOKYO)
+        else:
+            timestamp = timestamp.tz_convert(ASIA_TOKYO)
+        if is_end and isinstance(value, str):
+            normalized = value.strip()
+            if "T" not in normalized and ":" not in normalized and " " not in normalized:
+                timestamp += pd.Timedelta(days=1)
+        return timestamp
+
+    def _trim_chart_frame_for_ui(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame is None or frame.empty:
+            return pd.DataFrame() if frame is None else frame.copy()
+        max_rows = max(500, int(self.config.data.max_bars_per_symbol or 5000))
+        return frame.tail(max_rows).copy()
 
     def load_automation_events(self, run_id: str):
         return self.store.load_automation_events(run_id)
@@ -657,6 +1028,166 @@ class LabApplication:
             "cache_paths": result.cache_paths,
         }
 
+    def import_jforex_tick_csv(
+        self,
+        file_path: str,
+        symbol: str | None = None,
+    ) -> dict[str, object]:
+        tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
+        result = JForexTickCsvImporter(tick_cache).import_file(file_path, symbol=symbol)
+        return {
+            "symbol": result.symbol,
+            "source_path": str(result.source_path),
+            "imported_rows": result.imported_rows,
+            "dropped_rows": result.dropped_rows,
+            "duplicate_timestamps": result.duplicate_timestamps,
+            "crossed_quotes": result.crossed_quotes,
+            "start": result.start,
+            "end": result.end,
+            "cache_paths": result.cache_paths,
+            "messages": list(result.messages),
+        }
+
+    def run_scalping_backtest(
+        self,
+        *,
+        tick_file_path: str | None = None,
+        symbol: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        progress_callback=None,
+    ) -> dict[str, object]:
+        normalized_symbol = normalize_fx_symbol(symbol or self.config.watchlist.symbols[0])
+        tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
+        import_summary: dict[str, object] | None = None
+        if tick_file_path:
+            import_summary = self.import_jforex_tick_csv(tick_file_path, normalized_symbol)
+        start_ts, end_ts = self._scalping_window(start=start, end=end)
+        _emit_progress(
+            progress_callback,
+            task="scalping_backtest",
+            current=1,
+            total=4,
+            phase="load_ticks",
+            message="tick データを読み込んでいます。",
+        )
+        ticks = tick_cache.load_window(normalized_symbol, start_ts, end_ts)
+        if ticks.empty:
+            raise RuntimeError(
+                "指定期間の tick キャッシュが空です。"
+                " JForex tick CSV を import-jforex-tick-csv で取り込んでください。"
+            )
+        _emit_progress(
+            progress_callback,
+            task="scalping_backtest",
+            current=2,
+            total=4,
+            phase="train",
+            message="スキャルピング係数を学習しています。",
+        )
+        output_root = self.config.reporting.output_dir / "scalping"
+        result = run_scalping_pipeline(
+            ticks,
+            symbol=normalized_symbol,
+            config=self.config,
+            output_dir=output_root,
+        )
+        _emit_progress(
+            progress_callback,
+            task="scalping_backtest",
+            current=4,
+            total=4,
+            phase="done",
+            message="スキャルピングバックテストが完了しました。",
+        )
+        return {
+            "run_id": result.run_id,
+            "symbol": normalized_symbol,
+            "output_dir": str((output_root / result.run_id) if result.output_dir is not None else ""),
+            "import_summary": import_summary or {},
+            "train_start": result.train_start,
+            "train_end": result.train_end,
+            "test_start": result.test_start,
+            "test_end": result.test_end,
+            "metrics": result.backtest.metrics,
+            "model_summary": result.backtest.model_summary,
+        }
+
+    def run_scalping_realtime_sim(
+        self,
+        *,
+        symbol: str | None = None,
+        max_ticks: int = 120,
+        poll_seconds: float = 1.0,
+    ) -> dict[str, object]:
+        normalized_symbol = normalize_fx_symbol(symbol or self.config.watchlist.symbols[0])
+        scalping_cfg = self.config.strategy.fx_scalping
+        model_path = scalping_cfg.model_dir / scalping_cfg.latest_model_alias
+        if not model_path.exists():
+            raise RuntimeError(
+                "スキャルピング用の学習済みモデルがありません。"
+                " 先に scalping-backtest を実行して係数を作成してください。"
+            )
+        training_config = training_config_from_app(self.config)
+        model_bundle = load_scalping_model_bundle(model_path, training_config)
+        engine = ScalpingRealtimePaperEngine(
+            symbol=normalized_symbol,
+            pip_size=float(scalping_cfg.pip_size or pip_size_for_symbol(normalized_symbol)),
+            model_bundle=model_bundle,
+            training_config=training_config,
+            execution_config=execution_config_from_app(self.config),
+            bar_rule=scalping_cfg.bar_rule,
+        )
+        client = GmoForexPublicClient(self.env)
+        observed_ticks = 0
+        for _ in range(max(1, int(max_ticks))):
+            quotes = client.fetch_ticker_quotes()
+            quote = quotes.get(normalized_symbol)
+            if quote is None:
+                raise RuntimeError(f"GMO ticker に {normalized_symbol} が含まれていません。")
+            engine.on_tick(timestamp=quote.timestamp, bid=quote.bid, ask=quote.ask)
+            observed_ticks += 1
+            if observed_ticks < max_ticks and poll_seconds > 0:
+                sleep(float(poll_seconds))
+        snapshot = engine.snapshot()
+        snapshot["observed_ticks"] = observed_ticks
+        snapshot["mode_note_ja"] = (
+            "GMO public REST ticker をスキャルピング paper engine へ流し込む簡易リアルタイムシミュレーションです。"
+            " 本番運用前は WebSocket ticker 記録で shadow 検証してください。"
+        )
+        return snapshot
+
+    def record_gmo_scalping_ticks(
+        self,
+        *,
+        symbol: str | None = None,
+        max_ticks: int | None = None,
+    ) -> dict[str, object]:
+        normalized_symbol = normalize_fx_symbol(symbol or self.config.watchlist.symbols[0])
+        tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
+        return GmoPublicWebSocketTickRecorder(
+            self.env,
+            tick_cache,
+            symbol=normalized_symbol,
+        ).run(max_ticks=max_ticks)
+
+    def _scalping_window(self, *, start: str | None, end: str | None) -> tuple[pd.Timestamp, pd.Timestamp]:
+        start_value = start or (self.config.backtest.start_date if self.config.backtest.use_custom_window else self.config.data.start_date)
+        end_value = end or (self.config.backtest.end_date if self.config.backtest.use_custom_window else self.config.data.end_date)
+        start_ts = pd.Timestamp(start_value)
+        end_ts = pd.Timestamp(end_value)
+        if start_ts.tzinfo is None:
+            start_ts = start_ts.tz_localize(ASIA_TOKYO)
+        else:
+            start_ts = start_ts.tz_convert(ASIA_TOKYO)
+        if end_ts.tzinfo is None:
+            end_ts = end_ts.tz_localize(ASIA_TOKYO)
+        else:
+            end_ts = end_ts.tz_convert(ASIA_TOKYO)
+        if start_ts >= end_ts:
+            raise ValueError("スキャルピング検証の開始日時は終了日時より前にしてください。")
+        return start_ts, end_ts
+
     def available_gmo_symbols(self) -> list[dict[str, object]]:
         rules = GmoForexPublicClient(self.env).list_symbols()
         return [
@@ -677,6 +1208,10 @@ class LabApplication:
     def _invalidate_chart_cache(self) -> None:
         self._chart_dataset_cache.clear()
         self._chart_dataset_signatures.clear()
+
+    def _invalidate_run_listing_cache(self) -> None:
+        self._runs_cache = None
+        self._backtest_runs_cache = None
 
     def _chart_dataset_signature(
         self,

@@ -274,6 +274,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
         latest_summary_labels["is"].setText(f"{is_return:+.2%}")
         latest_summary_labels["oos"].setText(f"{oos_return:+.2%}")
 
-    page.refresh = refresh
-    refresh()
+    page.refresh = lambda: refresh() if page.isVisible() else None
+    if page.isVisible():
+        refresh()
     return page

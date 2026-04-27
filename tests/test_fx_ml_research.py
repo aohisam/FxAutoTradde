@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 
 from fxautotrade_lab.application import LabApplication
-from fxautotrade_lab.backtest.runner import BacktestRunner
 from fxautotrade_lab.automation.controller import AutomationController
-from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest
+from fxautotrade_lab.backtest.fx_backtest import _apply_walk_forward_filter, _run_fx_simulation, run_fx_backtest
+from fxautotrade_lab.backtest.runner import BacktestRunner
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.enums import BrokerMode, OrderSide, TimeFrame
 from fxautotrade_lab.ml.fx_filter import (
@@ -198,6 +198,156 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
         assert pd.Timestamp(row["train_end"]) <= pd.Timestamp(row["start"])
 
 
+def test_fx_walk_forward_reuses_single_label_simulation(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    config.data.start_date = "2026-01-03"
+    config.data.end_date = "2026-01-05"
+    index = pd.date_range("2026-01-01 00:00:00", periods=60 * 24 * 5, freq="1min", tz="Asia/Tokyo")
+    signal_frame = pd.DataFrame(index=index)
+    signal_frame["symbol"] = "USD_JPY"
+    signal_frame["close"] = np.linspace(100.0, 102.0, len(index))
+    signal_frame["entry_signal"] = False
+    signal_frame.loc[index[::360], "entry_signal"] = True
+    signal_frame["signal_score"] = 0.5
+    signal_frame["explanation_ja"] = "test"
+    for column in FEATURE_COLUMNS:
+        signal_frame[column] = 0.1
+
+    label_sim_calls: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    label_sim_kwargs: list[dict[str, object]] = []
+    train_calls: list[pd.DataFrame | None] = []
+
+    class _DummyModel:
+        def predict_proba(self, features: pd.DataFrame) -> pd.Series:
+            return pd.Series(0.9, index=features.index)
+
+    def fake_run_fx_simulation(config, signal_frames, *, start, end, **kwargs):  # noqa: ANN001
+        _ = config, signal_frames
+        label_sim_calls.append((start, end))
+        label_sim_kwargs.append(kwargs)
+        return {
+            "equity_curve": pd.DataFrame(),
+            "orders": pd.DataFrame(),
+            "fills": pd.DataFrame(),
+            "trades": pd.DataFrame(
+                {
+                    "position_id": ["p1"],
+                    "signal_time": [index[0]],
+                    "symbol": ["USD_JPY"],
+                    "entry_time": [index[0]],
+                    "exit_time": [index[1]],
+                    "net_pnl": [100.0],
+                    "gross_pnl": [100.0],
+                    "initial_risk_price": [1.0],
+                    "initial_quantity": [1000],
+                }
+            ),
+            "positions": pd.DataFrame(),
+        }
+
+    def fake_train_model(*args, **kwargs):  # noqa: ANN001
+        train_calls.append(kwargs.get("baseline_trades"))
+        return (
+            _DummyModel(),
+            _synthetic_dataset(4),
+            {"model_path": "", "latest_model_path": "", "dataset_path": ""},
+        )
+
+    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._run_fx_simulation", fake_run_fx_simulation)
+    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model)
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._save_model_and_dataset",
+        lambda model, dataset, config: {
+            "model_path": "",
+            "latest_model_path": "",
+            "dataset_path": "labels.parquet",
+        },
+    )
+
+    filtered, rows, _ = _apply_walk_forward_filter(
+        {"USD_JPY": signal_frame},
+        config,
+        backtest_start=pd.Timestamp(config.data.start_date, tz="Asia/Tokyo"),
+        backtest_end=pd.Timestamp(config.data.end_date, tz="Asia/Tokyo"),
+        history_start=pd.Timestamp("2026-01-01", tz="Asia/Tokyo"),
+    )
+
+    assert len(label_sim_calls) == 1
+    assert label_sim_kwargs[0]["collect_equity"] is False
+    assert label_sim_kwargs[0]["collect_orders"] is False
+    assert label_sim_kwargs[0]["collect_fills"] is False
+    assert label_sim_kwargs[0]["collect_positions"] is False
+    assert label_sim_kwargs[0]["include_trade_explanations"] is False
+    assert len(train_calls) == len(rows)
+    assert train_calls and all(frame is train_calls[0] for frame in train_calls)
+    assert not filtered["USD_JPY"].empty
+
+
+def test_fx_label_simulation_uses_compact_engine_columns(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    config.backtest.chunk_enabled = False
+    index = pd.date_range("2026-01-01 00:00:00", periods=3, freq="1min", tz="Asia/Tokyo")
+    signal_frame = pd.DataFrame(
+        {
+            "symbol": ["USD_JPY", "USD_JPY", "USD_JPY"],
+            "close": [100.0, 100.1, 100.2],
+            "entry_signal": [False, True, False],
+            "position_side": ["long", "long", "long"],
+            "entry_order_side": ["buy", "buy", "buy"],
+            "exit_order_side": ["sell", "sell", "sell"],
+            "entry_context_ok": [True, True, True],
+            "exit_signal": [False, False, True],
+            "partial_exit_signal": [False, False, False],
+            "entry_trigger_price": [100.0, 100.1, 100.2],
+            "initial_stop_price": [99.5, 99.6, 99.7],
+            "initial_risk_price": [0.5, 0.5, 0.5],
+            "atr_15m": [0.5, 0.5, 0.5],
+            "breakout_atr_15m": [0.5, 0.5, 0.5],
+            "breakout_level_15m": [99.8, 99.8, 99.8],
+            "signal_score": [0.0, 0.8, 0.0],
+            "explanation_ja": ["idle", "entry", "exit"],
+            "reasons_ja": [[], ["reason"], ["exit"]],
+            "regime_label": ["trend", "trend", "trend"],
+        },
+        index=index,
+    )
+    captured_columns: list[list[str]] = []
+
+    def fake_sim_run(self, signal_frames, mode=BrokerMode.LOCAL_SIM, **kwargs):  # noqa: ANN001
+        _ = self, mode, kwargs
+        captured_columns.append(next(iter(signal_frames.values())).columns.tolist())
+        return {
+            "equity_curve": pd.DataFrame(),
+            "orders": pd.DataFrame(),
+            "fills": pd.DataFrame(),
+            "trades": pd.DataFrame(),
+            "positions": pd.DataFrame(),
+        }
+
+    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run)
+
+    _run_fx_simulation(
+        config,
+        {"USD_JPY": signal_frame},
+        start=index[0],
+        end=index[-1],
+        collect_equity=False,
+        collect_orders=False,
+        collect_fills=False,
+        collect_positions=False,
+        include_trade_explanations=False,
+    )
+
+    assert captured_columns
+    engine_columns = captured_columns[0]
+    assert "entry_signal" in engine_columns
+    assert "position_side" in engine_columns
+    assert "symbol" not in engine_columns
+    assert "reasons_ja" not in engine_columns
+    assert "regime_label" not in engine_columns
+    assert "explanation_ja" not in engine_columns
+
+
 def test_save_labeled_dataset_uses_compact_storage_schema(tmp_path: Path) -> None:
     dataset = _synthetic_dataset(6)
 
@@ -236,6 +386,45 @@ def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(tmp
     )
 
     assert calls == [False]
+
+
+def test_research_scenario_variants_skip_heavy_artifact_exports(tmp_path: Path, monkeypatch) -> None:
+    config = _make_fx_config(tmp_path)
+    config.research.spread_stress_multipliers = [1.0]
+    config.research.entry_delay_scenarios = [0]
+    config.research.parameter_sensitivity_breakout = [20]
+    config.research.parameter_sensitivity_stop = [2.0]
+    captured_exports: list[tuple[bool, bool, bool]] = []
+    captured_callbacks: list[object] = []
+
+    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+        _ = env, backtest_start, backtest_end, persist_ml_artifacts, progress_callback
+        captured_exports.append(
+            (
+                config.reporting.export_html,
+                config.reporting.export_csv,
+                config.reporting.export_json,
+            )
+        )
+        captured_callbacks.append(progress_callback)
+        return SimpleNamespace(
+            metrics={"total_return": 0.0, "profit_factor": 1.0, "average_r": 0.0, "max_drawdown": 0.0},
+            output_dir=str(tmp_path / "variant"),
+            trades=pd.DataFrame(),
+            signals=pd.DataFrame(),
+            equity_curve=pd.DataFrame(),
+        )
+
+    monkeypatch.setattr("fxautotrade_lab.research.pipeline.run_fx_backtest", fake_run_fx_backtest)
+
+    pipeline = ResearchPipeline(config, EnvironmentConfig(), mode="exhaustive")
+    progress_events: list[dict[str, object]] = []
+    progress_callback = progress_events.append
+    pipeline._robustness_runs("exhaustive", progress_callback=progress_callback)
+    pipeline._parameter_sensitivity("exhaustive", progress_callback=progress_callback)
+
+    assert captured_exports == [(False, False, True), (False, False, True)]
+    assert captured_callbacks == [progress_callback, progress_callback]
 
 
 def test_backtest_runner_does_not_persist_ml_artifacts(tmp_path: Path, monkeypatch) -> None:

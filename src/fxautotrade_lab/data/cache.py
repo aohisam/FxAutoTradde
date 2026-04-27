@@ -92,7 +92,8 @@ class ParquetBarCache:
         frame = validate_bar_frame(frame)
         path = self._path_for(symbol, timeframe)
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = frame.copy()
+        # The symbol is encoded by the cache directory; per-row strings are costly for long 1-minute caches.
+        payload = frame.drop(columns=["symbol"], errors="ignore").copy()
         payload["timestamp"] = frame.index
         payload.to_parquet(path)
         return path
@@ -254,6 +255,8 @@ class ParquetBarCache:
         if index.tz is None:
             index = index.tz_localize("Asia/Tokyo")
         working.index = index
+        if "symbol" in working.columns:
+            working = working.drop(columns=["symbol"])
         return validate_bar_frame(working)
 
     def _supports_timestamp_filter(self, path: Path) -> bool:

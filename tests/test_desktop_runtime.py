@@ -110,3 +110,19 @@ def test_chart_page_defers_runtime_load_until_visible():
     assert "not page.isVisible()" in source
     tail = source.split("page.refresh = refresh_chart", 1)[1]
     assert "refresh_chart()" not in tail
+
+
+def test_data_sync_page_uses_launch_date_window_instead_of_saved_config():
+    source = Path("src/fxautotrade_lab/desktop/pages/data_sync.py").read_text(encoding="utf-8")
+    assert 'start_date.setDate(default_popup_qdate("start"))' in source
+    assert 'end_date.setDate(default_popup_qdate("end"))' in source
+    assert "configured_start" not in source
+    assert "configured_end" not in source
+
+
+def test_backtest_page_uses_launch_date_window_instead_of_saved_config():
+    source = Path("src/fxautotrade_lab/desktop/pages/backtest.py").read_text(encoding="utf-8")
+    assert 'start_date.setDate(default_popup_qdate("start"))' in source
+    assert 'end_date.setDate(default_popup_qdate("end"))' in source
+    assert "app_state.config.backtest.start_date or app_state.config.data.start_date" not in source
+    assert "app_state.config.backtest.end_date or app_state.config.data.end_date" not in source

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -18,6 +17,7 @@ from fxautotrade_lab.core.windows import shift_timestamp
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.ml.fx_filter import (
+    FEATURE_COLUMNS,
     apply_fx_ml_filter,
     build_labeled_dataset,
     fit_fx_filter_model,
@@ -29,6 +29,68 @@ from fxautotrade_lab.ml.fx_filter import (
 from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
 from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator, FxSimulationState
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
+
+
+_SIMULATION_ENGINE_COLUMNS = (
+    "bid_open",
+    "bid_high",
+    "bid_low",
+    "bid_close",
+    "ask_open",
+    "ask_high",
+    "ask_low",
+    "ask_close",
+    "mid_open",
+    "mid_high",
+    "mid_low",
+    "mid_close",
+    "spread_open",
+    "spread_high",
+    "spread_low",
+    "spread_close",
+    "open",
+    "high",
+    "low",
+    "close",
+    "entry_signal",
+    "exit_signal",
+    "partial_exit_signal",
+    "entry_context_ok",
+    "position_side",
+    "entry_order_side",
+    "exit_order_side",
+    "entry_trigger_price",
+    "initial_stop_price",
+    "initial_risk_price",
+    "breakout_atr_15m",
+    "atr_15m",
+    "breakout_level_15m",
+    "breakout_short_level_15m",
+    "signal_score",
+)
+_SIMULATION_CATEGORY_COLUMNS = ("position_side", "entry_order_side", "exit_order_side")
+_ML_LABEL_COLUMNS = ("symbol", "entry_signal_rule_only", "entry_signal", *FEATURE_COLUMNS)
+_SIGNAL_LOG_COLUMNS = (
+    "symbol",
+    "signal_action",
+    "signal_score",
+    "entry_signal",
+    "entry_signal_rule_only",
+    "exit_signal",
+    "partial_exit_signal",
+    "ml_probability",
+    "ml_decision",
+    "ml_model_label",
+    "regime_label",
+    "explanation_ja",
+    "sub_score_trend_regime",
+    "sub_score_pullback_continuation",
+    "sub_score_breakout_compression",
+    "sub_score_candle_price_action",
+    "sub_score_multi_timeframe_alignment",
+    "sub_score_market_context",
+)
+_HEAVY_SIGNAL_COLUMNS = ("reasons_ja",)
 
 
 def _emit_progress(
@@ -81,7 +143,13 @@ def _signal_log_frame(signal_frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     for symbol, frame in signal_frames.items():
         if frame.empty:
             continue
-        logs.append(frame.reset_index().rename(columns={"index": "timestamp"}).assign(symbol=symbol))
+        columns = [column for column in _SIGNAL_LOG_COLUMNS if column in frame.columns]
+        logs.append(
+            frame.loc[:, columns]
+            .reset_index()
+            .rename(columns={"index": "timestamp"})
+            .assign(symbol=symbol)
+        )
     return pd.concat(logs, ignore_index=True).sort_values("timestamp") if logs else pd.DataFrame()
 
 
@@ -106,6 +174,30 @@ def _concat_dataframes(frames: list[pd.DataFrame], *, sort_index: bool = False) 
         combined = combined.sort_index()
         combined = combined.loc[~combined.index.duplicated(keep="last")]
     return combined
+
+
+def _drop_heavy_signal_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = [column for column in _HEAVY_SIGNAL_COLUMNS if column in frame.columns]
+    return frame.drop(columns=columns) if columns else frame
+
+
+def _ml_label_input_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    columns = [column for column in _ML_LABEL_COLUMNS if column in frame.columns]
+    return frame.loc[:, columns]
+
+
+def _simulation_input_frame(frame: pd.DataFrame, *, include_explanations: bool) -> pd.DataFrame:
+    columns = [column for column in _SIMULATION_ENGINE_COLUMNS if column in frame.columns]
+    if include_explanations and "explanation_ja" in frame.columns:
+        columns.append("explanation_ja")
+    selected = frame.loc[:, list(dict.fromkeys(columns))]
+    categorical_columns = [column for column in _SIMULATION_CATEGORY_COLUMNS if column in selected.columns]
+    if not categorical_columns:
+        return selected
+    compact = selected.copy(deep=False)
+    for column in categorical_columns:
+        compact[column] = compact[column].astype("category")
+    return compact
 
 
 def _feature_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestamp) -> list[TimeChunk]:
@@ -222,7 +314,6 @@ def _build_symbol_signals(
     progress_index = 0
     for symbol in config.watchlist.symbols:
         signal_parts: list[pd.DataFrame] = []
-        execution_parts: list[pd.DataFrame] = []
         signal_chart_parts: list[pd.DataFrame] = []
         trend_chart_parts: list[pd.DataFrame] = []
         for chunk in chunks:
@@ -240,15 +331,14 @@ def _build_symbol_signals(
                 end=chunk.end.isoformat(),
             )
             feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False)
-            signals = strategy.generate_signal_frame(feature_set.execution_frame)
+            signals = _drop_heavy_signal_columns(strategy.generate_signal_frame(feature_set.execution_frame))
             signal_parts.append(_slice_window(signals, chunk.start, chunk.end))
-            execution_parts.append(_slice_window(feature_set.execution_frame, chunk.start, chunk.end))
             chart_slice_start = max(chunk.start, chart_window_start)
             if chart_slice_start < chunk.end:
                 signal_chart_parts.append(_slice_window(feature_set.signal_frame, chart_slice_start, chunk.end))
                 trend_chart_parts.append(_slice_window(feature_set.trend_frame, chart_slice_start, chunk.end))
         signal_frames[symbol] = _concat_dataframes(signal_parts, sort_index=True)
-        raw_execution_frames[symbol] = _concat_dataframes(execution_parts, sort_index=True)
+        raw_execution_frames[symbol] = pd.DataFrame()
         if chart_start is not None:
             chart_frames[symbol] = {
                 config.strategy.fx_breakout_pullback.execution_timeframe.value: _slice_window(
@@ -297,9 +387,19 @@ def _run_fx_simulation(
     end: pd.Timestamp,
     progress_callback=None,
     progress_message_prefix: str = "約定シミュレーションを実行しています。",
+    collect_equity: bool = True,
+    collect_orders: bool = True,
+    collect_fills: bool = True,
+    collect_trades: bool = True,
+    collect_positions: bool = True,
+    include_trade_explanations: bool = True,
 ) -> dict[str, pd.DataFrame]:
     simulator = FxQuotePortfolioSimulator(config)
     chunks = _simulation_chunk_plan(config, start, end)
+    engine_frames = {
+        symbol: _simulation_input_frame(frame, include_explanations=include_trade_explanations)
+        for symbol, frame in signal_frames.items()
+    }
     state: FxSimulationState | None = None
     equity_parts: list[pd.DataFrame] = []
     order_parts: list[pd.DataFrame] = []
@@ -315,20 +415,30 @@ def _run_fx_simulation(
         )
         chunk_frames = {
             symbol: _slice_window_with_lookahead(frame, chunk.start, chunk.end)
-            for symbol, frame in signal_frames.items()
+            for symbol, frame in engine_frames.items()
         }
         outputs = simulator.run(
             chunk_frames,
             mode=config.broker.mode,
             initial_state=state,
             process_until=chunk.end,
+            collect_equity=collect_equity,
+            collect_orders=collect_orders,
+            collect_fills=collect_fills,
+            collect_trades=collect_trades,
+            collect_positions=collect_positions,
         )
         state = outputs.get("state", state)
-        equity_parts.append(outputs.get("equity_curve", pd.DataFrame()))
-        order_parts.append(outputs.get("orders", pd.DataFrame()))
-        fill_parts.append(outputs.get("fills", pd.DataFrame()))
-        trade_parts.append(outputs.get("trades", pd.DataFrame()))
-        position_parts.append(outputs.get("positions", pd.DataFrame()))
+        if collect_equity:
+            equity_parts.append(outputs.get("equity_curve", pd.DataFrame()))
+        if collect_orders:
+            order_parts.append(outputs.get("orders", pd.DataFrame()))
+        if collect_fills:
+            fill_parts.append(outputs.get("fills", pd.DataFrame()))
+        if collect_trades:
+            trade_parts.append(outputs.get("trades", pd.DataFrame()))
+        if collect_positions:
+            position_parts.append(outputs.get("positions", pd.DataFrame()))
     return {
         "equity_curve": _concat_dataframes(equity_parts, sort_index=True),
         "orders": _concat_dataframes(order_parts),
@@ -345,6 +455,7 @@ def _train_model_from_history(
     train_start: pd.Timestamp,
     train_end: pd.Timestamp,
     persist_artifacts: bool = True,
+    baseline_trades: pd.DataFrame | None = None,
     progress_callback=None,
 ) -> tuple[object, pd.DataFrame, dict[str, str]]:
     _emit_progress(
@@ -355,7 +466,7 @@ def _train_model_from_history(
         message="学習対象ウィンドウを準備しています。",
     )
     training_slices = {
-        symbol: _slice_window(frame, train_start, train_end)
+        symbol: _slice_window(_ml_label_input_frame(frame), train_start, train_end)
         for symbol, frame in signal_frames.items()
     }
     _emit_progress(
@@ -365,19 +476,32 @@ def _train_model_from_history(
         total=4,
         message="ラベル付きデータを構築しています。",
     )
-    baseline_outputs = _run_fx_simulation(
-        config,
-        training_slices,
-        start=train_start,
-        end=train_end,
-        progress_callback=progress_callback,
-        progress_message_prefix="学習用シミュレーションを chunk で実行しています。",
-    )
+    if baseline_trades is None:
+        baseline_outputs = _run_fx_simulation(
+            config,
+            signal_frames,
+            start=train_start,
+            end=train_end,
+            progress_callback=progress_callback,
+            progress_message_prefix="学習用シミュレーションを chunk で実行しています。",
+            collect_equity=False,
+            collect_orders=False,
+            collect_fills=False,
+            collect_positions=False,
+            include_trade_explanations=False,
+        )
+        training_trades = baseline_outputs["trades"]
+    else:
+        training_trades = baseline_trades
     datasets = [
-        build_labeled_dataset(frame, baseline_outputs["trades"], config, require_exit_before=train_end)
+        build_labeled_dataset(frame, training_trades, config, require_exit_before=train_end)
         for frame in training_slices.values()
     ]
-    dataset = pd.concat([item for item in datasets if not item.empty], ignore_index=True) if datasets else pd.DataFrame()
+    dataset = (
+        pd.concat([item for item in datasets if not item.empty], ignore_index=True)
+        if datasets
+        else pd.DataFrame()
+    )
     _emit_progress(
         progress_callback,
         task="train",
@@ -417,14 +541,34 @@ def _apply_walk_forward_filter(
     progress_callback=None,
 ) -> tuple[dict[str, pd.DataFrame], list[dict[str, object]], dict[str, str]]:
     windows = _build_test_windows(backtest_start, backtest_end, config)
-    filtered: dict[str, pd.DataFrame] = {
-        symbol: _slice_window(frame, backtest_start, backtest_end)
-        for symbol, frame in signal_frames.items()
-    }
+    filtered_parts: dict[str, list[pd.DataFrame]] = {symbol: [] for symbol in signal_frames}
     walk_rows: list[dict[str, object]] = []
     latest_paths: dict[str, str] = {"model_path": "", "latest_model_path": "", "dataset_path": ""}
     latest_model = None
     latest_dataset = pd.DataFrame()
+    _emit_progress(
+        progress_callback,
+        task="backtest",
+        current=2,
+        total=5,
+        message="Walk-forward 用の学習ラベルを一括で準備しています。",
+    )
+    baseline_outputs = _run_fx_simulation(
+        config,
+        signal_frames,
+        start=history_start,
+        end=backtest_end,
+        progress_callback=progress_callback,
+        progress_message_prefix=(
+            "Walk-forward 学習ラベル用シミュレーションを chunk で実行しています。"
+        ),
+        collect_equity=False,
+        collect_orders=False,
+        collect_fills=False,
+        collect_positions=False,
+        include_trade_explanations=False,
+    )
+    baseline_trades = baseline_outputs["trades"]
     for window_start, window_end in windows:
         train_start = _training_window_start(window_start, history_start, config)
         _emit_progress(
@@ -442,6 +586,7 @@ def _apply_walk_forward_filter(
             train_start=train_start,
             train_end=window_start,
             persist_artifacts=False,
+            baseline_trades=baseline_trades,
             progress_callback=progress_callback,
         )
         latest_model = model
@@ -453,13 +598,16 @@ def _apply_walk_forward_filter(
             test_slice = _slice_window(frame, window_start, window_end)
             if test_slice.empty:
                 continue
-            filtered_slice = apply_fx_ml_filter(test_slice, model, config, model_label=Path(paths["latest_model_path"] or paths["model_path"]).name)
+            filtered_slice = apply_fx_ml_filter(
+                test_slice,
+                model,
+                config,
+                model_label=Path(paths["latest_model_path"] or paths["model_path"]).name,
+            )
             summary = ml_filter_summary(filtered_slice)
             accepted += int(summary["accepted_candidates"])
             candidates += int(summary["rule_candidates"])
-            target_frame = filtered[symbol]
-            overlap = target_frame.index.intersection(filtered_slice.index)
-            target_frame.loc[overlap, filtered_slice.columns] = filtered_slice.loc[overlap, filtered_slice.columns]
+            filtered_parts.setdefault(symbol, []).append(filtered_slice)
         walk_rows.append(
             {
                 "window": len(walk_rows) + 1,
@@ -475,6 +623,10 @@ def _apply_walk_forward_filter(
         )
     if latest_model is not None and not latest_dataset.empty:
         latest_paths = _save_model_and_dataset(latest_model, latest_dataset, config)
+    filtered = {
+        symbol: _concat_dataframes(parts, sort_index=True)
+        for symbol, parts in filtered_parts.items()
+    }
     return filtered, walk_rows, latest_paths
 
 

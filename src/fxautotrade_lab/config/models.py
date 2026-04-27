@@ -160,6 +160,34 @@ class FxMlConfig(BaseModel):
     walk_forward: FxWalkForwardConfig = Field(default_factory=FxWalkForwardConfig)
 
 
+class FxScalpingConfig(BaseModel):
+    enabled: bool = False
+    tick_cache_dir: Path = Path("tick_cache")
+    bar_rule: str = "1s"
+    pip_size: float | None = None
+    take_profit_pips: float = 1.6
+    stop_loss_pips: float = 1.2
+    max_hold_seconds: int = 90
+    round_trip_slippage_pips: float = 0.15
+    fee_pips: float = 0.0
+    max_spread_pips: float = 0.6
+    min_volatility_pips: float = 0.03
+    decision_threshold: float = 0.58
+    min_samples: int = 200
+    min_threshold_trades: int = 20
+    train_ratio: float = 0.70
+    model_dir: Path = Path("models/fx_scalping")
+    latest_model_alias: str = "latest_scalping_model.json"
+    learning_rate: float = 0.08
+    max_iter: int = 500
+    l2_penalty: float = 0.002
+    feature_clip: float = 8.0
+    seed: int = 23
+    entry_latency_ms: int = 250
+    cooldown_seconds: int = 5
+    max_trades_per_day: int = 120
+
+
 class FxBreakoutPullbackConfig(BaseModel):
     ema_fast: int = 50
     ema_slow: int = 200
@@ -210,6 +238,7 @@ class StrategyConfig(BaseModel):
     baseline: BaselineStrategyConfig = Field(default_factory=BaselineStrategyConfig)
     scoring: ScoringStrategyConfig = Field(default_factory=ScoringStrategyConfig)
     fx_breakout_pullback: FxBreakoutPullbackConfig = Field(default_factory=FxBreakoutPullbackConfig)
+    fx_scalping: FxScalpingConfig = Field(default_factory=FxScalpingConfig)
 
 
 class RiskConfig(BaseModel):

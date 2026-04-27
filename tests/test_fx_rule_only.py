@@ -507,6 +507,58 @@ def test_fx_engine_uses_ask_entry_and_bid_exit(tmp_path: Path) -> None:
     assert float(trades.iloc[0]["exit_price"]) == 101.7
 
 
+def test_fx_engine_can_skip_heavy_account_history_for_label_runs(tmp_path: Path) -> None:
+    config = _make_fx_config(tmp_path)
+    config.risk.slippage_bps = 0.0
+    simulator = FxQuotePortfolioSimulator(config)
+    index = pd.date_range("2026-01-06 09:00:00", periods=3, freq="1min", tz="Asia/Tokyo")
+    frame = pd.DataFrame(
+        {
+            "ask_open": [100.0, 100.8, 101.8],
+            "ask_high": [100.2, 101.1, 102.0],
+            "ask_low": [99.9, 100.7, 101.7],
+            "ask_close": [100.1, 100.95, 101.9],
+            "bid_open": [99.96, 100.76, 101.7],
+            "bid_high": [100.1, 100.9, 101.9],
+            "bid_low": [99.9, 100.6, 101.6],
+            "bid_close": [100.0, 100.85, 101.8],
+            "open": [99.98, 100.78, 101.75],
+            "high": [100.15, 101.0, 101.95],
+            "low": [99.9, 100.6, 101.6],
+            "close": [100.05, 100.9, 101.85],
+            "volume": [220.0, 220.0, 220.0],
+            "entry_signal": [True, False, False],
+            "entry_trigger_price": [101.0, pd.NA, pd.NA],
+            "initial_stop_price": [99.5, pd.NA, pd.NA],
+            "initial_risk_price": [1.5, pd.NA, pd.NA],
+            "breakout_atr_15m": [0.5, 0.5, 0.5],
+            "breakout_level_15m": [100.7, 100.7, 100.7],
+            "atr_15m": [0.5, 0.5, 0.5],
+            "signal_score": [0.8, 0.0, 0.0],
+            "explanation_ja": ["entry", "", ""],
+            "entry_context_ok": [True, True, True],
+            "exit_signal": [False, True, False],
+            "partial_exit_signal": [False, False, False],
+        },
+        index=index,
+    )
+
+    outputs = simulator.run(
+        {"USD_JPY": frame},
+        mode=BrokerMode.LOCAL_SIM,
+        collect_equity=False,
+        collect_orders=False,
+        collect_fills=False,
+        collect_positions=False,
+    )
+
+    assert outputs["equity_curve"].empty
+    assert outputs["orders"].empty
+    assert outputs["fills"].empty
+    assert outputs["positions"].empty
+    assert len(outputs["trades"].index) == 1
+
+
 def test_fx_engine_conservative_same_bar_stop_after_entry(tmp_path: Path) -> None:
     config = _make_fx_config(tmp_path)
     config.risk.slippage_bps = 0.0

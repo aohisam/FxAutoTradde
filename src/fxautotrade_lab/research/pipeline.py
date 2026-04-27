@@ -417,6 +417,7 @@ class ResearchPipeline:
         output_dir: Path,
         ml_enabled: bool,
         backtest_mode: str,
+        full_artifacts: bool = True,
         spread_multiplier: float = 1.0,
         entry_delay_bars: int = 0,
         breakout_lookback: int | None = None,
@@ -425,6 +426,9 @@ class ResearchPipeline:
     ):
         variant = self.config.model_copy(deep=True)
         variant.reporting.output_dir = output_dir / mode_name
+        if not full_artifacts:
+            variant.reporting.export_html = False
+            variant.reporting.export_csv = False
         variant.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled
         variant.strategy.fx_breakout_pullback.ml_filter.backtest_mode = backtest_mode
         variant.strategy.fx_breakout_pullback.spread_stress_multiplier = spread_multiplier
@@ -468,8 +472,10 @@ class ResearchPipeline:
                     output_dir=self.config.research.output_dir / "tmp",
                     ml_enabled=True,
                     backtest_mode="walk_forward_train",
+                    full_artifacts=False,
                     spread_multiplier=spread_multiplier,
                     entry_delay_bars=delay_bars,
+                    progress_callback=progress_callback,
                 )
                 rows.append(
                     {
@@ -512,8 +518,10 @@ class ResearchPipeline:
                     output_dir=self.config.research.output_dir / "tmp",
                     ml_enabled=True,
                     backtest_mode="walk_forward_train",
+                    full_artifacts=False,
                     breakout_lookback=breakout_lookback,
                     atr_stop_mult=atr_stop_mult,
+                    progress_callback=progress_callback,
                 )
                 rows.append(
                     {

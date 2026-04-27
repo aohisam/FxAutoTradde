@@ -46,10 +46,20 @@ def _equity_chart_div(result: BacktestResult) -> str:
 def render_html_report(result: BacktestResult) -> str:
     monthly_returns = _monthly_returns_table(result.equity_curve)
     walk_forward_table = _walk_forward_table(result.walk_forward)
+    net_profit = float(result.metrics.get("net_profit", 0.0) or 0.0)
+    ending_equity = float(
+        result.metrics.get(
+            "ending_equity",
+            result.starting_cash + net_profit,
+        )
+        or (result.starting_cash + net_profit)
+    )
     metrics_rows = "".join(
         f"<tr><th>{label}</th><td>{value}</td></tr>"
         for label, value in {
             "総損益": f"{result.metrics.get('total_return', 0):.2%}",
+            "実額損益": f"{net_profit:+,.2f} JPY",
+            "最終資産": f"{ending_equity:,.2f} JPY",
             "年率換算": f"{result.metrics.get('annualized_return', 0):.2%}",
             "シャープレシオ": f"{result.metrics.get('sharpe', 0):.2f}",
             "最大ドローダウン": f"{result.metrics.get('max_drawdown', 0):.2%}",

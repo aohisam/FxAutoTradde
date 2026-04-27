@@ -14,6 +14,7 @@ import yaml
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.core.enums import RunKind
 from fxautotrade_lab.core.models import AutomationEvent, BacktestResult
+from fxautotrade_lab.reporting.signal_snapshot import build_signal_snapshot_payload, enrich_signals_with_trade_context
 
 
 def _json_default(value):
@@ -215,7 +216,7 @@ class SQLiteStore:
         with self.connection() as conn:
             rows = conn.execute(
                 """
-                SELECT run_id, run_kind, mode, strategy_name, started_at, finished_at, output_dir, metrics_json
+                SELECT run_id, run_kind, mode, strategy_name, started_at, finished_at, output_dir, symbols_json, metrics_json
                 FROM runs
                 ORDER BY finished_at DESC
                 LIMIT ?
@@ -231,10 +232,41 @@ class SQLiteStore:
                 "started_at": row["started_at"],
                 "finished_at": row["finished_at"],
                 "output_dir": row["output_dir"],
+                "symbols": json.loads(row["symbols_json"]),
                 "metrics": json.loads(row["metrics_json"]),
             }
             for row in rows
         ]
+
+    def load_run_record(self, run_id: str) -> dict[str, object] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT run_id, run_kind, mode, strategy_name, started_at, finished_at, output_dir,
+                       symbols_json, metrics_json, in_sample_metrics_json, out_of_sample_metrics_json,
+                       walk_forward_json, config_snapshot_yaml
+                FROM runs
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": row["run_id"],
+            "run_kind": row["run_kind"],
+            "mode": row["mode"],
+            "strategy_name": row["strategy_name"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "output_dir": row["output_dir"],
+            "symbols": json.loads(row["symbols_json"]),
+            "metrics": json.loads(row["metrics_json"]),
+            "in_sample_metrics": json.loads(row["in_sample_metrics_json"] or "{}"),
+            "out_of_sample_metrics": json.loads(row["out_of_sample_metrics_json"] or "{}"),
+            "walk_forward": json.loads(row["walk_forward_json"] or "[]"),
+            "config_snapshot_yaml": row["config_snapshot_yaml"],
+        }
 
     def load_table(self, run_id: str, table: str) -> pd.DataFrame:
         with self.connection() as conn:
@@ -244,6 +276,181 @@ class SQLiteStore:
             ).fetchall()
         records = [json.loads(row["payload_json"]) for row in rows]
         return pd.DataFrame(records)
+
+    def load_recent_table(self, run_id: str, table: str, limit: int) -> pd.DataFrame:
+        max_rows = max(1, int(limit))
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"SELECT payload_json FROM {table} WHERE run_id = ? ORDER BY row_id DESC LIMIT ?",  # noqa: S608
+                (run_id, max_rows),
+            ).fetchall()
+        records = [json.loads(row["payload_json"]) for row in reversed(rows)]
+        return pd.DataFrame(records)
+
+    def load_signal_snapshot(
+        self,
+        run_id: str,
+        *,
+        threshold: float = 0.55,
+        recent_limit: int = 300,
+        bins: int = 11,
+        symbol_limit: int = 5,
+    ) -> dict[str, object]:
+        recent = self.load_recent_table(run_id, "signals", recent_limit)
+        trades = self.load_table(run_id, "trades")
+        recent = enrich_signals_with_trade_context(recent, trades)
+        try:
+            with self.connection() as conn:
+                summary_row = conn.execute(
+                    """
+                    WITH signal_rows AS (
+                        SELECT
+                            CAST(json_extract(payload_json, '$.signal_score') AS REAL) AS score,
+                            lower(COALESCE(json_extract(payload_json, '$.signal_action'), '')) AS action
+                        FROM signals
+                        WHERE run_id = ?
+                    )
+                    SELECT
+                        COUNT(*) AS total,
+                        AVG(score) AS mean_score,
+                        SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS accepted,
+                        SUM(CASE WHEN score >= ? AND action = 'buy' THEN 1 ELSE 0 END) AS buy_accepted,
+                        SUM(CASE WHEN score >= ? AND action = 'sell' THEN 1 ELSE 0 END) AS sell_accepted
+                    FROM signal_rows
+                    """,
+                    (run_id, threshold, threshold, threshold),
+                ).fetchone()
+                symbol_rows = conn.execute(
+                    """
+                    WITH signal_rows AS (
+                        SELECT
+                            COALESCE(json_extract(payload_json, '$.symbol'), '') AS symbol,
+                            CAST(json_extract(payload_json, '$.signal_score') AS REAL) AS score
+                        FROM signals
+                        WHERE run_id = ?
+                    )
+                    SELECT
+                        symbol,
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) AS accepted,
+                        AVG(score) AS mean_score
+                    FROM signal_rows
+                    GROUP BY symbol
+                    ORDER BY accepted DESC, total DESC, symbol ASC
+                    LIMIT ?
+                    """,
+                    (run_id, threshold, max(1, int(symbol_limit))),
+                ).fetchall()
+                bucket_expr = (
+                    f"CASE "
+                    f"WHEN score IS NULL THEN NULL "
+                    f"WHEN score < 0 THEN 0 "
+                    f"WHEN score >= 1 THEN {max(0, bins - 1)} "
+                    f"ELSE CAST(score * {max(1, bins)} AS INTEGER) "
+                    f"END"
+                )
+                histogram_rows = conn.execute(
+                    f"""
+                    WITH signal_rows AS (
+                        SELECT CAST(json_extract(payload_json, '$.signal_score') AS REAL) AS score
+                        FROM signals
+                        WHERE run_id = ?
+                    ),
+                    bucketed AS (
+                        SELECT
+                            {bucket_expr} AS bucket,
+                            CASE WHEN score >= ? THEN 1 ELSE 0 END AS accepted
+                        FROM signal_rows
+                    )
+                    SELECT
+                        bucket,
+                        COUNT(*) AS total,
+                        SUM(accepted) AS accepted,
+                        SUM(CASE WHEN accepted = 0 THEN 1 ELSE 0 END) AS rejected
+                    FROM bucketed
+                    WHERE bucket IS NOT NULL
+                    GROUP BY bucket
+                    ORDER BY bucket ASC
+                    """,
+                    (run_id, threshold),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return self._load_signal_snapshot_fallback(
+                run_id,
+                threshold=threshold,
+                recent=recent,
+                bins=bins,
+                symbol_limit=symbol_limit,
+                recent_limit=recent_limit,
+            )
+
+        total = int(summary_row["total"] or 0) if summary_row is not None else 0
+        accepted = int(summary_row["accepted"] or 0) if summary_row is not None else 0
+        buy_accepted = int(summary_row["buy_accepted"] or 0) if summary_row is not None else 0
+        sell_accepted = int(summary_row["sell_accepted"] or 0) if summary_row is not None else 0
+        mean_score = float(summary_row["mean_score"]) if summary_row is not None and summary_row["mean_score"] is not None else float("nan")
+        histogram = {
+            "all": [0] * bins,
+            "accepted": [0] * bins,
+            "rejected": [0] * bins,
+        }
+        for row in histogram_rows:
+            bucket = int(row["bucket"])
+            if 0 <= bucket < bins:
+                histogram["all"][bucket] = int(row["total"] or 0)
+                histogram["accepted"][bucket] = int(row["accepted"] or 0)
+                histogram["rejected"][bucket] = int(row["rejected"] or 0)
+        symbol_frame = pd.DataFrame(
+            [
+                {
+                    "通貨ペア": str(row["symbol"] or ""),
+                    "総数": int(row["total"] or 0),
+                    "採用": int(row["accepted"] or 0),
+                    "採用率": (
+                        f"{(int(row['accepted'] or 0) / max(1, int(row['total'] or 0)) * 100):.1f}%"
+                    ),
+                    "平均スコア": (
+                        "-" if row["mean_score"] is None else f"{float(row['mean_score']):.2f}"
+                    ),
+                }
+                for row in symbol_rows
+            ]
+        )
+        return {
+            "recent_signals": recent,
+            "summary": {
+                "total": total,
+                "accepted": accepted,
+                "buy_accepted": buy_accepted,
+                "sell_accepted": sell_accepted,
+                "mean_score": mean_score,
+            },
+            "histogram": histogram,
+            "symbol_frame": symbol_frame,
+        }
+
+    def _load_signal_snapshot_fallback(
+        self,
+        run_id: str,
+        *,
+        threshold: float,
+        recent: pd.DataFrame,
+        bins: int,
+        symbol_limit: int,
+        recent_limit: int = 300,
+    ) -> dict[str, object]:
+        frame = self.load_table(run_id, "signals")
+        snapshot = build_signal_snapshot_payload(
+            frame,
+            trades=self.load_table(run_id, "trades"),
+            threshold=threshold,
+            recent_limit=recent_limit,
+            bins=bins,
+            symbol_limit=symbol_limit,
+        )
+        if not recent.empty:
+            snapshot["recent_signals"] = recent
+        return snapshot
 
     def load_automation_events(self, run_id: str) -> pd.DataFrame:
         with self.connection() as conn:

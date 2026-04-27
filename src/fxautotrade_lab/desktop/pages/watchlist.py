@@ -174,6 +174,7 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
 
     btn_reload.clicked.connect(populate)
     btn_save.clicked.connect(save_watchlist)
-    page.refresh = populate
-    populate()
+    page.refresh = lambda: populate() if page.isVisible() else None
+    if page.isVisible():
+        populate()
     return page

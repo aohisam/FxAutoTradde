@@ -427,7 +427,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             super().initStyleOption(option, index)
             option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
             option.font.setFamily("JetBrains Mono")
-            text = str(option.text or "").lstrip()
+            text = str(index.data(Qt.DisplayRole) or "").lstrip()
             if text.startswith("+"):
                 option.palette.setColor(option.palette.Text, QColor(Tokens.POS))
             elif text.startswith(("-", "−")):
@@ -469,6 +469,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
     page.setWidget(content)
+    page._delegates = []  # type: ignore[attr-defined]
 
     # ---- Header ----
     header = QHBoxLayout()
@@ -627,9 +628,12 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         view.setSelectionMode(QAbstractItemView.SingleSelection)
         view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         view.verticalHeader().setVisible(False)
+        view.setWordWrap(False)
+        view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         hdr = view.horizontalHeader()
         hdr.setStretchLastSection(True)
-        hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
         view.setMinimumHeight(320)
         model = DataFrameTableModel()
         view.setModel(model)
@@ -651,28 +655,32 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
 
     # Column delegates
     # positions: 通貨ペア(0) 売買(1) 数量(2) 平均取得(3) 現在値(4) 時価評価(5) 含み損益(6) 有効ストップ(7) 次トレール(8) 保有バー(9)
-    positions_view.setItemDelegateForColumn(1, ChipDelegate(positions_view, lambda t: "accent" if t in ("買い", "売り") else None))
-    for column in (2, 3, 4, 5, 7, 8, 9):
-        positions_view.setItemDelegateForColumn(column, MonoRightDelegate(positions_view))
-    positions_view.setItemDelegateForColumn(6, MonoSignedDelegate(positions_view))
+    positions_side_delegate = ChipDelegate(positions_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    page._delegates.append(positions_side_delegate)
+    positions_view.setItemDelegateForColumn(1, positions_side_delegate)
 
     # signals: 時刻(0) 通貨ペア(1) シグナル(2) スコア(3) 採用(4) 市場セッション(5) 説明(6)
-    signals_view.setItemDelegateForColumn(2, ChipDelegate(signals_view, signal_tone))
-    signals_view.setItemDelegateForColumn(3, MonoRightDelegate(signals_view))
+    signals_chip_delegate = ChipDelegate(signals_view, signal_tone)
+    page._delegates.append(signals_chip_delegate)
+    signals_view.setItemDelegateForColumn(2, signals_chip_delegate)
 
     # orders: 注文時刻(0) 通貨ペア(1) 売買(2) 数量(3) 約定数量(4) 平均価格(5) 状態(6) 理由(7)
-    orders_view.setItemDelegateForColumn(2, ChipDelegate(orders_view, lambda t: "accent" if t in ("買い", "売り") else None))
-    for column in (3, 4, 5):
-        orders_view.setItemDelegateForColumn(column, MonoRightDelegate(orders_view))
-    orders_view.setItemDelegateForColumn(6, ChipDelegate(orders_view, order_status_tone))
+    orders_side_delegate = ChipDelegate(orders_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    page._delegates.append(orders_side_delegate)
+    orders_view.setItemDelegateForColumn(2, orders_side_delegate)
+    orders_status_delegate = ChipDelegate(orders_view, order_status_tone)
+    page._delegates.append(orders_status_delegate)
+    orders_view.setItemDelegateForColumn(6, orders_status_delegate)
 
     # fills: 約定時刻 通貨ペア 売買 数量 価格 注文ID
-    fills_view.setItemDelegateForColumn(2, ChipDelegate(fills_view, lambda t: "accent" if t in ("買い", "売り") else None))
-    for column in (3, 4):
-        fills_view.setItemDelegateForColumn(column, MonoRightDelegate(fills_view))
+    fills_side_delegate = ChipDelegate(fills_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    page._delegates.append(fills_side_delegate)
+    fills_view.setItemDelegateForColumn(2, fills_side_delegate)
 
     # events: 時刻 レベル メッセージ
-    events_view.setItemDelegateForColumn(1, ChipDelegate(events_view, level_tone))
+    events_level_delegate = ChipDelegate(events_view, level_tone)
+    page._delegates.append(events_level_delegate)
+    events_view.setItemDelegateForColumn(1, events_level_delegate)
 
     # ---- Log dock (navy) ----
     log_dock = QFrame()
@@ -881,6 +889,8 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         exit_grid.set("managed_bars_held", _format_count(record.get("managed_bars_held")))
 
     def refresh_snapshot() -> None:
+        if not page.isVisible():
+            return
         snapshot = None
         snapshot_error = ""
         try:
@@ -1056,6 +1066,7 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         orders_model.set_frame(_orders_frame(snapshot.get("recent_orders", [])))
         fills_model.set_frame(_fills_frame(snapshot.get("recent_fills", [])))
         events_model.set_frame(_events_frame(snapshot.get("recent_events", [])))
+        _apply_table_widths()
 
         tabs.set_count(0, len(positions))
         tabs.set_count(1, len(snapshot.get("recent_signals", [])))
@@ -1137,6 +1148,19 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             f"全ポジションの決済を送信しました。\n件数: {result.get('closed_positions', '-')}",
         )
         refresh_snapshot()
+
+    def _apply_width(view: QTableView, model: DataFrameTableModel, width_map: dict[int, int]) -> None:
+        header = view.horizontalHeader()
+        for column, width in width_map.items():
+            if column < model.columnCount():
+                header.resizeSection(column, width)
+
+    def _apply_table_widths() -> None:
+        _apply_width(positions_view, positions_model, {0: 90, 1: 82, 2: 70, 3: 92, 4: 92, 5: 100, 6: 110, 7: 100, 8: 100, 9: 72})
+        _apply_width(signals_view, signals_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 64, 5: 110, 6: 300})
+        _apply_width(orders_view, orders_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 78, 5: 92, 6: 100, 7: 220})
+        _apply_width(fills_view, fills_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 92, 5: 180})
+        _apply_width(events_view, events_model, {0: 115, 1: 82, 2: 520})
 
     start_button.clicked.connect(start_loop)
     stop_button.clicked.connect(stop_loop)

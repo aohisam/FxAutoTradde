@@ -106,7 +106,16 @@ def build_labeled_dataset(
     *,
     require_exit_before: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    candidates = signal_frame.loc[signal_frame.get("entry_signal_rule_only", signal_frame.get("entry_signal", False)).fillna(False)].copy()
+    entry_source = signal_frame.get("entry_signal_rule_only")
+    if entry_source is None:
+        entry_source = signal_frame.get("entry_signal")
+    if entry_source is None:
+        return pd.DataFrame()
+    candidate_mask = entry_source.fillna(False).astype(bool)
+    candidate_columns = [column for column in ("symbol", *FEATURE_COLUMNS) if column in signal_frame.columns]
+    if "symbol" not in candidate_columns:
+        return pd.DataFrame()
+    candidates = signal_frame.loc[candidate_mask, candidate_columns].copy()
     if candidates.empty:
         return pd.DataFrame()
     labels = aggregate_trade_labels(trades, config)
@@ -244,19 +253,16 @@ def apply_fx_ml_filter(
         np.maximum(_as_float_series(working["signal_score"]).fillna(0.0), working["ml_probability"].fillna(0.0)),
         _as_float_series(working["signal_score"]).fillna(0.0),
     )
-    explanations: list[str] = []
-    for timestamp, row in working.iterrows():
-        explanation = str(row.get("explanation_ja", ""))
-        if timestamp in candidate_index:
-            probability = float(row.get("ml_probability") or 0.0)
-            decision = bool(row.get("ml_decision", False))
-            explanation = (
-                f"{explanation} / ML確率={probability:.2f} / {'参加許可' if decision else '参加見送り'}"
-                if explanation
-                else f"ML確率={probability:.2f} / {'参加許可' if decision else '参加見送り'}"
-            )
-        explanations.append(explanation)
-    working["explanation_ja"] = explanations
+    explanation_source = working.get("explanation_ja", pd.Series("", index=working.index))
+    working["explanation_ja"] = explanation_source.fillna("").astype(str)
+    candidate_rows = working.loc[candidate_index, ["explanation_ja", "ml_probability", "ml_decision"]]
+    updated_explanations = []
+    for explanation, probability, decision in candidate_rows.itertuples(index=False, name=None):
+        probability_value = float(probability or 0.0)
+        decision_label = "参加許可" if bool(decision) else "参加見送り"
+        ml_text = f"ML確率={probability_value:.2f} / {decision_label}"
+        updated_explanations.append(f"{explanation} / {ml_text}" if explanation else ml_text)
+    working.loc[candidate_index, "explanation_ja"] = updated_explanations
     return working
 
 

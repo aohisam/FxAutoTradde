@@ -26,6 +26,7 @@ dependencies = [
   "PyYAML==6.0.3",
   "ruff>=0.4.4",
   "typer==0.23.1",
+  "websocket-client==1.8.0",
 ]
 
 [project.optional-dependencies]

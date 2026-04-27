@@ -183,6 +183,11 @@ class FxQuotePortfolioSimulator:
         *,
         initial_state: FxSimulationState | None = None,
         process_until: pd.Timestamp | None = None,
+        collect_equity: bool = True,
+        collect_orders: bool = True,
+        collect_fills: bool = True,
+        collect_trades: bool = True,
+        collect_positions: bool = True,
     ) -> dict[str, object]:
         state = initial_state or FxSimulationState(
             cash=float(self.config.risk.starting_cash),
@@ -212,13 +217,14 @@ class FxQuotePortfolioSimulator:
             if process_until is not None and timestamp >= process_until:
                 break
             prices: dict[str, float] = {}
-            for symbol, frame in prepared.items():
-                if timestamp in frame.index:
-                    position = positions.get(symbol)
-                    if position is None:
-                        prices[symbol] = self._quote_price(frame.loc[timestamp], "bid", "close", 0.0)
-                    else:
-                        prices[symbol] = self._mark_to_market_price(frame.loc[timestamp], position)
+            if collect_equity:
+                for symbol, frame in prepared.items():
+                    if timestamp in frame.index:
+                        position = positions.get(symbol)
+                        if position is None:
+                            prices[symbol] = self._quote_price(frame.loc[timestamp], "bid", "close", 0.0)
+                        else:
+                            prices[symbol] = self._mark_to_market_price(frame.loc[timestamp], position)
             for symbol, frame in prepared.items():
                 if timestamp not in frame.index:
                     continue
@@ -231,11 +237,11 @@ class FxQuotePortfolioSimulator:
                         mode,
                     )
                     cash += cash_delta
-                    if order_row is not None:
+                    if collect_orders and order_row is not None:
                         order_records.append(order_row)
-                    if fill_row is not None:
+                    if collect_fills and fill_row is not None:
                         fill_records.append(fill_row)
-                    if trade_row is not None:
+                    if collect_trades and trade_row is not None:
                         trade_records.append(trade_row)
                     if closed:
                         positions.pop(symbol, None)
@@ -249,9 +255,11 @@ class FxQuotePortfolioSimulator:
                         mode,
                     )
                     cash += cash_delta
-                    order_records.append(order_row)
-                    fill_records.append(fill_row)
-                    if trade_row is not None:
+                    if collect_orders:
+                        order_records.append(order_row)
+                    if collect_fills:
+                        fill_records.append(fill_row)
+                    if collect_trades and trade_row is not None:
                         trade_records.append(trade_row)
                     if positions[symbol].quantity <= 0:
                         positions.pop(symbol, None)
@@ -264,11 +272,11 @@ class FxQuotePortfolioSimulator:
                         mode,
                     )
                     cash += cash_delta
-                    if order_row is not None:
+                    if collect_orders and order_row is not None:
                         order_records.append(order_row)
-                    if fill_row is not None:
+                    if collect_fills and fill_row is not None:
                         fill_records.append(fill_row)
-                    if trade_row is not None:
+                    if collect_trades and trade_row is not None:
                         trade_records.append(trade_row)
                     if position is not None:
                         positions[symbol] = position
@@ -339,34 +347,37 @@ class FxQuotePortfolioSimulator:
                                     kind="partial_exit",
                                 )
 
-            equity = cash
-            exposure = 0.0
-            for symbol, position in positions.items():
-                current_price = prices.get(symbol, position.entry_price)
-                market_value = self._position_market_value(position, current_price)
-                exposure += abs(market_value)
-                equity += market_value
-                position_rows.append(
+            if collect_equity:
+                equity = cash
+                exposure = 0.0
+                for symbol, position in positions.items():
+                    current_price = prices.get(symbol, position.entry_price)
+                    market_value = self._position_market_value(position, current_price)
+                    exposure += abs(market_value)
+                    equity += market_value
+                equity_rows.append(
                     {
                         "timestamp": timestamp,
-                        "symbol": symbol,
-                        "position_side": position.position_side,
-                        "quantity": position.quantity,
-                        "entry_price": position.entry_price,
-                        "initial_stop_price": position.initial_stop_price,
-                        "trailing_stop_price": position.trailing_stop_price,
-                        "partial_exit_done": position.partial_exit_done,
-                        "strategy_state": position.lifecycle_state,
+                        "cash": cash,
+                        "equity": equity,
+                        "exposure": exposure,
                     }
                 )
-            equity_rows.append(
-                {
-                    "timestamp": timestamp,
-                    "cash": cash,
-                    "equity": equity,
-                    "exposure": exposure,
-                }
-            )
+            if collect_positions:
+                for symbol, position in positions.items():
+                    position_rows.append(
+                        {
+                            "timestamp": timestamp,
+                            "symbol": symbol,
+                            "position_side": position.position_side,
+                            "quantity": position.quantity,
+                            "entry_price": position.entry_price,
+                            "initial_stop_price": position.initial_stop_price,
+                            "trailing_stop_price": position.trailing_stop_price,
+                            "partial_exit_done": position.partial_exit_done,
+                            "strategy_state": position.lifecycle_state,
+                        }
+                    )
 
         return {
             "equity_curve": pd.DataFrame(equity_rows).set_index("timestamp") if equity_rows else pd.DataFrame(),

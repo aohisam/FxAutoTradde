@@ -98,8 +98,9 @@ def _detail_frame(details: list[dict[str, object]]) -> pd.DataFrame:
 
 
 def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
-    from PySide6.QtCore import QDate, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
+        QAbstractItemView,
         QCheckBox,
         QDateEdit,
         QFileDialog,
@@ -199,10 +200,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     start_date = create_popup_date_edit("start")
     end_date = create_popup_date_edit("end")
-    configured_start = QDate.fromString(app_state.config.data.start_date, "yyyy-MM-dd")
-    configured_end = QDate.fromString(app_state.config.data.end_date, "yyyy-MM-dd")
-    start_date.setDate(configured_start if configured_start.isValid() else default_popup_qdate("start"))
-    end_date.setDate(configured_end if configured_end.isValid() else default_popup_qdate("end"))
+    start_date.setDate(default_popup_qdate("start"))
+    end_date.setDate(default_popup_qdate("end"))
 
     tf_seg = SegmentedControl(SEG_TF_LABELS, current=2, data=SEG_TF_LABELS)
     try:
@@ -311,8 +310,11 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     result_table.setAlternatingRowColors(False)
     result_table.setShowGrid(False)
     result_table.verticalHeader().setVisible(False)
+    result_table.setWordWrap(False)
+    result_table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    result_table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     result_table.horizontalHeader().setStretchLastSection(True)
-    result_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+    result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
     result_table.setMinimumHeight(320)
     result_model = DataFrameTableModel()
     result_table.setModel(result_model)
@@ -382,6 +384,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             progress_status.setText("待機中")
 
     def refresh_summary() -> None:
+        if not page.isVisible():
+            return
         cache_dir = Path(app_state.config.data.cache_dir)
         files = list(cache_dir.rglob("*.parquet")) if cache_dir.exists() else []
         total_bytes = sum(path.stat().st_size for path in files) if files else 0
@@ -467,7 +471,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             for timeframe in result.get("timeframes", [])
         ]
         result_model.set_frame(_detail_frame(detail_rows))
-        result_table.resizeColumnsToContents()
+        _apply_result_widths()
         last_run_chip.set_text(f"CSV: {result['symbol']}")
         last_run_chip.set_tone("info")
         append_log("OK", f"CSV インポート完了: {result['symbol']}")
@@ -496,7 +500,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         refresh_summary()
         details = result.get("details", [])
         result_model.set_frame(_detail_frame(details))
-        result_table.resizeColumnsToContents()
+        _apply_result_widths()
         start = result.get("start_date", app_state.config.data.start_date)
         end = result.get("end_date", app_state.config.data.end_date)
         last_run_chip.set_text(f"同期: {start} - {end}")
@@ -618,7 +622,15 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     refresh_icon_btn.clicked.connect(refresh_summary)
     source_seg.currentChanged.connect(lambda _: update_hint())
 
+    def _apply_result_widths() -> None:
+        width_map = {0: 90, 1: 110, 2: 80, 3: 84, 4: 150, 5: 150, 6: 92, 7: 240}
+        header = result_table.horizontalHeader()
+        for column, width in width_map.items():
+            if column < result_model.columnCount():
+                header.resizeSection(column, width)
+
     page.refresh = refresh_summary
     update_hint()
-    refresh_summary()
+    if page.isVisible():
+        refresh_summary()
     return page

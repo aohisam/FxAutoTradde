@@ -76,10 +76,68 @@ def test_sync_refreshes_gmo_cache_and_reports_quote_details(tmp_path, monkeypatc
     assert cached_after.index.max() == refreshed.index.max()
     assert ("USD_JPY", TimeFrame.MIN_1) in calls
     assert len(calls) >= 1
-    assert summary["force_refresh"] is True
+    assert summary["force_refresh"] is False
     assert summary["sync_mode"] == "incremental"
     assert summary["symbols"] == 1
     assert summary["details"][0]["source"] == "gmo_incremental"
+
+
+def test_gmo_sync_skips_fetch_when_requested_window_has_coverage(tmp_path, monkeypatch):
+    config = load_app_config(
+        write_config(tmp_path, strategy_name="fx_breakout_pullback"),
+        overrides={
+            "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": [], "sector_symbols": []},
+            "data": {
+                "source": "gmo",
+                "cache_dir": str(tmp_path / "cache"),
+                "timeframes": ["1Min"],
+                "start_date": "2026-04-14",
+                "end_date": "2026-04-14",
+            },
+            "strategy": {"entry_timeframe": "1Min"},
+        },
+    )
+    service = MarketDataService(config, EnvironmentConfig())
+    window_start = pd.Timestamp("2026-04-14 00:00:00", tz=ASIA_TOKYO)
+    window_end = pd.Timestamp("2026-04-15 00:00:00", tz=ASIA_TOKYO)
+    freq_by_timeframe = {
+        TimeFrame.MIN_1: "1min",
+        TimeFrame.MIN_5: "5min",
+        TimeFrame.MIN_15: "15min",
+        TimeFrame.HOUR_1: "1h",
+        TimeFrame.HOUR_4: "4h",
+        TimeFrame.DAY_1: "1D",
+        TimeFrame.WEEK_1: "1D",
+        TimeFrame.MONTH_1: "1D",
+    }
+    for timeframe in service._normalized_timeframes(None):
+        cached = _make_quote_frame(
+            "USD_JPY",
+            "2026-04-14 00:00:00",
+            2,
+            freq=freq_by_timeframe.get(timeframe, "1h"),
+        )
+        service.cache.save("USD_JPY", timeframe, cached)
+        for source_key in ("gmo_bid", "gmo_ask"):
+            service.cache.record_coverage(
+                "USD_JPY",
+                timeframe,
+                window_start,
+                window_end,
+                source_key=source_key,
+            )
+
+    def fail_fetch_bars(*args, **kwargs):  # noqa: ANN001
+        _ = args, kwargs
+        raise AssertionError("covered GMO sync should not fetch")
+
+    monkeypatch.setattr(service.gmo, "fetch_bars", fail_fetch_bars)
+
+    summary = service.sync()
+
+    assert summary["force_refresh"] is False
+    assert summary["sync_mode"] == "incremental"
+    assert summary["details"][0]["source"] == "gmo_cache"
 
 
 def test_parquet_cache_load_window_returns_requested_slice(tmp_path) -> None:

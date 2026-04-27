@@ -13,6 +13,10 @@ import yaml
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.core.models import BacktestResult
 from fxautotrade_lab.reporting.html import write_html_report
+from fxautotrade_lab.reporting.signal_snapshot import (
+    build_signal_snapshot_payload,
+    write_signal_snapshot_artifacts,
+)
 
 
 def _sanitize_scalar(value):
@@ -51,6 +55,15 @@ def export_backtest_artifacts(result: BacktestResult, config: AppConfig) -> Path
         _write_frame_csv(result.drawdown_curve, output_dir / "drawdown.csv")
         _write_frame_csv(result.signals, output_dir / "signal_log.csv")
         _write_frame_csv(_monthly_returns(result.equity_curve), output_dir / "monthly_returns.csv")
+    signal_snapshot = build_signal_snapshot_payload(
+        result.signals,
+        trades=result.trades,
+        threshold=0.55,
+        recent_limit=300,
+        bins=11,
+        symbol_limit=5,
+    )
+    write_signal_snapshot_artifacts(output_dir, signal_snapshot)
     (output_dir / "summary.md").write_text(
         _summary_markdown(result),
         encoding="utf-8",
@@ -78,6 +91,14 @@ def _monthly_returns(equity_curve: pd.DataFrame) -> pd.DataFrame:
 
 
 def _summary_markdown(result: BacktestResult) -> str:
+    net_profit = float(result.metrics.get("net_profit", 0.0) or 0.0)
+    ending_equity = float(
+        result.metrics.get(
+            "ending_equity",
+            result.starting_cash + net_profit,
+        )
+        or (result.starting_cash + net_profit)
+    )
     lines = [
         "# 実行サマリー",
         "",
@@ -88,6 +109,8 @@ def _summary_markdown(result: BacktestResult) -> str:
         f"- 検証期間: {result.backtest_start} - {result.backtest_end}",
         f"- 初期資産: {result.starting_cash:,.2f} JPY",
         f"- 総損益: {result.metrics.get('total_return', 0):.2%}",
+        f"- 実額損益: {net_profit:+,.2f} JPY",
+        f"- 最終資産: {ending_equity:,.2f} JPY",
         f"- 最大ドローダウン: {result.metrics.get('max_drawdown', 0):.2%}",
         f"- 勝率: {result.metrics.get('win_rate', 0):.2%}",
         f"- In-Sample シャープ: {result.in_sample_metrics.get('sharpe', 0) or 0:.2f}",

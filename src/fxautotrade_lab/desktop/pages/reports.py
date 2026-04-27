@@ -134,7 +134,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             super().initStyleOption(option, index)
             option.displayAlignment = Qt.AlignRight | Qt.AlignVCenter
             option.font.setFamily("JetBrains Mono")
-            text = str(option.text or "").strip()
+            text = str(index.data(Qt.DisplayRole) or "").strip()
             if not text or text in ("-", "-%"):
                 return
             if text.startswith("+"):
@@ -169,6 +169,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     layout = QVBoxLayout(page)
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
+    page._delegates = []  # type: ignore[attr-defined]
 
     # Header
     header = QHBoxLayout()
@@ -209,7 +210,10 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     all_view.verticalHeader().setVisible(False)
     hdr = all_view.horizontalHeader()
     hdr.setStretchLastSection(False)
-    hdr.setSectionResizeMode(QHeaderView.ResizeToContents)
+    hdr.setSectionResizeMode(QHeaderView.Interactive)
+    all_view.setWordWrap(False)
+    all_view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    all_view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     all_view.setMinimumHeight(320)
     all_model = DataFrameTableModel()
     all_view.setModel(all_model)
@@ -362,16 +366,32 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             )
         return pd.DataFrame(rows)
 
+    page._open_delegate = None  # type: ignore[attr-defined]
+
     def _install_table_delegates() -> None:
-        all_view.setItemDelegateForColumn(0, SymbolDelegate(all_view))
-        for column in (3, 5, 7):
-            all_view.setItemDelegateForColumn(column, MonoRightDelegate(all_view))
-        all_view.setItemDelegateForColumn(4, PnLPctDelegate(all_view))
-        all_view.setItemDelegateForColumn(6, PnLPctDelegate(all_view))
-        all_view.setItemDelegateForColumn(
-            9,
-            OpenButtonDelegate(all_view, on_click=_handle_table_open),
-        )
+        if getattr(page, "_open_delegate", None) is None:
+            open_delegate = OpenButtonDelegate(all_view, on_click=_handle_table_open)
+            page._delegates.append(open_delegate)
+            page._open_delegate = open_delegate  # type: ignore[attr-defined]
+        all_view.setItemDelegateForColumn(9, page._open_delegate)
+
+    def _apply_table_widths() -> None:
+        width_map = {
+            0: 230,
+            1: 150,
+            2: 130,
+            3: 90,
+            4: 90,
+            5: 72,
+            6: 72,
+            7: 72,
+            8: 110,
+            9: 84,
+        }
+        header = all_view.horizontalHeader()
+        for column, width in width_map.items():
+            if column < all_model.columnCount():
+                header.resizeSection(column, width)
 
     def _handle_table_open(row_index: int) -> None:
         if 0 <= row_index < len(page._runs_cache):
@@ -414,6 +434,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
         frame = _all_runs_frame(runs)
         all_model.set_frame(frame)
         _install_table_delegates()
+        _apply_table_widths()
         count_label.setText(f"{len(runs):,} 件")
 
     # ---- Wiring ----------------------------------------------------------
@@ -421,6 +442,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     folder_btn.clicked.connect(_open_reports_folder)
     generate_btn.clicked.connect(_generate_latest_report)
 
-    page.refresh = _reload
-    _reload()
+    page.refresh = lambda: _reload() if page.isVisible() else None
+    if page.isVisible():
+        _reload()
     return page

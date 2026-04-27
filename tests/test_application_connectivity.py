@@ -310,17 +310,6 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
 
         load_symbol_frames = load_runtime_symbol_frames
 
-    class DummyStrategy:
-        def generate_signal_frame(self, working: pd.DataFrame) -> pd.DataFrame:
-            calls["signals"] += 1
-            return pd.DataFrame(
-                {
-                    "signal_action": ["hold"] * len(working.index),
-                    "signal_score": [0.0] * len(working.index),
-                },
-                index=working.index,
-            )
-
     def fake_build_features(symbol, bars_by_timeframe, benchmark_bars, sector_bars, config):  # noqa: ANN001
         calls["features"] += 1
         _ = symbol, bars_by_timeframe, benchmark_bars, sector_bars, config
@@ -333,7 +322,6 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
 
     monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
     monkeypatch.setattr("fxautotrade_lab.application.build_multi_timeframe_feature_set", fake_build_features)
-    monkeypatch.setattr("fxautotrade_lab.application.create_strategy", lambda config: DummyStrategy())
     monkeypatch.setattr(
         LabApplication,
         "runtime_status_snapshot",
@@ -353,8 +341,46 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
     assert not second["frame"].empty
     assert not third["frame"].empty
     assert calls["loads"] == 2
-    assert calls["features"] == 2
-    assert calls["signals"] == 2
+    assert calls["features"] == 0
+    assert calls["signals"] == 0
+
+
+def test_application_load_chart_dataset_limits_loader_to_selected_timeframe(monkeypatch, tmp_path):
+    app = LabApplication(write_config(tmp_path))
+    app.config.data.max_bars_per_symbol = 750
+    captured: dict[str, object] = {}
+    index = pd.date_range("2024-01-01 00:00:00", periods=900, freq="15min", tz=ASIA_TOKYO)
+    frame = pd.DataFrame(
+        {
+            "open": [150.0] * len(index),
+            "high": [150.2] * len(index),
+            "low": [149.9] * len(index),
+            "close": [150.1] * len(index),
+            "volume": [1000.0] * len(index),
+        },
+        index=index,
+    )
+
+    class FakeMarketDataService:
+        def __init__(self, config, env) -> None:  # noqa: ANN001
+            _ = config, env
+
+        def load_symbol_frames(self, symbol: str, **kwargs):  # noqa: ANN001
+            captured["symbol"] = symbol
+            captured["kwargs"] = dict(kwargs)
+            return {TimeFrame.MIN_15: frame}
+
+        load_runtime_symbol_frames = load_symbol_frames
+
+    monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
+
+    dataset = app.load_chart_dataset("USD_JPY", "15m")
+
+    assert captured["symbol"] == "USD_JPY"
+    assert captured["kwargs"]["timeframes"] == [TimeFrame.MIN_15]
+    assert "start" in captured["kwargs"]
+    assert "end" in captured["kwargs"]
+    assert len(dataset["frame"]) == 750
 
 
 def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tmp_path):

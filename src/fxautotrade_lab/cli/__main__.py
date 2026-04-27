@@ -65,6 +65,60 @@ def _typer_main() -> None:
         )
         typer.echo(f"Bid/Ask CSV 取込完了: {summary}")
 
+    @app.command("import-tick-csv")
+    def import_tick_csv(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+        file_path: str = typer.Option(..., "--file", help="JForex tick CSV"),
+        symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時はファイル名から推定"),
+    ) -> None:
+        summary = LabApplication(Path(config)).import_jforex_tick_csv(
+            file_path=file_path,
+            symbol=symbol or None,
+        )
+        typer.echo(f"JForex tick CSV 取込完了: {summary}")
+
+    @app.command("scalping-backtest")
+    def scalping_backtest(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+        tick_file: str = typer.Option("", "--tick-file", help="取り込みも同時に行う JForex tick CSV"),
+        symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時は watchlist 先頭"),
+        start: str = typer.Option("", "--start", help="検証開始日時"),
+        end: str = typer.Option("", "--end", help="検証終了日時"),
+    ) -> None:
+        summary = LabApplication(Path(config)).run_scalping_backtest(
+            tick_file_path=tick_file or None,
+            symbol=symbol or None,
+            start=start or None,
+            end=end or None,
+        )
+        typer.echo(f"スキャルピングバックテスト完了: {summary}")
+
+    @app.command("scalping-realtime-sim")
+    def scalping_realtime_sim(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+        symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時は watchlist 先頭"),
+        max_ticks: int = typer.Option(120, "--max-ticks", help="取得tick数"),
+        poll_seconds: float = typer.Option(1.0, "--poll-seconds", help="REST ticker の取得間隔"),
+    ) -> None:
+        summary = LabApplication(Path(config)).run_scalping_realtime_sim(
+            symbol=symbol or None,
+            max_ticks=max_ticks,
+            poll_seconds=poll_seconds,
+        )
+        typer.echo(f"スキャルピング実時間paperシミュレーション完了: {summary}")
+
+    @app.command("record-gmo-ticks")
+    def record_gmo_ticks(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+        symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時は watchlist 先頭"),
+        max_ticks: int = typer.Option(0, "--max-ticks", help="記録tick数。0 は停止するまで記録"),
+    ) -> None:
+        summary = LabApplication(Path(config)).record_gmo_scalping_ticks(
+            symbol=symbol or None,
+            max_ticks=max_ticks or None,
+        )
+        typer.echo(f"GMO WebSocket tick 記録完了: {summary}")
+
     @app.command("realtime-sim")
     def realtime_sim(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
@@ -127,6 +181,21 @@ def _argparse_main() -> None:
     import_bidask.add_argument("--bid-file", required=True)
     import_bidask.add_argument("--ask-file", required=True)
     import_bidask.add_argument("--symbol", default="")
+    import_tick = subparsers.add_parser("import-tick-csv", parents=[config_parser])
+    import_tick.add_argument("--file", required=True)
+    import_tick.add_argument("--symbol", default="")
+    scalping = subparsers.add_parser("scalping-backtest", parents=[config_parser])
+    scalping.add_argument("--tick-file", default="")
+    scalping.add_argument("--symbol", default="")
+    scalping.add_argument("--start", default="")
+    scalping.add_argument("--end", default="")
+    scalping_rt = subparsers.add_parser("scalping-realtime-sim", parents=[config_parser])
+    scalping_rt.add_argument("--symbol", default="")
+    scalping_rt.add_argument("--max-ticks", type=int, default=120)
+    scalping_rt.add_argument("--poll-seconds", type=float, default=1.0)
+    record_gmo = subparsers.add_parser("record-gmo-ticks", parents=[config_parser])
+    record_gmo.add_argument("--symbol", default="")
+    record_gmo.add_argument("--max-ticks", type=int, default=0)
     realtime = subparsers.add_parser("realtime-sim", parents=[config_parser])
     realtime.add_argument("--max-cycles", type=int, default=None)
     subparsers.add_parser("demo-run", parents=[config_parser])
@@ -158,6 +227,33 @@ def _argparse_main() -> None:
             bid_file_path=args.bid_file,
             ask_file_path=args.ask_file,
             symbol=args.symbol or None,
+        )
+        print(summary)
+    elif args.command == "import-tick-csv":
+        summary = LabApplication(Path(args.config)).import_jforex_tick_csv(
+            file_path=args.file,
+            symbol=args.symbol or None,
+        )
+        print(summary)
+    elif args.command == "scalping-backtest":
+        summary = LabApplication(Path(args.config)).run_scalping_backtest(
+            tick_file_path=args.tick_file or None,
+            symbol=args.symbol or None,
+            start=args.start or None,
+            end=args.end or None,
+        )
+        print(summary)
+    elif args.command == "scalping-realtime-sim":
+        summary = LabApplication(Path(args.config)).run_scalping_realtime_sim(
+            symbol=args.symbol or None,
+            max_ticks=args.max_ticks,
+            poll_seconds=args.poll_seconds,
+        )
+        print(summary)
+    elif args.command == "record-gmo-ticks":
+        summary = LabApplication(Path(args.config)).record_gmo_scalping_ticks(
+            symbol=args.symbol or None,
+            max_ticks=args.max_ticks or None,
         )
         print(summary)
     elif args.command == "realtime-sim":

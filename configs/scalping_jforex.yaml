@@ -1,0 +1,52 @@
+app_name: FXAutoTrade Lab
+watchlist:
+  symbols: ["USD_JPY"]
+  benchmark_symbols: ["USD_JPY"]
+  sector_symbols: []
+data:
+  source: csv
+  cache_dir: data_cache
+  import_dir: imports
+  start_date: "2026-02-01"
+  end_date: "2026-03-01"
+  timeframes: ["1Min", "15Min", "1Hour", "1Day"]
+  preferred_entry_timeframe: "1Min"
+strategy:
+  name: fx_scalping
+  entry_timeframe: "1Min"
+  fx_scalping:
+    enabled: true
+    tick_cache_dir: tick_cache
+    bar_rule: "1s"
+    take_profit_pips: 1.6
+    stop_loss_pips: 1.2
+    max_hold_seconds: 90
+    round_trip_slippage_pips: 0.15
+    fee_pips: 0.0
+    max_spread_pips: 0.6
+    min_volatility_pips: 0.03
+    decision_threshold: 0.58
+    min_samples: 200
+    min_threshold_trades: 20
+    train_ratio: 0.70
+    model_dir: models/fx_scalping
+    latest_model_alias: latest_scalping_model.json
+    entry_latency_ms: 250
+    cooldown_seconds: 5
+    max_trades_per_day: 120
+broker:
+  mode: local_sim
+risk:
+  account_currency: JPY
+  starting_cash: 5000000.0
+  fixed_order_amount: 300000.0
+  minimum_order_quantity: 1000
+  quantity_step: 1000
+  max_symbol_exposure: 0.25
+  max_daily_loss_amount: 100000.0
+automation:
+  enabled: false
+reporting:
+  output_dir: reports
+persistence:
+  sqlite_path: runtime/trading_lab.sqlite

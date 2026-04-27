@@ -12,7 +12,7 @@ _LATEST_MODEL_TOKEN = "__LATEST__"
 def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
     import pandas as pd
 
-    from PySide6.QtCore import QDate, Qt
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QCheckBox,
@@ -318,9 +318,13 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         view.setSelectionMode(QAbstractItemView.SingleSelection)
         view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         view.verticalHeader().setVisible(False)
+        view.verticalHeader().setDefaultSectionSize(30)
+        view.setWordWrap(False)
+        view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         header = view.horizontalHeader()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(QHeaderView.Interactive)
         view.setMinimumHeight(320)
 
     def _make_table() -> tuple[QTableView, DataFrameTableModel]:
@@ -368,12 +372,6 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             text = text.rstrip("0").rstrip(".")
         return text
 
-    def parse_qdate(value: str, fallback: QDate) -> QDate:
-        parsed = QDate.fromString(value, "yyyy-MM-dd")
-        if parsed.isValid():
-            return parsed
-        return fallback
-
     def tone_for(value: float) -> str | None:
         if value > 0:
             return "pos"
@@ -415,11 +413,12 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             out["損益"] = 0
         out["状態"] = df["status"].astype(str) if "status" in df.columns else "約定済み"
         if "explanation_ja" in df.columns:
-            out["説明"] = df["explanation_ja"].astype(str)
+            explanations = df["explanation_ja"].astype(str)
         elif "explanation" in df.columns:
-            out["説明"] = df["explanation"].astype(str)
+            explanations = df["explanation"].astype(str)
         else:
-            out["説明"] = ""
+            explanations = pd.Series([""] * len(df), index=df.index)
+        out["説明"] = explanations.map(lambda value: value if len(value) <= 48 else f"{value[:48]}…")
         return out.tail(300)
 
     def selected_strategy_name() -> str:
@@ -472,18 +471,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         _set_combo_by_data(ml_mode_combo, app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
         current_mode = app_state.config.research.mode
         research_seg.setCurrentData(current_mode)
-        start_date.setDate(
-            parse_qdate(
-                app_state.config.backtest.start_date or app_state.config.data.start_date,
-                default_popup_qdate("start"),
-            )
-        )
-        end_date.setDate(
-            parse_qdate(
-                app_state.config.backtest.end_date or app_state.config.data.end_date,
-                default_popup_qdate("end"),
-            )
-        )
+        start_date.setDate(default_popup_qdate("start"))
+        end_date.setDate(default_popup_qdate("end"))
         try:
             entry_tf = app_state.config.strategy.entry_timeframe.value
             mapping = {"5Min": 0, "15Min": 1, "1Hour": 2, "4Hour": 3}
@@ -638,19 +627,51 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         result = app_state.last_result
         run_id_hint.setText(result.run_id)
         total_return = result.metrics.get("total_return", 0)
+        net_profit = float(
+            result.metrics.get(
+                "net_profit",
+                (
+                    float(result.equity_curve["equity"].iloc[-1]) - float(result.starting_cash)
+                    if result.equity_curve is not None and not result.equity_curve.empty
+                    else 0.0
+                ),
+            )
+            or 0.0
+        )
+        ending_equity = float(
+            result.metrics.get(
+                "ending_equity",
+                (
+                    float(result.equity_curve["equity"].iloc[-1])
+                    if result.equity_curve is not None and not result.equity_curve.empty
+                    else float(result.starting_cash)
+                ),
+            )
+            or result.starting_cash
+        )
         metric_tiles["total_return"].set_value(f"{total_return:+.2%}", tone=tone_for(total_return))
+        metric_tiles["total_return"].set_note(
+            f"{net_profit:+,.0f} JPY / 最終資産 {ending_equity:,.0f} JPY"
+        )
         annualized = result.metrics.get("annualized_return", 0)
         metric_tiles["annualized_return"].set_value(f"{annualized:+.2%}", tone=tone_for(annualized))
+        metric_tiles["annualized_return"].set_note("年率換算ベース")
         drawdown = result.metrics.get("max_drawdown", 0)
         metric_tiles["max_drawdown"].set_value(f"{drawdown:.2%}", tone="neg" if drawdown < 0 else None)
+        metric_tiles["max_drawdown"].set_note("")
         metric_tiles["win_rate"].set_value(f"{result.metrics.get('win_rate', 0):.2%}")
+        metric_tiles["win_rate"].set_note("")
         metric_tiles["sharpe"].set_value(f"{(result.metrics.get('sharpe') or 0):.2f}")
+        metric_tiles["sharpe"].set_note("")
         metric_tiles["trades"].set_value(str(result.metrics.get("number_of_trades", 0)))
+        metric_tiles["trades"].set_note("")
         metric_tiles["avg_hold"].set_value(f"{result.metrics.get('average_hold_bars', 0):.2f}")
+        metric_tiles["avg_hold"].set_note("平均バー数")
         metric_tiles["sample_split"].set_value(
             f"{result.in_sample_metrics.get('total_return', 0):+.2%} / "
             f"{result.out_of_sample_metrics.get('total_return', 0):+.2%}"
         )
+        metric_tiles["sample_split"].set_note("IS / OOS")
         trades_model.set_frame(_trades_frame(result.trades))
         signal_columns = [
             "timestamp",
@@ -663,11 +684,16 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             "explanation_ja",
         ]
         available_signal_columns = [c for c in signal_columns if c in result.signals.columns]
-        signals_model.set_frame(
-            result.signals[available_signal_columns].tail(300)
-            if available_signal_columns
-            else None
-        )
+        if available_signal_columns:
+            signals_frame = result.signals[available_signal_columns].tail(300).copy()
+            if "explanation_ja" in signals_frame.columns:
+                explanations = signals_frame["explanation_ja"].astype(str)
+                signals_frame["explanation_ja"] = explanations.map(
+                    lambda value: value if len(value) <= 54 else f"{value[:54]}…"
+                )
+            signals_model.set_frame(signals_frame)
+        else:
+            signals_model.set_frame(None)
         attribution = result.metrics.get("per_symbol_contribution", {})
         attribution_model.set_frame(
             None
@@ -693,6 +719,20 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
                 ]
             )
         )
+        table_widths: dict[QTableView, dict[int, int]] = {
+            trades_view: {0: 90, 1: 100, 2: 70, 3: 70, 4: 84, 5: 96, 6: 90, 7: 340},
+            signals_view: {0: 120, 1: 100, 2: 84, 3: 72, 4: 76, 5: 96, 6: 110, 7: 360},
+            attribution_view: {0: 110, 1: 100},
+            walk_forward_view: {0: 60, 1: 90, 2: 90, 3: 84, 4: 84, 5: 96},
+        }
+        for table, widths in table_widths.items():
+            header = table.horizontalHeader()
+            model = table.model()
+            if model is None:
+                continue
+            for column, width in widths.items():
+                if column < model.columnCount():
+                    header.resizeSection(column, width)
 
     # ---- callbacks ----
 
@@ -872,7 +912,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def refresh_page() -> None:
         refresh_controls()
-        refresh_views()
+        if page.isVisible():
+            refresh_views()
 
     run_button.clicked.connect(run_backtest)
     reload_cfg_btn.clicked.connect(refresh_controls)
@@ -895,5 +936,6 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     page.refresh = refresh_page
     refresh_controls()
-    refresh_views()
+    if page.isVisible():
+        refresh_views()
     return page

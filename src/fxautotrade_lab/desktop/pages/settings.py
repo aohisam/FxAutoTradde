@@ -153,6 +153,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     reset_btn.setProperty("variant", "ghost")
     save_btn = QPushButton("設定を保存")
     save_btn.setProperty("variant", "primary")
+    save_status_chip = Chip("保存済み", "neutral")
+    save_status_chip.setToolTip("設定は保存済みです。")
+    header.addWidget(save_status_chip)
     header.addWidget(reset_btn)
     header.addWidget(save_btn)
     layout.addLayout(header)
@@ -338,6 +341,14 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     # ---- Shared helpers ---------------------------------------------------
 
     qsettings = QSettings("FXAutoTradeLab", "Desktop")
+
+    def _saved_at_label() -> str:
+        return datetime.now().astimezone().strftime("%H:%M:%S")
+
+    def _set_save_status(text: str, tone: str, tooltip: str) -> None:
+        save_status_chip.set_text(text)
+        save_status_chip.set_tone(tone)
+        save_status_chip.setToolTip(tooltip)
 
     def _render_snapshot() -> None:
         payload = _config_to_dict(app_state.config)
@@ -565,8 +576,20 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             if hasattr(app_state, "save_config"):
                 app_state.save_config()
             _render_snapshot()
+            saved_at = _saved_at_label()
+            _set_save_status(
+                f"保存しました {saved_at}",
+                "running",
+                f"設定を {saved_at} に保存しました。",
+            )
+            QMessageBox.information(page, "完了", "設定を保存しました。")
             log_message("設定を保存しました。")
         except Exception as exc:  # noqa: BLE001
+            _set_save_status(
+                "保存失敗",
+                "neg",
+                f"設定の保存に失敗しました: {exc}",
+            )
             QMessageBox.critical(page, "設定", f"保存に失敗しました: {exc}")
 
     def _reset() -> None:
@@ -586,6 +609,12 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
                     pass
                 break
         _rebind_from_config()
+        reset_at = _saved_at_label()
+        _set_save_status(
+            f"読み直しました {reset_at}",
+            "info",
+            f"保存済み設定を {reset_at} に読み直しました。",
+        )
         log_message("設定を読み直しました。")
 
     log_open_btn.clicked.connect(_open_log_file)
@@ -593,6 +622,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     save_btn.clicked.connect(_save)
     reset_btn.clicked.connect(_reset)
 
-    page.refresh = _rebind_from_config
-    _rebind_from_config()
+    page.refresh = lambda: _rebind_from_config() if page.isVisible() else None
+    if page.isVisible():
+        _rebind_from_config()
     return page

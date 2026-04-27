@@ -106,12 +106,14 @@ class MarketDataService:
         self,
         symbol: str,
         timeframes: list[TimeFrame] | None = None,
+        start: str | None = None,
         as_of: pd.Timestamp | None = None,
     ) -> dict[TimeFrame, pd.DataFrame]:
         runtime_as_of = as_of or pd.Timestamp.now(tz=ASIA_TOKYO)
         results = self._load_symbol_frame_results(
             symbol,
             timeframes=timeframes,
+            start=start,
             end=runtime_as_of.isoformat(),
             runtime_refresh=self._uses_gmo(),
         )
@@ -142,7 +144,7 @@ class MarketDataService:
         symbols: list[str] | None = None,
         progress_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> dict[str, object]:
-        force_refresh = self._uses_gmo()
+        force_refresh = False
         sync_mode = "incremental" if self._uses_gmo() else self.config.data.source
         sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] = {}
         selected_symbols = self._normalized_symbol_filter(symbols)
