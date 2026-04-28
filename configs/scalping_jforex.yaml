@@ -18,6 +18,7 @@ strategy:
     enabled: true
     tick_cache_dir: tick_cache
     bar_rule: "1s"
+    label_source: tick
     take_profit_pips: 1.6
     stop_loss_pips: 1.2
     max_hold_seconds: 90
@@ -29,11 +30,38 @@ strategy:
     min_samples: 200
     min_threshold_trades: 20
     train_ratio: 0.70
+    validation_ratio: 0.15
+    test_ratio: 0.15
+    purge_seconds: null
+    walk_forward_enabled: false
+    walk_forward_train_days: 20
+    walk_forward_validation_days: 5
+    walk_forward_test_days: 5
+    min_walk_forward_folds: 1
     model_dir: models/fx_scalping
     latest_model_alias: latest_scalping_model.json
     entry_latency_ms: 250
     cooldown_seconds: 5
     max_trades_per_day: 120
+    max_daily_loss_amount: 100000.0
+    max_consecutive_losses: 5
+    halt_for_day_on_daily_loss: true
+    halt_for_day_on_consecutive_losses: true
+    max_tick_gap_seconds: 5
+    reject_on_stale_ticks: true
+    max_spread_z: 4.0
+    max_spread_to_mean_ratio: 2.5
+    record_rejected_signals: true
+    max_rejected_signals: 200000
+    blackout_windows_jst:
+      - start: "05:55"
+        end: "06:10"
+        reason: rollover
+      - start: "21:25"
+        end: "21:40"
+        reason: manual_news_window
+    spread_stress_multipliers: [1.0, 1.2, 1.5, 2.0]
+    latency_ms_grid: [0, 250, 500, 1000]
 broker:
   mode: local_sim
 risk:

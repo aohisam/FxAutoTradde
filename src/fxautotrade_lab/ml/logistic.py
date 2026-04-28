@@ -83,7 +83,12 @@ class NumpyLogisticRegression:
 
     def predict_proba(self, features: pd.DataFrame) -> pd.Series:
         if list(features.columns) != self.feature_names:
-            raise ValueError("推論時の特徴量定義が学習時と一致しません。")
+            missing = [column for column in self.feature_names if column not in features.columns]
+            extra = [column for column in features.columns if column not in self.feature_names]
+            raise ValueError(
+                "推論時の特徴量定義が学習時と一致しません。"
+                f" 不足: {missing} / 余分: {extra}"
+            )
         x = features.astype("float64").to_numpy(copy=True)
         nan_mask = np.isnan(x)
         if nan_mask.any():

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -21,6 +23,7 @@ class RunView:
     starting_cash: float
     period_start: str
     period_end: str
+    report_kind: str = "backtest"
     is_latest: bool = field(default=False)
 
     @property
@@ -39,6 +42,55 @@ class RunView:
             if candidate.exists():
                 return candidate
         return None
+
+    @property
+    def kind_label_ja(self) -> str:
+        if self.report_kind == "scalping":
+            return "スキャルピング"
+        return "バックテスト"
+
+
+def load_scalping_report_rows(output_dir: Path) -> list[dict[str, Any]]:
+    """Load exported scalping pipeline summaries for the reports page."""
+
+    root = output_dir / "scalping"
+    if not root.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for summary_path in sorted(root.glob("*/summary.json")):
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        metrics = summary.get("metrics", {})
+        if not isinstance(metrics, dict):
+            metrics = {}
+        display_metrics = dict(metrics)
+        starting_equity = float(display_metrics.get("starting_equity", 0.0) or 0.0)
+        if starting_equity:
+            display_metrics["max_drawdown"] = (
+                float(display_metrics.get("max_drawdown", 0.0) or 0.0) / starting_equity
+            )
+        run_id = str(summary.get("run_id") or summary_path.parent.name)
+        finished_at = pd.Timestamp(
+            summary_path.stat().st_mtime, unit="s", tz="Asia/Tokyo"
+        ).isoformat()
+        rows.append(
+            {
+                "run_id": run_id,
+                "strategy_name": "fx_scalping",
+                "finished_at": finished_at,
+                "output_dir": str(summary_path.parent),
+                "metrics": display_metrics,
+                "start_date": str(summary.get("test_start") or summary.get("train_start") or ""),
+                "end_date": str(summary.get("test_end") or ""),
+                "report_kind": "scalping",
+                "model_summary": summary.get("model_summary", {}),
+                "summary_path": str(summary_path),
+            }
+        )
+    rows.sort(key=lambda row: str(row.get("finished_at", "")), reverse=True)
+    return rows
 
 
 def _to_run_view(row: dict, cfg) -> RunView:
@@ -65,6 +117,7 @@ def _to_run_view(row: dict, cfg) -> RunView:
         starting_cash=starting_cash,
         period_start=period_start,
         period_end=period_end,
+        report_kind=str(row.get("report_kind") or "backtest"),
     )
 
 
@@ -102,8 +155,8 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
         QMessageBox,
         QPushButton,
         QStyle,
-        QStyleOptionButton,
         QStyledItemDelegate,
+        QStyleOptionButton,
         QTableView,
         QVBoxLayout,
         QWidget,
@@ -114,7 +167,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
 
-    DataFrameTableModel = load_dataframe_model_class()
+    dataframe_table_model_class = load_dataframe_model_class()
 
     # ---- Delegates --------------------------------------------------------
 
@@ -158,7 +211,9 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             painter.restore()
 
         def editorEvent(self, event, model, option, index):  # noqa: N802
-            if event.type() == QEvent.MouseButtonRelease and option.rect.contains(event.position().toPoint()):
+            if event.type() == QEvent.MouseButtonRelease and option.rect.contains(
+                event.position().toPoint()
+            ):
                 self._on_click(index.row())
                 return True
             return False
@@ -178,7 +233,9 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     header_text.setSpacing(2)
     title = QLabel("レポート")
     title.setProperty("role", "h1")
-    subtitle = QLabel("実行ごとに生成された HTML / CSV レポートへアクセスできます。")
+    subtitle = QLabel(
+        "実行ごとに生成された HTML / CSV とスキャルピング検証レポートへアクセスできます。"
+    )
     subtitle.setProperty("role", "muted")
     subtitle.setWordWrap(True)
     header_text.addWidget(title)
@@ -215,7 +272,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
     all_view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
     all_view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
     all_view.setMinimumHeight(320)
-    all_model = DataFrameTableModel()
+    all_model = dataframe_table_model_class()
     all_view.setModel(all_model)
     all_card.addBodyWidget(all_view)
     layout.addWidget(all_card, 1)
@@ -242,6 +299,12 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
         QMessageBox.information(page, "レポート", missing_message)
 
     def _open_report_html(run: RunView) -> None:
+        if run.report_html_path is None and run.report_kind == "scalping":
+            _open_path(
+                run.output_dir,
+                f"スキャルピングレポートのフォルダが見つかりません: {run.run_id}",
+            )
+            return
         _open_path(run.report_html_path, f"HTML レポートが見つかりません: {run.run_id}")
 
     def _open_report_csv(run: RunView) -> None:
@@ -329,7 +392,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
         button_row = QHBoxLayout()
         button_row.setContentsMargins(0, 0, 0, 0)
         button_row.setSpacing(6)
-        html_btn = QPushButton("HTML を開く")
+        html_btn = QPushButton("開く")
         html_btn.setProperty("variant", "ghost")
         csv_btn = QPushButton("CSV")
         csv_btn.setProperty("variant", "ghost")
@@ -353,6 +416,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             rows.append(
                 {
                     "実行ID": run.run_id,
+                    "種類": run.kind_label_ja,
                     "戦略": run.strategy_name or "-",
                     "期間": _format_period(run.period_start, run.period_end),
                     "初期資産": f"{int(run.starting_cash):,}" if run.starting_cash else "-",
@@ -373,20 +437,21 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             open_delegate = OpenButtonDelegate(all_view, on_click=_handle_table_open)
             page._delegates.append(open_delegate)
             page._open_delegate = open_delegate  # type: ignore[attr-defined]
-        all_view.setItemDelegateForColumn(9, page._open_delegate)
+        all_view.setItemDelegateForColumn(10, page._open_delegate)
 
     def _apply_table_widths() -> None:
         width_map = {
             0: 230,
-            1: 150,
-            2: 130,
-            3: 90,
+            1: 110,
+            2: 150,
+            3: 130,
             4: 90,
-            5: 72,
+            5: 90,
             6: 72,
             7: 72,
-            8: 110,
-            9: 84,
+            8: 72,
+            9: 110,
+            10: 84,
         }
         header = all_view.horizontalHeader()
         for column, width in width_map.items():
@@ -413,6 +478,7 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
             raw_rows = list(app_state.list_runs() or [])
         except Exception:  # noqa: BLE001
             raw_rows = []
+        raw_rows.extend(load_scalping_report_rows(_reports_dir()))
         raw_rows.sort(key=lambda row: row.get("finished_at", ""), reverse=True)
         runs = [_to_run_view(row, cfg) for row in raw_rows]
         for index, run in enumerate(runs):
@@ -426,7 +492,9 @@ def build_reports_page(app_state, log_message=None):  # pragma: no cover - UI he
         if len(top3) < 3:
             pinned_row.addStretch(3 - len(top3))
         if not top3:
-            empty = QLabel("保存済み実行はまだありません。バックテストを実行するとここに表示されます。")
+            empty = QLabel(
+                "保存済み実行はまだありません。バックテストを実行するとここに表示されます。"
+            )
             empty.setProperty("role", "muted")
             empty.setWordWrap(True)
             pinned_row.insertWidget(0, empty, 3)

@@ -1107,10 +1107,14 @@ class LabApplication:
             "import_summary": import_summary or {},
             "train_start": result.train_start,
             "train_end": result.train_end,
+            "validation_start": result.validation_start,
+            "validation_end": result.validation_end,
             "test_start": result.test_start,
             "test_end": result.test_end,
             "metrics": result.backtest.metrics,
             "model_summary": result.backtest.model_summary,
+            "stress_rows": int(len(result.stress_results.index)),
+            "walk_forward_rows": int(len(result.walk_forward_results.index)),
         }
 
     def run_scalping_realtime_sim(

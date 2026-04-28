@@ -98,6 +98,50 @@ python -m fxautotrade_lab.cli import-bidask-csv \
 - spread 悪化 / entry delay の頑健性チェック
 - 感度表とレポート出力
 
+## スキャルピングML検証
+
+`scalping-backtest` は tick / 秒足向けの研究用パイプラインです。利益を保証するものではなく、未知期間で成績が崩れる前提を見つけるための検証基盤です。
+
+- ラベルは `max_hold_seconds` を実時間として扱い、不規則barや欠損barでも「行数=秒数」とみなしません。
+- `label_source: tick` では、entry latency 後の最初の tick、Bid/Ask による TP/SL 判定、round-trip fee を含む tick replay と同じ前提でラベルを作ります。`label_source: bar` は過去互換のfallbackです。
+- train / validation / test は purged split で分け、`max_hold_seconds`、entry latency、cooldown を含む境界purgeを入れます。
+- モデル係数は train で学習し、`decision_threshold` は validation で選び、test は最終評価まで使いません。
+- fee、slippage、spread、entry latency は tick replay の損益へ反映します。`realized_pips` は net pips の別名で、gross は `realized_gross_pips` を確認してください。
+- accepted / rejected signal を `signals.csv` に出力します。`reject_reason` で threshold不足、spread超過、volatility不足、cooldown、日次損失停止、連敗停止、stale tick、blackout などを確認できます。
+- backtest で labels がある場合だけ、分析用に `future_long_net_pips` などをjoinします。実時間paper simulationや将来のlive系では未来結果を使いません。
+- `blackout_windows_jst` でロールオーバーや手動ニュース回避時間を設定できます。日跨ぎwindowにも対応します。
+- `spread_stress_multipliers` と `latency_ms_grid` で spread拡大 / latency悪化のstress結果を `stress_results.csv` / JSON に保存します。stress結果は自動合否ではなく、脆弱性の警告材料です。
+- `max_daily_loss_amount` と `max_consecutive_losses` はtick replayの新規entry停止に使われ、翌日にはリセットされます。
+- デスクトップの「レポート」ページは、通常バックテストに加えて `reports/scalping/*/summary.json` のスキャルピング検証結果も一覧表示します。
+- 将来のprivate broker連携向けには `ScalpingOrderPlan` で注文意図を共通化しています。ただし既定はdry-runで、private brokerへの実注文送信は未実装かつ無効です。
+
+設定例:
+
+```yaml
+strategy:
+  fx_scalping:
+    label_source: tick
+    validation_ratio: 0.15
+    test_ratio: 0.15
+    purge_seconds: null
+    max_daily_loss_amount: 100000.0
+    max_consecutive_losses: 5
+    max_tick_gap_seconds: 5
+    blackout_windows_jst:
+      - start: "05:55"
+        end: "06:10"
+        reason: rollover
+      - start: "23:55"
+        end: "00:10"
+        reason: cross_midnight_manual
+    spread_stress_multipliers: [1.0, 1.2, 1.5, 2.0]
+    latency_ms_grid: [0, 250, 500, 1000]
+```
+
+特徴量列は拡張されています。古いスキャルピングモデルを新しい特徴量定義で黙って使うことはできません。読み込み時に日本語エラーを出すため、旧モデルは再学習してください。
+
+今回の変更でも live trading は既定で無効のままです。GMO private broker、実売買安全ゲート、実注文の部分約定や通信断の再現は別途検証が必要です。
+
 ## 実時間シミュレーション
 
 `configs/realtime_gmo_public.yaml` は GMO public API でレートを取得しつつ、約定自体はローカルで行う構成です。

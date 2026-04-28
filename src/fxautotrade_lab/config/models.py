@@ -8,7 +8,11 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from fxautotrade_lab.core.constants import DEFAULT_BENCHMARK_SYMBOLS, DEFAULT_CURRENCY, DEFAULT_SECTOR_SYMBOLS
+from fxautotrade_lab.core.constants import (
+    DEFAULT_BENCHMARK_SYMBOLS,
+    DEFAULT_CURRENCY,
+    DEFAULT_SECTOR_SYMBOLS,
+)
 from fxautotrade_lab.core.enums import BrokerMode, OrderSizingMode, TimeFrame
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
 from fxautotrade_lab.security.keychain import resolve_private_gmo_credentials
@@ -72,7 +76,12 @@ class DataConfig(BaseModel):
     start_date: str = "2024-01-01"
     end_date: str = "2026-04-15"
     timeframes: list[TimeFrame] = Field(
-        default_factory=lambda: [TimeFrame.DAY_1, TimeFrame.HOUR_1, TimeFrame.MIN_15, TimeFrame.MIN_1]
+        default_factory=lambda: [
+            TimeFrame.DAY_1,
+            TimeFrame.HOUR_1,
+            TimeFrame.MIN_15,
+            TimeFrame.MIN_1,
+        ]
     )
     preferred_entry_timeframe: TimeFrame = TimeFrame.MIN_1
     use_incremental_cache: bool = True
@@ -123,7 +132,9 @@ class FxEventFilterConfig(BaseModel):
         mode = str(value or "").strip().lower()
         allowed = {"warn_and_disable", "fail_closed", "fail_open"}
         if mode not in allowed:
-            raise ValueError(f"event failure mode は {sorted(allowed)} のいずれかを指定してください: {value}")
+            raise ValueError(
+                f"event failure mode は {sorted(allowed)} のいずれかを指定してください: {value}"
+            )
         return mode
 
 
@@ -160,10 +171,41 @@ class FxMlConfig(BaseModel):
     walk_forward: FxWalkForwardConfig = Field(default_factory=FxWalkForwardConfig)
 
 
+class BlackoutWindowConfig(BaseModel):
+    start: str
+    end: str
+    reason: str = "manual"
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_hhmm(cls, value: str) -> str:
+        text = str(value).strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            raise ValueError(f"blackout window の時刻は HH:MM 形式で指定してください: {value}")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError as exc:
+            raise ValueError(
+                f"blackout window の時刻は HH:MM 形式で指定してください: {value}"
+            ) from exc
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError(f"blackout window の時刻が範囲外です: {value}")
+        return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        reason = str(value or "").strip()
+        return reason or "manual"
+
+
 class FxScalpingConfig(BaseModel):
     enabled: bool = False
     tick_cache_dir: Path = Path("tick_cache")
     bar_rule: str = "1s"
+    label_source: str = "tick"
     pip_size: float | None = None
     take_profit_pips: float = 1.6
     stop_loss_pips: float = 1.2
@@ -176,6 +218,14 @@ class FxScalpingConfig(BaseModel):
     min_samples: int = 200
     min_threshold_trades: int = 20
     train_ratio: float = 0.70
+    validation_ratio: float = 0.15
+    test_ratio: float = 0.15
+    purge_seconds: int | None = None
+    walk_forward_enabled: bool = False
+    walk_forward_train_days: int = 20
+    walk_forward_validation_days: int = 5
+    walk_forward_test_days: int = 5
+    min_walk_forward_folds: int = 1
     model_dir: Path = Path("models/fx_scalping")
     latest_model_alias: str = "latest_scalping_model.json"
     learning_rate: float = 0.08
@@ -186,6 +236,29 @@ class FxScalpingConfig(BaseModel):
     entry_latency_ms: int = 250
     cooldown_seconds: int = 5
     max_trades_per_day: int = 120
+    max_daily_loss_amount: float | None = None
+    max_consecutive_losses: int | None = None
+    halt_for_day_on_daily_loss: bool = True
+    halt_for_day_on_consecutive_losses: bool = True
+    max_tick_gap_seconds: int | None = None
+    reject_on_stale_ticks: bool = True
+    max_spread_z: float | None = None
+    max_spread_to_mean_ratio: float | None = None
+    record_rejected_signals: bool = True
+    max_rejected_signals: int | None = None
+    blackout_windows_jst: list[BlackoutWindowConfig] = Field(default_factory=list)
+    spread_stress_multipliers: list[float] = Field(default_factory=lambda: [1.0])
+    latency_ms_grid: list[int] = Field(default_factory=lambda: [250])
+
+    @field_validator("label_source")
+    @classmethod
+    def validate_label_source(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"tick", "bar"}:
+            raise ValueError(
+                "スキャルピングMLの label_source は 'tick' または 'bar' を指定してください。"
+            )
+        return normalized
 
 
 class FxBreakoutPullbackConfig(BaseModel):
@@ -311,7 +384,9 @@ class AutomationConfig(BaseModel):
     sync_broker_state_each_cycle: bool = True
     reconcile_orders_limit: int = 50
     notifications_enabled: bool = True
-    notification_channels: NotificationChannelConfig = Field(default_factory=NotificationChannelConfig)
+    notification_channels: NotificationChannelConfig = Field(
+        default_factory=NotificationChannelConfig
+    )
     notify_on_start_stop: bool = True
     notify_on_orders: bool = True
     notify_on_errors: bool = True

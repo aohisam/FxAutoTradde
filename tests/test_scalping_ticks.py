@@ -89,5 +89,10 @@ def test_scalping_pipeline_trains_and_exports(tmp_path: Path) -> None:
     assert result.train_start
     assert result.test_start
     assert result.backtest.metrics["starting_equity"] == 100_000
+    assert result.backtest.metrics["label_source"] == "tick"
+    assert result.backtest.metrics["test_sample_count"] > 0
+    assert "stress_test_summary" in result.backtest.metrics
+    assert not result.stress_results.empty
     assert (tmp_path / "reports" / result.run_id / "summary.json").exists()
+    assert (tmp_path / "reports" / result.run_id / "stress_results.json").exists()
     assert (tmp_path / "models" / "latest_scalping_model.json").exists()

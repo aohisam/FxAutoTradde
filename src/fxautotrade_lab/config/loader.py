@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 
@@ -30,11 +31,18 @@ def load_yaml_config(path: str | Path | None) -> dict[str, Any]:
         return yaml.safe_load(handle) or {}
 
 
-def load_app_config(path: str | Path | None = None, overrides: dict[str, Any] | None = None) -> AppConfig:
+def load_app_config(
+    path: str | Path | None = None, overrides: dict[str, Any] | None = None
+) -> AppConfig:
     raw = load_yaml_config(path)
     if overrides:
         raw = _deep_merge(raw, overrides)
-    config = AppConfig.model_validate(raw)
+    try:
+        config = AppConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(
+            f"設定ファイルの型変換に失敗しました。YAMLの値を確認してください: {exc}"
+        ) from exc
     return config
 
 

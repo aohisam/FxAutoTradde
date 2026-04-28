@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# ruff: noqa: F821, UP009
 
 from pathlib import Path
 
@@ -16,32 +17,40 @@ a = Analysis(
     pathex=[str(SRC_DIR)],
     binaries=[],
     datas=[
-        (str(CONFIGS_DIR), 'configs'),
-        (str(RESOURCES_DIR), 'resources'),
-        (str(DESKTOP_ASSETS_DIR), 'fxautotrade_lab/desktop/assets'),
+        (str(CONFIGS_DIR), "configs"),
+        (str(RESOURCES_DIR), "resources"),
+        (str(DESKTOP_ASSETS_DIR), "fxautotrade_lab/desktop/assets"),
     ],
     hiddenimports=[
-        'pytz',
-        'fxautotrade_lab.desktop.pages.automation',
-        'fxautotrade_lab.desktop.pages.backtest',
-        'fxautotrade_lab.desktop.pages.chart',
-        'fxautotrade_lab.desktop.pages.data_sync',
-        'fxautotrade_lab.desktop.pages.help',
-        'fxautotrade_lab.desktop.pages.history',
-        'fxautotrade_lab.desktop.pages.overview',
-        'fxautotrade_lab.desktop.pages.reports',
-        'fxautotrade_lab.desktop.pages.settings',
-        'fxautotrade_lab.desktop.pages.signals',
-        'fxautotrade_lab.desktop.pages.watchlist',
-        'fxautotrade_lab.desktop.charts',
-        'fxautotrade_lab.desktop.models',
-        'fxautotrade_lab.desktop.workers',
-        'PySide6.QtCharts',
+        "pytz",
+        "fxautotrade_lab.desktop.pages.automation",
+        "fxautotrade_lab.desktop.pages.backtest",
+        "fxautotrade_lab.desktop.pages.chart",
+        "fxautotrade_lab.desktop.pages.data_sync",
+        "fxautotrade_lab.desktop.pages.help",
+        "fxautotrade_lab.desktop.pages.history",
+        "fxautotrade_lab.desktop.pages.overview",
+        "fxautotrade_lab.desktop.pages.reports",
+        "fxautotrade_lab.desktop.pages.settings",
+        "fxautotrade_lab.desktop.pages.signals",
+        "fxautotrade_lab.desktop.pages.watchlist",
+        "fxautotrade_lab.desktop.charts",
+        "fxautotrade_lab.desktop.models",
+        "fxautotrade_lab.desktop.workers",
+        "PySide6.QtCharts",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        # Keep the desktop bundle focused on runtime modules; dev/test tools can
+        # make PyInstaller traverse large optional dependency trees.
+        "_pytest",
+        "black",
+        "pip",
+        "pytest",
+        "ruff",
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -52,7 +61,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='FXAutoTradeLab',
+    name="FXAutoTradeLab",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -72,11 +81,11 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='FXAutoTradeLab',
+    name="FXAutoTradeLab",
 )
 app = BUNDLE(
     coll,
-    name='FXAutoTradeLab.app',
+    name="FXAutoTradeLab.app",
     icon=str(ICON_PATH),
-    bundle_identifier='com.fxautotrade.lab',
+    bundle_identifier="com.fxautotrade.lab",
 )

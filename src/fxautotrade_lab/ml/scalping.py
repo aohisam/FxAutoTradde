@@ -9,7 +9,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.data.quote_bars import validate_quote_bar_frame
+from fxautotrade_lab.data.ticks import validate_tick_frame
 from fxautotrade_lab.features.scalping import (
     SCALPING_FEATURE_COLUMNS,
     build_directional_feature_frame,
@@ -54,12 +56,13 @@ class ScalpingModelBundle:
     model: NumpyLogisticRegression
     decision_threshold: float
     training_config: ScalpingTrainingConfig
-    train_metrics: dict[str, float | int] = field(default_factory=dict)
+    train_metrics: dict[str, float | int | str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: str | Path) -> Path:
         self.model.metadata = {
             **self.model.metadata,
+            **self.metadata,
             "decision_threshold": self.decision_threshold,
             "train_metrics": self.train_metrics,
             "scalping": True,
@@ -71,6 +74,16 @@ def load_scalping_model_bundle(
     path: str | Path, config: ScalpingTrainingConfig
 ) -> ScalpingModelBundle:
     model = NumpyLogisticRegression.load(path)
+    if list(model.feature_names) != SCALPING_FEATURE_COLUMNS:
+        missing = [
+            column for column in SCALPING_FEATURE_COLUMNS if column not in model.feature_names
+        ]
+        extra = [column for column in model.feature_names if column not in SCALPING_FEATURE_COLUMNS]
+        raise ValueError(
+            "スキャルピングモデルの特徴量定義が現在のコードと一致しません。"
+            " 旧モデルをそのまま新しい特徴量列で使うことはできません。"
+            f" 不足: {missing} / 余分: {extra}"
+        )
     threshold = float(model.metadata.get("decision_threshold", config.decision_threshold))
     train_metrics = model.metadata.get("train_metrics", {})
     return ScalpingModelBundle(
@@ -88,12 +101,17 @@ def build_triple_barrier_labels(
     pip_size: float,
     config: ScalpingTrainingConfig,
 ) -> pd.DataFrame:
-    """Label each bar by first TP/SL touch after spread and slippage costs."""
+    """Label each bar by first TP/SL touch after costs using real elapsed time.
+
+    If take-profit and stop-loss can both be touched inside the same bar, stop-loss is
+    chosen first as a conservative bar-based assumption.
+    """
 
     bars = validate_quote_bar_frame(quote_bars)
     if bars.empty:
         return pd.DataFrame()
-    horizon = max(1, int(config.max_hold_seconds))
+    horizon_seconds = max(1, int(config.max_hold_seconds))
+    horizon_delta = pd.Timedelta(seconds=horizon_seconds)
     pip = float(pip_size)
     entry_slip = (config.round_trip_slippage_pips / 2.0) * pip
     exit_slip = (config.round_trip_slippage_pips / 2.0) * pip
@@ -112,13 +130,17 @@ def build_triple_barrier_labels(
     short_net = np.full(len(bars.index), np.nan, dtype="float64")
     long_hold = np.full(len(bars.index), 0, dtype="int64")
     short_hold = np.full(len(bars.index), 0, dtype="int64")
+    long_hold_seconds = np.full(len(bars.index), 0.0, dtype="float64")
+    short_hold_seconds = np.full(len(bars.index), 0.0, dtype="float64")
     long_reason: list[str] = [""] * len(bars.index)
     short_reason: list[str] = [""] * len(bars.index)
 
     tp = float(config.take_profit_pips) * pip
     sl = float(config.stop_loss_pips) * pip
     for i in range(len(bars.index) - 1):
-        last = min(len(bars.index) - 1, i + horizon)
+        max_exit_time = pd.Timestamp(bars.index[i]) + horizon_delta
+        last = int(bars.index.searchsorted(max_exit_time, side="right") - 1)
+        last = min(len(bars.index) - 1, last)
         if last <= i:
             continue
 
@@ -135,12 +157,20 @@ def build_triple_barrier_labels(
         short_reason[i] = "time_exit"
         long_hold[i] = last - i
         short_hold[i] = last - i
+        long_hold_seconds[i] = max(
+            0.0, (pd.Timestamp(bars.index[last]) - pd.Timestamp(bars.index[i])).total_seconds()
+        )
+        short_hold_seconds[i] = long_hold_seconds[i]
 
         for j in range(i + 1, last + 1):
             long_stop_hit = bid_low[j] <= long_sl
             long_take_hit = bid_high[j] >= long_tp
             if long_stop_hit or long_take_hit:
                 long_hold[i] = j - i
+                long_hold_seconds[i] = max(
+                    0.0,
+                    (pd.Timestamp(bars.index[j]) - pd.Timestamp(bars.index[i])).total_seconds(),
+                )
                 if long_stop_hit:
                     long_exit_price = long_sl - exit_slip
                     long_reason[i] = "stop_loss"
@@ -153,6 +183,10 @@ def build_triple_barrier_labels(
             short_take_hit = ask_low[j] <= short_tp
             if short_stop_hit or short_take_hit:
                 short_hold[i] = j - i
+                short_hold_seconds[i] = max(
+                    0.0,
+                    (pd.Timestamp(bars.index[j]) - pd.Timestamp(bars.index[i])).total_seconds(),
+                )
                 if short_stop_hit:
                     short_exit_price = short_sl + exit_slip
                     short_reason[i] = "stop_loss"
@@ -171,9 +205,160 @@ def build_triple_barrier_labels(
     labels["short_win"] = labels["short_net_pips"] > 0.0
     labels["long_hold_bars"] = long_hold
     labels["short_hold_bars"] = short_hold
+    labels["long_hold_seconds"] = long_hold_seconds
+    labels["short_hold_seconds"] = short_hold_seconds
     labels["long_exit_reason"] = long_reason
     labels["short_exit_reason"] = short_reason
     return labels
+
+
+def build_tick_triple_barrier_labels(
+    ticks: pd.DataFrame,
+    *,
+    sample_index: pd.DatetimeIndex | None = None,
+    pip_size: float,
+    config: ScalpingTrainingConfig,
+    entry_latency_ms: int = 0,
+    symbol: str | None = None,
+) -> pd.DataFrame:
+    """Label samples with tick-level execution assumptions.
+
+    The entry tick is the first quote observed at or after
+    ``sample_timestamp + entry_latency_ms``. Long exits use Bid, short exits use
+    Ask, and stop-loss is checked before take-profit on the same tick. Fees are
+    treated as round-trip cost, matching the tick replay net-pips convention.
+    """
+
+    tick_frame = validate_tick_frame(ticks, symbol=symbol)
+    if tick_frame.empty:
+        index = _normalize_label_sample_index(sample_index, None)
+        return pd.DataFrame(index=index)
+    samples = _normalize_label_sample_index(sample_index, tick_frame.index)
+    if samples.empty:
+        return pd.DataFrame(index=samples)
+
+    horizon_delta = pd.Timedelta(seconds=max(1, int(config.max_hold_seconds)))
+    latency_delta = pd.Timedelta(milliseconds=max(0, int(entry_latency_ms)))
+    pip = float(pip_size)
+    slip = (float(config.round_trip_slippage_pips) / 2.0) * pip
+    fee_pips = float(config.fee_pips)
+    take_distance = float(config.take_profit_pips) * pip
+    stop_distance = float(config.stop_loss_pips) * pip
+
+    tick_index = tick_frame.index
+    bid = tick_frame["bid"].to_numpy(dtype="float64")
+    ask = tick_frame["ask"].to_numpy(dtype="float64")
+
+    long_net = np.full(len(samples), np.nan, dtype="float64")
+    short_net = np.full(len(samples), np.nan, dtype="float64")
+    long_hold_ticks = np.zeros(len(samples), dtype="int64")
+    short_hold_ticks = np.zeros(len(samples), dtype="int64")
+    long_hold_seconds = np.zeros(len(samples), dtype="float64")
+    short_hold_seconds = np.zeros(len(samples), dtype="float64")
+    long_reason: list[str] = [""] * len(samples)
+    short_reason: list[str] = [""] * len(samples)
+    long_entry_times: list[object] = [pd.NaT] * len(samples)
+    short_entry_times: list[object] = [pd.NaT] * len(samples)
+    long_exit_times: list[object] = [pd.NaT] * len(samples)
+    short_exit_times: list[object] = [pd.NaT] * len(samples)
+
+    for sample_position, sample_time in enumerate(samples):
+        entry_target = pd.Timestamp(sample_time) + latency_delta
+        entry_position = int(tick_index.searchsorted(entry_target, side="left"))
+        if entry_position >= len(tick_index) - 1:
+            continue
+        entry_time = pd.Timestamp(tick_index[entry_position])
+        end_position = int(tick_index.searchsorted(entry_time + horizon_delta, side="right") - 1)
+        end_position = max(entry_position + 1, min(end_position, len(tick_index) - 1))
+        if end_position <= entry_position:
+            continue
+
+        long_entry = float(ask[entry_position]) + slip
+        long_tp = long_entry + take_distance
+        long_sl = long_entry - stop_distance
+        short_entry = float(bid[entry_position]) - slip
+        short_tp = short_entry - take_distance
+        short_sl = short_entry + stop_distance
+
+        long_exit_position = end_position
+        short_exit_position = end_position
+        long_exit_price = float(bid[end_position]) - slip
+        short_exit_price = float(ask[end_position]) + slip
+        long_reason[sample_position] = "time_exit"
+        short_reason[sample_position] = "time_exit"
+
+        for exit_position in range(entry_position + 1, end_position + 1):
+            observed_bid = float(bid[exit_position])
+            if observed_bid <= long_sl:
+                long_exit_position = exit_position
+                long_exit_price = long_sl - slip
+                long_reason[sample_position] = "stop_loss"
+                break
+            if observed_bid >= long_tp:
+                long_exit_position = exit_position
+                long_exit_price = long_tp - slip
+                long_reason[sample_position] = "take_profit"
+                break
+
+        for exit_position in range(entry_position + 1, end_position + 1):
+            observed_ask = float(ask[exit_position])
+            if observed_ask >= short_sl:
+                short_exit_position = exit_position
+                short_exit_price = short_sl + slip
+                short_reason[sample_position] = "stop_loss"
+                break
+            if observed_ask <= short_tp:
+                short_exit_position = exit_position
+                short_exit_price = short_tp + slip
+                short_reason[sample_position] = "take_profit"
+                break
+
+        long_exit_time = pd.Timestamp(tick_index[long_exit_position])
+        short_exit_time = pd.Timestamp(tick_index[short_exit_position])
+        long_net[sample_position] = ((long_exit_price - long_entry) / pip) - fee_pips
+        short_net[sample_position] = ((short_entry - short_exit_price) / pip) - fee_pips
+        long_hold_ticks[sample_position] = max(1, long_exit_position - entry_position)
+        short_hold_ticks[sample_position] = max(1, short_exit_position - entry_position)
+        long_hold_seconds[sample_position] = max(0.0, (long_exit_time - entry_time).total_seconds())
+        short_hold_seconds[sample_position] = max(
+            0.0, (short_exit_time - entry_time).total_seconds()
+        )
+        long_entry_times[sample_position] = entry_time
+        short_entry_times[sample_position] = entry_time
+        long_exit_times[sample_position] = long_exit_time
+        short_exit_times[sample_position] = short_exit_time
+
+    labels = pd.DataFrame(index=samples)
+    labels["long_net_pips"] = long_net
+    labels["short_net_pips"] = short_net
+    labels["long_win"] = labels["long_net_pips"] > 0.0
+    labels["short_win"] = labels["short_net_pips"] > 0.0
+    labels["long_hold_bars"] = long_hold_ticks
+    labels["short_hold_bars"] = short_hold_ticks
+    labels["long_hold_ticks"] = long_hold_ticks
+    labels["short_hold_ticks"] = short_hold_ticks
+    labels["long_hold_seconds"] = long_hold_seconds
+    labels["short_hold_seconds"] = short_hold_seconds
+    labels["long_exit_reason"] = long_reason
+    labels["short_exit_reason"] = short_reason
+    labels["long_entry_time"] = long_entry_times
+    labels["short_entry_time"] = short_entry_times
+    labels["long_exit_time"] = long_exit_times
+    labels["short_exit_time"] = short_exit_times
+    return labels
+
+
+def _normalize_label_sample_index(
+    sample_index: pd.DatetimeIndex | None,
+    fallback_index: pd.DatetimeIndex | None,
+) -> pd.DatetimeIndex:
+    source_index = sample_index if sample_index is not None else fallback_index
+    if source_index is None:
+        return pd.DatetimeIndex([], tz=ASIA_TOKYO)
+    normalized = pd.DatetimeIndex(source_index)
+    if normalized.tz is None:
+        return normalized.tz_localize(ASIA_TOKYO)
+    return normalized.tz_convert(ASIA_TOKYO)
 
 
 def build_scalping_training_set(
@@ -223,6 +408,8 @@ def fit_scalping_model(
     labels: pd.DataFrame,
     *,
     config: ScalpingTrainingConfig,
+    validation_features: pd.DataFrame | None = None,
+    validation_labels: pd.DataFrame | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ScalpingModelBundle:
     training_features, training_labels, training_meta = build_scalping_training_set(
@@ -247,15 +434,69 @@ def fit_scalping_model(
             **dict(metadata or {}),
         },
     )
-    threshold, metrics = select_decision_threshold(
-        model, training_features, training_meta, config=config
+    threshold_source = "train"
+    threshold_features = training_features
+    threshold_meta = training_meta
+    validation_sample_count = 0
+    if validation_features is not None and validation_labels is not None:
+        validation_training_features, _, validation_meta = build_scalping_training_set(
+            validation_features, validation_labels, config=config
+        )
+        if validation_training_features.empty:
+            raise ValueError(
+                "スキャルピングMLのvalidationサンプルがありません。"
+                " 閾値選択をvalidation期間で行うため、期間やフィルタ条件を見直してください。"
+            )
+        threshold_source = "validation"
+        threshold_features = validation_training_features
+        threshold_meta = validation_meta
+        validation_sample_count = int(len(validation_training_features.index))
+    threshold, selected_metrics = select_decision_threshold(
+        model, threshold_features, threshold_meta, config=config
     )
+    metrics: dict[str, float | int | str] = {
+        "train_sample_count": int(len(training_features.index)),
+        "validation_sample_count": validation_sample_count,
+        "threshold_selected_on": threshold_source,
+        "selected_threshold": float(threshold),
+        "validation_selected_count": (
+            int(selected_metrics.get("selected_count", 0))
+            if threshold_source == "validation"
+            else 0
+        ),
+        "validation_net_pips": (
+            float(selected_metrics.get("selected_net_pips", 0.0))
+            if threshold_source == "validation"
+            else 0.0
+        ),
+        "validation_mean_pips": (
+            float(selected_metrics.get("selected_mean_pips", 0.0))
+            if threshold_source == "validation"
+            else 0.0
+        ),
+        "validation_profit_factor": (
+            float(selected_metrics.get("selected_profit_factor", 0.0))
+            if threshold_source == "validation"
+            else 0.0
+        ),
+        "validation_max_drawdown": (
+            float(selected_metrics.get("selected_max_drawdown_pips", 0.0))
+            if threshold_source == "validation"
+            else 0.0
+        ),
+        **selected_metrics,
+    }
+    if threshold_source == "train":
+        metrics["warning_ja"] = (
+            "decision_threshold は学習データ上で選択されています。"
+            "検証用にはvalidation期間を指定してください。"
+        )
     return ScalpingModelBundle(
         model=model,
         decision_threshold=threshold,
         training_config=config,
         train_metrics=metrics,
-        metadata=dict(metadata or {}),
+        metadata={**dict(metadata or {}), "threshold_selected_on": threshold_source},
     )
 
 

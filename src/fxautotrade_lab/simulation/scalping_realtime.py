@@ -186,8 +186,12 @@ class ScalpingRealtimePaperEngine:
             elif ts >= max_exit_time:
                 exit_price = bid - slip
                 reason = "time_exit"
-            pnl = (exit_price - position.entry_price) * position.quantity if exit_price > 0 else 0.0
-            pips = (exit_price - position.entry_price) / self.pip_size if exit_price > 0 else 0.0
+            gross_pnl = (
+                (exit_price - position.entry_price) * position.quantity if exit_price > 0 else 0.0
+            )
+            gross_pips = (
+                (exit_price - position.entry_price) / self.pip_size if exit_price > 0 else 0.0
+            )
         else:
             if ask >= position.stop_loss_price:
                 exit_price = position.stop_loss_price + slip
@@ -198,10 +202,18 @@ class ScalpingRealtimePaperEngine:
             elif ts >= max_exit_time:
                 exit_price = ask + slip
                 reason = "time_exit"
-            pnl = (position.entry_price - exit_price) * position.quantity if exit_price > 0 else 0.0
-            pips = (position.entry_price - exit_price) / self.pip_size if exit_price > 0 else 0.0
+            gross_pnl = (
+                (position.entry_price - exit_price) * position.quantity if exit_price > 0 else 0.0
+            )
+            gross_pips = (
+                (position.entry_price - exit_price) / self.pip_size if exit_price > 0 else 0.0
+            )
         if not reason:
             return None
+        fee_pips = float(self.training_config.fee_pips)
+        fee_amount = fee_pips * self.pip_size * position.quantity
+        pnl = gross_pnl - fee_amount
+        net_pips = gross_pips - fee_pips
         self.cash += pnl
         trade = {
             "position_id": position.position_id,
@@ -212,8 +224,13 @@ class ScalpingRealtimePaperEngine:
             "exit_time": ts.isoformat(),
             "entry_price": position.entry_price,
             "exit_price": exit_price,
+            "gross_pnl": gross_pnl,
             "net_pnl": pnl,
-            "realized_pips": pips,
+            "fee_amount": fee_amount,
+            "fee_pips": fee_pips,
+            "realized_gross_pips": gross_pips,
+            "realized_net_pips": net_pips,
+            "realized_pips": net_pips,
             "exit_reason": reason,
             "probability": position.probability,
         }
@@ -229,7 +246,7 @@ class ScalpingRealtimePaperEngine:
             "quantity": trade["quantity"],
             "exit_price": exit_price,
             "net_pnl": pnl,
-            "realized_pips": pips,
+            "realized_pips": net_pips,
             "exit_reason": reason,
             "cash": self.cash,
             "message_ja": "スキャルピング paper position を決済しました。",
