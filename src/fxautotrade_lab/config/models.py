@@ -233,6 +233,10 @@ class FxScalpingConfig(BaseModel):
     l2_penalty: float = 0.002
     feature_clip: float = 8.0
     seed: int = 23
+    min_validation_net_pips: float = 0.0
+    min_validation_profit_factor: float = 1.0
+    min_validation_trade_count: int = 1
+    fail_closed_on_bad_validation: bool = True
     entry_latency_ms: int = 250
     cooldown_seconds: int = 5
     max_trades_per_day: int = 120

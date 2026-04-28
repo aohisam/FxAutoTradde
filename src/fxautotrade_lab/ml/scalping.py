@@ -36,6 +36,10 @@ class ScalpingTrainingConfig:
     l2_penalty: float = 0.002
     feature_clip: float = 8.0
     seed: int = 23
+    min_validation_net_pips: float = 0.0
+    min_validation_profit_factor: float = 1.0
+    min_validation_trade_count: int = 1
+    fail_closed_on_bad_validation: bool = True
     threshold_grid: tuple[float, ...] = (
         0.52,
         0.54,
@@ -56,7 +60,7 @@ class ScalpingModelBundle:
     model: NumpyLogisticRegression
     decision_threshold: float
     training_config: ScalpingTrainingConfig
-    train_metrics: dict[str, float | int | str] = field(default_factory=dict)
+    train_metrics: dict[str, float | int | str | bool] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: str | Path) -> Path:
@@ -454,11 +458,23 @@ def fit_scalping_model(
     threshold, selected_metrics = select_decision_threshold(
         model, threshold_features, threshold_meta, config=config
     )
-    metrics: dict[str, float | int | str] = {
+    selected_threshold_before_gate = float(threshold)
+    validation_gate_passed = True
+    validation_gate_warning = ""
+    if threshold_source == "validation":
+        validation_gate_passed, validation_gate_warning = _evaluate_validation_gate(
+            selected_metrics, config=config
+        )
+        if not validation_gate_passed and config.fail_closed_on_bad_validation:
+            threshold = 1.01
+
+    metrics: dict[str, float | int | str | bool] = {
         "train_sample_count": int(len(training_features.index)),
         "validation_sample_count": validation_sample_count,
         "threshold_selected_on": threshold_source,
         "selected_threshold": float(threshold),
+        "selected_threshold_before_validation_gate": selected_threshold_before_gate,
+        "validation_gate_passed": bool(validation_gate_passed),
         "validation_selected_count": (
             int(selected_metrics.get("selected_count", 0))
             if threshold_source == "validation"
@@ -486,18 +502,61 @@ def fit_scalping_model(
         ),
         **selected_metrics,
     }
-    if threshold_source == "train":
+    if validation_gate_warning:
+        metrics["warning_ja"] = validation_gate_warning
+    elif threshold_source == "train":
         metrics["warning_ja"] = (
             "decision_threshold は学習データ上で選択されています。"
             "検証用にはvalidation期間を指定してください。"
         )
+    bundle_metadata = {
+        **dict(metadata or {}),
+        "threshold_selected_on": threshold_source,
+        "validation_gate_passed": bool(validation_gate_passed),
+    }
+    if validation_gate_warning:
+        bundle_metadata["warning_ja"] = validation_gate_warning
     return ScalpingModelBundle(
         model=model,
         decision_threshold=threshold,
         training_config=config,
         train_metrics=metrics,
-        metadata={**dict(metadata or {}), "threshold_selected_on": threshold_source},
+        metadata=bundle_metadata,
     )
+
+
+def _evaluate_validation_gate(
+    selected_metrics: dict[str, float | int],
+    *,
+    config: ScalpingTrainingConfig,
+) -> tuple[bool, str]:
+    selected_count = int(selected_metrics.get("selected_count", 0))
+    selected_net_pips = float(selected_metrics.get("selected_net_pips", 0.0))
+    selected_profit_factor = float(selected_metrics.get("selected_profit_factor", 0.0))
+    failures: list[str] = []
+    if selected_count < int(config.min_validation_trade_count):
+        failures.append(
+            "validation採用候補数が不足しています"
+            f"({selected_count} < {int(config.min_validation_trade_count)})"
+        )
+    if selected_net_pips < float(config.min_validation_net_pips):
+        failures.append(
+            "validation net pips が基準未満です"
+            f"({selected_net_pips:.3f} < {float(config.min_validation_net_pips):.3f})"
+        )
+    if selected_profit_factor < float(config.min_validation_profit_factor):
+        failures.append(
+            "validation profit factor が基準未満です"
+            f"({selected_profit_factor:.3f} < {float(config.min_validation_profit_factor):.3f})"
+        )
+    if not failures:
+        return True, ""
+    warning = "validation gate未達: " + " / ".join(failures)
+    if config.fail_closed_on_bad_validation:
+        warning += "。decision_threshold=1.01 にして新規entryを停止します。"
+    else:
+        warning += "。fail_closed_on_bad_validation=false のため閾値は維持します。"
+    return False, warning
 
 
 def select_decision_threshold(

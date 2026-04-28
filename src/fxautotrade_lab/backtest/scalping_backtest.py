@@ -75,6 +75,10 @@ def training_config_from_app(config: AppConfig) -> ScalpingTrainingConfig:
         l2_penalty=float(scalping.l2_penalty),
         feature_clip=float(scalping.feature_clip),
         seed=int(scalping.seed),
+        min_validation_net_pips=float(scalping.min_validation_net_pips),
+        min_validation_profit_factor=float(scalping.min_validation_profit_factor),
+        min_validation_trade_count=int(scalping.min_validation_trade_count),
+        fail_closed_on_bad_validation=bool(scalping.fail_closed_on_bad_validation),
     )
 
 
@@ -187,7 +191,12 @@ def run_scalping_pipeline(
     )
     model_path = scalping_cfg.model_dir / scalping_cfg.latest_model_alias
     model_bundle.save(model_path)
-    test_ticks = tick_frame.loc[tick_frame.index >= split.test_start].copy()
+    test_ticks = evaluation_tick_window(
+        tick_frame,
+        split=split,
+        training_config=training_config,
+        execution_config=execution_config,
+    )
     backtest = run_scalping_tick_backtest(
         test_ticks,
         test_features,
@@ -311,7 +320,12 @@ def _run_walk_forward_if_enabled(
                 "label_source": scalping_cfg.label_source,
             },
         )
-        test_ticks = tick_frame.loc[tick_frame.index >= split.test_start].copy()
+        test_ticks = evaluation_tick_window(
+            tick_frame,
+            split=split,
+            training_config=training_config,
+            execution_config=execution_config,
+        )
         result = run_scalping_tick_backtest(
             test_ticks,
             test_features,
@@ -343,6 +357,29 @@ def _run_walk_forward_if_enabled(
             }
         )
     return pd.DataFrame(rows)
+
+
+def evaluation_tick_window(
+    tick_frame: pd.DataFrame,
+    *,
+    split: PurgedSplit,
+    training_config: ScalpingTrainingConfig,
+    execution_config: ScalpingExecutionConfig,
+) -> pd.DataFrame:
+    """Return only the ticks needed to evaluate a split's test period.
+
+    Features already restrict new entries to ``split.test_index``.  The tick
+    window includes enough future ticks to settle those entries, but does not
+    expose later folds or later test periods to the replay engine.
+    """
+
+    start = pd.Timestamp(split.test_start)
+    end = (
+        pd.Timestamp(split.test_end)
+        + pd.Timedelta(seconds=max(1, int(training_config.max_hold_seconds)))
+        + pd.Timedelta(milliseconds=max(0, int(execution_config.entry_latency_ms)))
+    )
+    return tick_frame.loc[(tick_frame.index >= start) & (tick_frame.index <= end)].copy()
 
 
 def export_scalping_pipeline_result(result: ScalpingPipelineResult, output_dir: Path) -> Path:

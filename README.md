@@ -106,6 +106,7 @@ python -m fxautotrade_lab.cli import-bidask-csv \
 - `label_source: tick` では、entry latency 後の最初の tick、Bid/Ask による TP/SL 判定、round-trip fee を含む tick replay と同じ前提でラベルを作ります。`label_source: bar` は過去互換のfallbackです。
 - train / validation / test は purged split で分け、`max_hold_seconds`、entry latency、cooldown を含む境界purgeを入れます。
 - モデル係数は train で学習し、`decision_threshold` は validation で選び、test は最終評価まで使いません。
+- validation gate は `min_validation_net_pips`、`min_validation_profit_factor`、`min_validation_trade_count` で最低条件を確認します。`fail_closed_on_bad_validation: true` の場合、基準未達なら `decision_threshold=1.01` にして新規entryを止め、metadata に `validation_gate_passed` と `warning_ja` を残します。
 - fee、slippage、spread、entry latency は tick replay の損益へ反映します。`realized_pips` は net pips の別名で、gross は `realized_gross_pips` を確認してください。
 - accepted / rejected signal を `signals.csv` に出力します。`reject_reason` で threshold不足、spread超過、volatility不足、cooldown、日次損失停止、連敗停止、stale tick、blackout などを確認できます。
 - backtest で labels がある場合だけ、分析用に `future_long_net_pips` などをjoinします。実時間paper simulationや将来のlive系では未来結果を使いません。
@@ -127,6 +128,10 @@ strategy:
     max_daily_loss_amount: 100000.0
     max_consecutive_losses: 5
     max_tick_gap_seconds: 5
+    min_validation_net_pips: 0.0
+    min_validation_profit_factor: 1.0
+    min_validation_trade_count: 1
+    fail_closed_on_bad_validation: true
     blackout_windows_jst:
       - start: "05:55"
         end: "06:10"

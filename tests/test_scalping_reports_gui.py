@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
+from fxautotrade_lab.application import _load_report_table_frame
 from fxautotrade_lab.desktop.pages.reports import load_scalping_report_rows
 
 
@@ -40,3 +43,15 @@ def test_load_scalping_report_rows_reads_exported_summary(tmp_path: Path) -> Non
     assert row["output_dir"] == str(run_dir)
     assert row["metrics"]["number_of_trades"] == 4
     assert row["metrics"]["max_drawdown"] == -0.03
+
+
+def test_scalping_signal_report_loader_falls_back_to_signals_csv(tmp_path: Path) -> None:
+    run_dir = tmp_path / "scalping" / "20260203_090000_scalping"
+    run_dir.mkdir(parents=True)
+    pd.DataFrame({"signal_id": ["s1"], "accepted": [True]}).to_csv(
+        run_dir / "signals.csv", index=False
+    )
+
+    frame = _load_report_table_frame(run_dir, "signals")
+
+    assert frame["signal_id"].tolist() == ["s1"]

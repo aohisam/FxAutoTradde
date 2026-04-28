@@ -21,6 +21,8 @@ def test_load_scalping_strict_validation_config() -> None:
     assert scalping.label_source == "tick"
     assert scalping.validation_ratio == 0.15
     assert scalping.test_ratio == 0.15
+    assert scalping.min_validation_profit_factor == 1.0
+    assert scalping.fail_closed_on_bad_validation is True
     assert scalping.record_rejected_signals is True
     assert scalping.blackout_windows_jst[0].start == "05:55"
     assert config.automation.enabled is False

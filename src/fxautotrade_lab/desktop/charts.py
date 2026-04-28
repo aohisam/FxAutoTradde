@@ -1,13 +1,78 @@
 """Desktop chart rendering helpers."""
 
+# ruff: noqa: E501, I001
+
 from __future__ import annotations
 
+import os
+
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 
-def render_symbol_chart_html(symbol: str, frame, trades_frame=None, fills_frame=None, title_suffix: str = "") -> str:
+def _load_plotly_modules() -> tuple[object | None, object | None]:
+    if os.environ.get("FXAUTOTRADE_DISABLE_PLOTLY") == "1":
+        return None, None
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError:
+        return None, None
+    return go, make_subplots
+
+
+def _render_symbol_chart_fallback_html(symbol: str, frame: pd.DataFrame, title_suffix: str) -> str:
+    display_columns = [
+        column for column in ["open", "high", "low", "close", "volume"] if column in frame.columns
+    ]
+    latest = (
+        frame.loc[:, display_columns].tail(120).reset_index().to_html(index=False, classes="table")
+        if display_columns
+        else "<p>チャート表示に必要な価格データがありません。</p>"
+    )
+    return f"""
+    <html>
+      <head>
+        <style>
+          body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+            color: #0f172a;
+            padding: 18px;
+          }}
+          .notice {{
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 12px;
+            color: #9a3412;
+            padding: 12px;
+            margin-bottom: 14px;
+          }}
+          .table {{
+            width: 100%;
+            border-collapse: collapse;
+          }}
+          .table th, .table td {{
+            border-bottom: 1px solid #e5e7eb;
+            padding: 8px 10px;
+            text-align: left;
+          }}
+        </style>
+      </head>
+      <body>
+        <h2>{symbol} チャート{title_suffix}</h2>
+        <div class="notice">インタラクティブチャート部品を読み込めないため、直近データの表で表示しています。</div>
+        {latest}
+      </body>
+    </html>
+    """
+
+
+def render_symbol_chart_html(
+    symbol: str, frame, trades_frame=None, fills_frame=None, title_suffix: str = ""
+) -> str:
+    go, make_subplots = _load_plotly_modules()
+    if go is None or make_subplots is None:
+        return _render_symbol_chart_fallback_html(symbol, frame, title_suffix)
+
     figure = make_subplots(
         rows=3,
         cols=1,
@@ -35,7 +100,13 @@ def render_symbol_chart_html(symbol: str, frame, trades_frame=None, fills_frame=
     ]:
         if column in frame.columns:
             figure.add_trace(
-                go.Scatter(x=frame.index, y=frame[column], mode="lines", name=label, line={"width": 1.6, "color": color}),
+                go.Scatter(
+                    x=frame.index,
+                    y=frame[column],
+                    mode="lines",
+                    name=label,
+                    line={"width": 1.6, "color": color},
+                ),
                 row=1,
                 col=1,
             )
@@ -78,16 +149,24 @@ def render_symbol_chart_html(symbol: str, frame, trades_frame=None, fills_frame=
                 col=1,
             )
     if fills_frame is not None and not fills_frame.empty:
-        symbol_fills = fills_frame[fills_frame["symbol"].astype(str).str.upper() == symbol.upper()].copy()
+        symbol_fills = fills_frame[
+            fills_frame["symbol"].astype(str).str.upper() == symbol.upper()
+        ].copy()
         if not symbol_fills.empty:
             if "filled_at" in symbol_fills.columns:
-                symbol_fills["timestamp"] = pd.to_datetime(symbol_fills["filled_at"], errors="coerce")
+                symbol_fills["timestamp"] = pd.to_datetime(
+                    symbol_fills["filled_at"], errors="coerce"
+                )
             elif "submitted_at" in symbol_fills.columns:
-                symbol_fills["timestamp"] = pd.to_datetime(symbol_fills["submitted_at"], errors="coerce")
+                symbol_fills["timestamp"] = pd.to_datetime(
+                    symbol_fills["submitted_at"], errors="coerce"
+                )
             else:
                 symbol_fills["timestamp"] = pd.NaT
             if "price" not in symbol_fills.columns and "filled_avg_price" in symbol_fills.columns:
-                symbol_fills["price"] = pd.to_numeric(symbol_fills["filled_avg_price"], errors="coerce")
+                symbol_fills["price"] = pd.to_numeric(
+                    symbol_fills["filled_avg_price"], errors="coerce"
+                )
             symbol_fills["price"] = pd.to_numeric(symbol_fills.get("price"), errors="coerce")
             symbol_fills = symbol_fills.dropna(subset=["timestamp", "price"])
             buy_fills = symbol_fills[symbol_fills["side"].astype(str).str.lower() == "buy"]
@@ -123,10 +202,16 @@ def render_symbol_chart_html(symbol: str, frame, trades_frame=None, fills_frame=
     )
     if "entry_rsi_14" in frame.columns:
         figure.add_trace(
-            go.Scatter(x=frame.index, y=frame["entry_rsi_14"], mode="lines", name="RSI", line={"color": "#7c3aed"}),
+            go.Scatter(
+                x=frame.index,
+                y=frame["entry_rsi_14"],
+                mode="lines",
+                name="RSI",
+                line={"color": "#7c3aed"},
+            ),
             row=3,
             col=1,
-    )
+        )
     figure.update_layout(
         title=f"{symbol} チャート{title_suffix}",
         template="plotly_white",
@@ -143,6 +228,10 @@ def render_symbol_chart_html(symbol: str, frame, trades_frame=None, fills_frame=
 
 
 def render_backtest_dashboard_html(result) -> str:
+    go, make_subplots = _load_plotly_modules()
+    if go is None or make_subplots is None:
+        return render_backtest_dashboard_fallback_html(result)
+
     figure = make_subplots(
         rows=3,
         cols=2,
@@ -193,7 +282,13 @@ def render_backtest_dashboard_html(result) -> str:
                 row=1,
                 col=2,
             )
-        monthly = result.equity_curve["equity"].resample("ME").last().pct_change(fill_method=None).dropna()
+        monthly = (
+            result.equity_curve["equity"]
+            .resample("ME")
+            .last()
+            .pct_change(fill_method=None)
+            .dropna()
+        )
         if not monthly.empty:
             monthly_df = monthly.to_frame("return")
             monthly_df["year"] = monthly_df.index.year
@@ -211,10 +306,16 @@ def render_backtest_dashboard_html(result) -> str:
                 row=2,
                 col=1,
             )
-        daily_returns = result.equity_curve["equity"].resample("1D").last().pct_change(fill_method=None)
+        daily_returns = (
+            result.equity_curve["equity"].resample("1D").last().pct_change(fill_method=None)
+        )
         rolling_mean = daily_returns.rolling(20).mean()
         rolling_std = daily_returns.rolling(20).std().replace(0, pd.NA)
-        rolling_sharpe = ((rolling_mean / rolling_std) * (252**0.5)).replace([float("inf"), float("-inf")], 0).fillna(0)
+        rolling_sharpe = (
+            ((rolling_mean / rolling_std) * (252**0.5))
+            .replace([float("inf"), float("-inf")], 0)
+            .fillna(0)
+        )
         figure.add_trace(
             go.Scatter(
                 x=rolling_sharpe.index,
@@ -283,7 +384,9 @@ def render_backtest_dashboard_fallback_html(result) -> str:
                     "リターン": [f"{value:.2%}" for value in monthly_series.values],
                 }
             )
-    walk_forward = pd.DataFrame(columns=["window", "start", "end", "return", "sharpe", "max_drawdown"])
+    walk_forward = pd.DataFrame(
+        columns=["window", "start", "end", "return", "sharpe", "max_drawdown"]
+    )
     if result.walk_forward:
         rows = []
         for row in result.walk_forward:
@@ -316,7 +419,11 @@ def render_backtest_dashboard_fallback_html(result) -> str:
         if not per_symbol_frame.empty
         else "<p>通貨ペア別寄与はありません。</p>"
     )
-    monthly_html = monthly.to_html(index=False, classes="table") if not monthly.empty else "<p>月次データはありません。</p>"
+    monthly_html = (
+        monthly.to_html(index=False, classes="table")
+        if not monthly.empty
+        else "<p>月次データはありません。</p>"
+    )
     walk_forward_html = (
         walk_forward.to_html(index=False, classes="table")
         if not walk_forward.empty
@@ -421,7 +528,16 @@ def render_backtest_dashboard_fallback_html(result) -> str:
 
 
 def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
-    from PySide6.QtCharts import QChart, QChartView, QCandlestickSeries, QCandlestickSet, QDateTimeAxis, QLineSeries, QScatterSeries, QValueAxis
+    from PySide6.QtCharts import (
+        QChart,
+        QChartView,
+        QCandlestickSeries,
+        QCandlestickSet,
+        QDateTimeAxis,
+        QLineSeries,
+        QScatterSeries,
+        QValueAxis,
+    )
     from PySide6.QtCore import QDateTime, QMargins, Qt
     from PySide6.QtGui import QColor, QPainter, QPen
     from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
@@ -492,8 +608,17 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                 working.index = working.index.tz_localize("UTC")
             timestamps = [pd.Timestamp(index).to_pydatetime() for index in working.index]
             x_values = [QDateTime(value).toMSecsSinceEpoch() for value in timestamps]
-            self.status_label.setText(f"{symbol} / {len(working)}本 / 期間: {working.index.min()} - {working.index.max()}")
-            self._render_price_chart(symbol, working, x_values, trades_frame=trades_frame, fills_frame=fills_frame, title_suffix=title_suffix)
+            self.status_label.setText(
+                f"{symbol} / {len(working)}本 / 期間: {working.index.min()} - {working.index.max()}"
+            )
+            self._render_price_chart(
+                symbol,
+                working,
+                x_values,
+                trades_frame=trades_frame,
+                fills_frame=fills_frame,
+                title_suffix=title_suffix,
+            )
             self._render_volume_chart(working, x_values)
             self._render_rsi_chart(working, x_values)
 
@@ -508,7 +633,9 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                 return "yy/MM/dd" if span.days >= 7 else "yy/MM/dd HH:mm"
             return "MM/dd" if span.days >= 7 else "MM/dd HH:mm"
 
-        def _reset_chart(self, chart: QChart, title: str, working: pd.DataFrame) -> tuple[QDateTimeAxis, QValueAxis]:
+        def _reset_chart(
+            self, chart: QChart, title: str, working: pd.DataFrame
+        ) -> tuple[QDateTimeAxis, QValueAxis]:
             chart.removeAllSeries()
             for axis in list(chart.axes()):
                 chart.removeAxis(axis)
@@ -533,7 +660,9 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
             fills_frame: pd.DataFrame | None,
             title_suffix: str,
         ) -> None:
-            axis_x, axis_y = self._reset_chart(self.price_chart, f"{symbol} チャート{title_suffix}", working)
+            axis_x, axis_y = self._reset_chart(
+                self.price_chart, f"{symbol} チャート{title_suffix}", working
+            )
             candle = QCandlestickSeries()
             candle.setIncreasingColor(QColor("#16a34a"))
             candle.setDecreasingColor(QColor("#dc2626"))
@@ -570,11 +699,22 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                 series.attachAxis(axis_x)
                 series.attachAxis(axis_y)
 
-            self._add_trade_markers(symbol, working, x_values, axis_x, axis_y, trades_frame=trades_frame, fills_frame=fills_frame)
+            self._add_trade_markers(
+                symbol,
+                working,
+                x_values,
+                axis_x,
+                axis_y,
+                trades_frame=trades_frame,
+                fills_frame=fills_frame,
+            )
             low = float(working["low"].min())
             high = float(working["high"].max())
             padding = max((high - low) * 0.08, 0.5)
-            axis_x.setRange(QDateTime.fromMSecsSinceEpoch(x_values[0]), QDateTime.fromMSecsSinceEpoch(x_values[-1]))
+            axis_x.setRange(
+                QDateTime.fromMSecsSinceEpoch(x_values[0]),
+                QDateTime.fromMSecsSinceEpoch(x_values[-1]),
+            )
             axis_y.setRange(low - padding, high + padding)
 
         def _add_trade_markers(
@@ -589,13 +729,33 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
             fills_frame: pd.DataFrame | None,
         ) -> None:
             marker_specs: list[tuple[str, str, QColor, pd.Series, str, str]] = []
-            if trades_frame is not None and not trades_frame.empty and "symbol" in trades_frame.columns:
-                symbol_trades = trades_frame[trades_frame["symbol"].astype(str).str.upper() == symbol.upper()].copy()
+            if (
+                trades_frame is not None
+                and not trades_frame.empty
+                and "symbol" in trades_frame.columns
+            ):
+                symbol_trades = trades_frame[
+                    trades_frame["symbol"].astype(str).str.upper() == symbol.upper()
+                ].copy()
                 if not symbol_trades.empty:
                     marker_specs.extend(
                         [
-                            ("エントリー", "entry_time", QColor("#16a34a"), symbol_trades["entry_price"], "entry_time", "entry_price"),
-                            ("イグジット", "exit_time", QColor("#dc2626"), symbol_trades["exit_price"], "exit_time", "exit_price"),
+                            (
+                                "エントリー",
+                                "entry_time",
+                                QColor("#16a34a"),
+                                symbol_trades["entry_price"],
+                                "entry_time",
+                                "entry_price",
+                            ),
+                            (
+                                "イグジット",
+                                "exit_time",
+                                QColor("#dc2626"),
+                                symbol_trades["exit_price"],
+                                "exit_time",
+                                "exit_price",
+                            ),
                         ]
                     )
                     for name, _, color, _, time_column, price_column in marker_specs[-2:]:
@@ -604,18 +764,29 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                         scatter.setMarkerSize(11.0)
                         scatter.setColor(color)
                         for _, trade in symbol_trades.iterrows():
-                            timestamp = pd.to_datetime(trade.get(time_column), errors="coerce", utc=True)
+                            timestamp = pd.to_datetime(
+                                trade.get(time_column), errors="coerce", utc=True
+                            )
                             price = pd.to_numeric(trade.get(price_column), errors="coerce")
                             if pd.isna(timestamp) or pd.isna(price):
                                 continue
-                            scatter.append(float(QDateTime(timestamp.to_pydatetime()).toMSecsSinceEpoch()), float(price))
+                            scatter.append(
+                                float(QDateTime(timestamp.to_pydatetime()).toMSecsSinceEpoch()),
+                                float(price),
+                            )
                         if scatter.count():
                             self.price_chart.addSeries(scatter)
                             scatter.attachAxis(axis_x)
                             scatter.attachAxis(axis_y)
 
-            if fills_frame is not None and not fills_frame.empty and "symbol" in fills_frame.columns:
-                symbol_fills = fills_frame[fills_frame["symbol"].astype(str).str.upper() == symbol.upper()].copy()
+            if (
+                fills_frame is not None
+                and not fills_frame.empty
+                and "symbol" in fills_frame.columns
+            ):
+                symbol_fills = fills_frame[
+                    fills_frame["symbol"].astype(str).str.upper() == symbol.upper()
+                ].copy()
                 if not symbol_fills.empty:
                     buy_series = QScatterSeries()
                     buy_series.setName("買い約定")
@@ -631,7 +802,9 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                             errors="coerce",
                             utc=True,
                         )
-                        price = pd.to_numeric(fill.get("price") or fill.get("filled_avg_price"), errors="coerce")
+                        price = pd.to_numeric(
+                            fill.get("price") or fill.get("filled_avg_price"), errors="coerce"
+                        )
                         if pd.isna(timestamp) or pd.isna(price):
                             continue
                         point_x = float(QDateTime(timestamp.to_pydatetime()).toMSecsSinceEpoch())
@@ -657,7 +830,10 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
             self.volume_chart.addSeries(series)
             series.attachAxis(axis_x)
             series.attachAxis(axis_y)
-            axis_x.setRange(QDateTime.fromMSecsSinceEpoch(x_values[0]), QDateTime.fromMSecsSinceEpoch(x_values[-1]))
+            axis_x.setRange(
+                QDateTime.fromMSecsSinceEpoch(x_values[0]),
+                QDateTime.fromMSecsSinceEpoch(x_values[-1]),
+            )
             axis_y.setRange(0.0, max(float(working["volume"].max()) * 1.1, 1.0))
 
         def _render_rsi_chart(self, working: pd.DataFrame, x_values: list[int]) -> None:
@@ -666,7 +842,10 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
             axis_x, axis_y = self._reset_chart(self.rsi_chart, title, working)
             axis_y.setRange(0.0, 100.0)
             axis_y.setLabelFormat("%.0f")
-            axis_x.setRange(QDateTime.fromMSecsSinceEpoch(x_values[0]), QDateTime.fromMSecsSinceEpoch(x_values[-1]))
+            axis_x.setRange(
+                QDateTime.fromMSecsSinceEpoch(x_values[0]),
+                QDateTime.fromMSecsSinceEpoch(x_values[-1]),
+            )
             if "entry_rsi_14" in working.columns:
                 series = QLineSeries()
                 series.setName("RSI14")
@@ -690,7 +869,10 @@ def load_native_symbol_chart_widget_class():  # pragma: no cover - UI helper
                     self.rsi_chart.addSeries(marker)
                     marker.attachAxis(axis_x)
                     marker.attachAxis(axis_y)
-            for threshold, color, label in [(30.0, "#94a3b8", "売られ過ぎ"), (70.0, "#f59e0b", "買われ過ぎ")]:
+            for threshold, color, label in [
+                (30.0, "#94a3b8", "売られ過ぎ"),
+                (70.0, "#f59e0b", "買われ過ぎ"),
+            ]:
                 line = QLineSeries()
                 line.setName(label)
                 pen = QPen(QColor(color))

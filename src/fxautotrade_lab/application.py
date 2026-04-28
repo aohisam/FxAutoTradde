@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import os
-from pathlib import Path
 import shutil
 import sys
+from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from time import monotonic, sleep
 
 import pandas as pd
@@ -16,7 +17,12 @@ import yaml
 from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.backtest.fx_backtest import train_fx_filter_model_run
 from fxautotrade_lab.backtest.runner import BacktestRunner
-from fxautotrade_lab.backtest.scalping_backtest import execution_config_from_app, run_scalping_pipeline, training_config_from_app
+from fxautotrade_lab.backtest.scalping_backtest import (
+    execution_config_from_app,
+    export_scalping_pipeline_result,
+    run_scalping_pipeline,
+    training_config_from_app,
+)
 from fxautotrade_lab.config.loader import load_app_config, load_environment, save_app_config
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
@@ -29,16 +35,18 @@ from fxautotrade_lab.data.gmo_tick_stream import GmoPublicWebSocketTickRecorder
 from fxautotrade_lab.data.jforex import JForexCsvImporter
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.data.ticks import JForexTickCsvImporter, ParquetTickCache
-from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
-from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
+from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set as build_fx_feature_set
+from fxautotrade_lab.features.pipeline import (
+    build_multi_timeframe_feature_set as build_multi_timeframe_feature_set,
+)
 from fxautotrade_lab.features.scalping import pip_size_for_symbol
 from fxautotrade_lab.ml.scalping import load_scalping_model_bundle
 from fxautotrade_lab.persistence.sqlite_store import SQLiteStore
-from fxautotrade_lab.research.pipeline import ResearchPipeline
 from fxautotrade_lab.reporting.signal_snapshot import (
     load_signal_snapshot_artifacts,
     write_signal_snapshot_artifacts,
 )
+from fxautotrade_lab.research.pipeline import ResearchPipeline
 from fxautotrade_lab.security.keychain import (
     delete_private_gmo_credentials,
     resolve_private_gmo_credentials,
@@ -46,8 +54,7 @@ from fxautotrade_lab.security.keychain import (
 )
 from fxautotrade_lab.simulation.scalping_realtime import ScalpingRealtimePaperEngine
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
-from fxautotrade_lab.strategies.registry import create_strategy
-
+from fxautotrade_lab.strategies.registry import create_strategy as create_strategy
 
 _TIMEFRAME_ALIASES: dict[str, TimeFrame] = {
     "1m": TimeFrame.MIN_1,
@@ -96,6 +103,9 @@ _REPORT_TABLE_FILES: dict[str, str] = {
     "positions": "positions.csv",
     "signals": "signal_log.csv",
 }
+_REPORT_TABLE_FALLBACK_FILES: dict[str, tuple[str, ...]] = {
+    "signals": ("signal_log.csv", "signals.csv"),
+}
 
 
 def _safe_yaml_mapping(payload: str | None) -> dict[str, object]:
@@ -135,8 +145,16 @@ def _saved_run_period(snapshot: dict[str, object], row: dict[str, object]) -> tu
     backtest = backtest_cfg if isinstance(backtest_cfg, dict) else {}
     data = data_cfg if isinstance(data_cfg, dict) else {}
     use_custom_window = bool(backtest.get("use_custom_window"))
-    start = str((backtest if use_custom_window else data).get("start_date") or "") if isinstance(backtest if use_custom_window else data, dict) else ""
-    end = str((backtest if use_custom_window else data).get("end_date") or "") if isinstance(backtest if use_custom_window else data, dict) else ""
+    start = (
+        str((backtest if use_custom_window else data).get("start_date") or "")
+        if isinstance(backtest if use_custom_window else data, dict)
+        else ""
+    )
+    end = (
+        str((backtest if use_custom_window else data).get("end_date") or "")
+        if isinstance(backtest if use_custom_window else data, dict)
+        else ""
+    )
     if not start:
         start = str(row.get("started_at", ""))[:10]
     if not end:
@@ -223,6 +241,20 @@ def _load_report_frame(path: Path) -> pd.DataFrame:
     return frame
 
 
+def _load_report_table_frame(output_dir: Path | None, table_name: str) -> pd.DataFrame:
+    if output_dir is None:
+        return pd.DataFrame()
+    file_names = _REPORT_TABLE_FALLBACK_FILES.get(table_name)
+    if file_names is None:
+        primary = _REPORT_TABLE_FILES.get(table_name)
+        file_names = (primary,) if primary else ()
+    for file_name in file_names:
+        frame = _load_report_frame(output_dir / file_name)
+        if not frame.empty:
+            return frame
+    return pd.DataFrame()
+
+
 def _emit_progress(
     progress_callback,
     *,
@@ -275,7 +307,9 @@ def _saved_fx_model_entries(config: AppConfig) -> list[dict[str, object]]:
     ]
     if not model_dir.exists():
         return entries
-    for path in sorted(model_dir.glob("fx_filter_*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+    for path in sorted(
+        model_dir.glob("fx_filter_*.json"), key=lambda item: item.stat().st_mtime, reverse=True
+    ):
         modified_at = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
         entries.append(
             {
@@ -313,9 +347,15 @@ class LabApplication:
         repr=False,
     )
     _runs_cache: list[dict[str, object]] | None = field(default=None, init=False, repr=False)
-    _backtest_runs_cache: list[dict[str, object]] | None = field(default=None, init=False, repr=False)
-    _saved_signals_cache: dict[str, pd.DataFrame] = field(default_factory=dict, init=False, repr=False)
-    _saved_signal_snapshot_cache: dict[str, dict[str, object]] = field(default_factory=dict, init=False, repr=False)
+    _backtest_runs_cache: list[dict[str, object]] | None = field(
+        default=None, init=False, repr=False
+    )
+    _saved_signals_cache: dict[str, pd.DataFrame] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _saved_signal_snapshot_cache: dict[str, dict[str, object]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self.config_path = self._prepare_writable_config_path(self.config_path)
@@ -363,7 +403,9 @@ class LabApplication:
         )
 
     def run_backtest(self, *, progress_callback=None) -> BacktestResult:
-        self.last_result = BacktestRunner(self.config, self.env).run(progress_callback=progress_callback)
+        self.last_result = BacktestRunner(self.config, self.env).run(
+            progress_callback=progress_callback
+        )
         if self.config.persistence.enabled:
             self.store.save_backtest_result(self.last_result, self.config)
             self._invalidate_run_listing_cache()
@@ -380,10 +422,14 @@ class LabApplication:
         )
         return self.last_result
 
-    def train_fx_model(self, *, as_of: str | None = None, progress_callback=None) -> dict[str, object]:
+    def train_fx_model(
+        self, *, as_of: str | None = None, progress_callback=None
+    ) -> dict[str, object]:
         if self.config.strategy.name != FxBreakoutPullbackStrategy.name:
             raise RuntimeError("FX breakout 戦略以外では FX ML 学習は利用できません。")
-        summary = train_fx_filter_model_run(self.config, self.env, as_of=as_of, progress_callback=progress_callback)
+        summary = train_fx_filter_model_run(
+            self.config, self.env, as_of=as_of, progress_callback=progress_callback
+        )
         _emit_progress(
             progress_callback,
             task="train",
@@ -396,11 +442,19 @@ class LabApplication:
 
     def model_status(self) -> dict[str, object]:
         ml_cfg = self.config.strategy.fx_breakout_pullback.ml_filter
-        selected_key = "__LATEST__" if ml_cfg.pretrained_model_path is None else str(ml_cfg.pretrained_model_path)
+        selected_key = (
+            "__LATEST__"
+            if ml_cfg.pretrained_model_path is None
+            else str(ml_cfg.pretrained_model_path)
+        )
         available_models = _saved_fx_model_entries(self.config)
-        selected_entry = next((entry for entry in available_models if entry["key"] == selected_key), None)
-        model_path = Path(str(selected_entry["path"])) if selected_entry is not None else (
-            ml_cfg.pretrained_model_path or (ml_cfg.model_dir / ml_cfg.latest_model_alias)
+        selected_entry = next(
+            (entry for entry in available_models if entry["key"] == selected_key), None
+        )
+        model_path = (
+            Path(str(selected_entry["path"]))
+            if selected_entry is not None
+            else (ml_cfg.pretrained_model_path or (ml_cfg.model_dir / ml_cfg.latest_model_alias))
         )
         return {
             "enabled": ml_cfg.enabled,
@@ -408,7 +462,9 @@ class LabApplication:
             "model_path": str(model_path),
             "exists": model_path.exists(),
             "selected_model_key": selected_key,
-            "selected_model_label": str(selected_entry["label"]) if selected_entry is not None else str(model_path.name),
+            "selected_model_label": (
+                str(selected_entry["label"]) if selected_entry is not None else str(model_path.name)
+            ),
             "available_models": available_models,
         }
 
@@ -434,7 +490,9 @@ class LabApplication:
             "data": {"source": "fixture"},
             "automation": {"enabled": True},
         }
-        self.overrides = demo_overrides if self.overrides is None else {**self.overrides, **demo_overrides}
+        self.overrides = (
+            demo_overrides if self.overrides is None else {**self.overrides, **demo_overrides}
+        )
         self.reload_config()
         result = self.run_backtest()
         automation = AutomationController(self.config, self.env)
@@ -492,7 +550,9 @@ class LabApplication:
     def verify_broker_runtime(self) -> dict[str, object]:
         controller = AutomationController(self.config, self.env)
         try:
-            return controller.broker.sync_runtime_state(order_limit=self.config.automation.reconcile_orders_limit)
+            return controller.broker.sync_runtime_state(
+                order_limit=self.config.automation.reconcile_orders_limit
+            )
         finally:
             controller.broker.shutdown()
 
@@ -517,9 +577,13 @@ class LabApplication:
     ) -> None:
         self.config.watchlist.symbols = [normalize_fx_symbol(symbol) for symbol in symbols]
         if benchmarks is not None:
-            self.config.watchlist.benchmark_symbols = [normalize_fx_symbol(symbol) for symbol in benchmarks]
+            self.config.watchlist.benchmark_symbols = [
+                normalize_fx_symbol(symbol) for symbol in benchmarks
+            ]
         if sectors is not None:
-            self.config.watchlist.sector_symbols = [normalize_fx_symbol(symbol) for symbol in sectors]
+            self.config.watchlist.sector_symbols = [
+                normalize_fx_symbol(symbol) for symbol in sectors
+            ]
         self.save_config()
 
     def update_runtime_mode(
@@ -605,13 +669,18 @@ class LabApplication:
                 "status": "stopped",
                 "message": (
                     "GMO 実時間シミュレーションは停止中です。"
-                    if self.config.broker.mode == BrokerMode.GMO_SIM or self.config.data.source == "gmo"
+                    if self.config.broker.mode == BrokerMode.GMO_SIM
+                    or self.config.data.source == "gmo"
                     else "ローカルシミュレーションは停止中です。"
                 ),
             },
             "kill_switch_reason": "",
             "connection_state": "idle",
-            "stream_state": {"enabled": self.config.data.stream_enabled, "connected": False, "healthy": False},
+            "stream_state": {
+                "enabled": self.config.data.stream_enabled,
+                "connected": False,
+                "healthy": False,
+            },
             "reconnect_attempts": 0,
             "last_reconnect_at": "",
             "data_source": self.config.data.source,
@@ -695,7 +764,9 @@ class LabApplication:
             self._invalidate_runtime_cache()
             self._invalidate_chart_cache()
             return result
-        raise RuntimeError("停止後のローカルシミュレーションポジションは保持されません。稼働中に決済してください。")
+        raise RuntimeError(
+            "停止後のローカルシミュレーションポジションは保持されません。稼働中に決済してください。"
+        )
 
     def manual_close_all_positions(self) -> dict[str, object]:
         if self.automation_controller is not None:
@@ -703,7 +774,9 @@ class LabApplication:
             self._invalidate_runtime_cache()
             self._invalidate_chart_cache()
             return result
-        raise RuntimeError("停止後のローカルシミュレーションポジションは保持されません。稼働中に決済してください。")
+        raise RuntimeError(
+            "停止後のローカルシミュレーションポジションは保持されません。稼働中に決済してください。"
+        )
 
     def list_reports(self) -> list[Path]:
         output_dir = self.config.reporting.output_dir
@@ -719,12 +792,18 @@ class LabApplication:
     def list_backtest_runs(self) -> list[dict[str, object]]:
         if self._backtest_runs_cache is not None:
             return [dict(row) for row in self._backtest_runs_cache]
-        rows = [row for row in self.list_runs() if str(row.get("run_kind", "")) == RunKind.BACKTEST.value]
+        rows = [
+            row
+            for row in self.list_runs()
+            if str(row.get("run_kind", "")) == RunKind.BACKTEST.value
+        ]
         enriched: list[dict[str, object]] = []
         for index, row in enumerate(rows):
             output_dir_value = str(row.get("output_dir") or "").strip()
             output_dir = Path(output_dir_value) if output_dir_value else None
-            snapshot = _safe_yaml_mapping(self.store.load_config_snapshot(str(row.get("run_id", "")))) or _load_report_snapshot(output_dir)
+            snapshot = _safe_yaml_mapping(
+                self.store.load_config_snapshot(str(row.get("run_id", "")))
+            ) or _load_report_snapshot(output_dir)
             start_date, end_date = _saved_run_period(snapshot, row)
             ml_details = _saved_run_ml_details(snapshot)
             enriched_row = dict(row)
@@ -733,7 +812,9 @@ class LabApplication:
                     "is_latest": index == 0,
                     "output_dir_path": output_dir,
                     "config_snapshot": snapshot,
-                    "strategy_label": _STRATEGY_LABELS.get(str(row.get("strategy_name") or ""), str(row.get("strategy_name") or "-")),
+                    "strategy_label": _STRATEGY_LABELS.get(
+                        str(row.get("strategy_name") or ""), str(row.get("strategy_name") or "-")
+                    ),
                     "start_date": start_date,
                     "end_date": end_date,
                     "starting_cash": _saved_run_starting_cash(snapshot),
@@ -755,7 +836,11 @@ class LabApplication:
         if not runs:
             self.last_result = None
             return None
-        selected = runs[0] if run_id is None else next((row for row in runs if str(row.get("run_id")) == run_id), None)
+        selected = (
+            runs[0]
+            if run_id is None
+            else next((row for row in runs if str(row.get("run_id")) == run_id), None)
+        )
         if selected is None:
             raise ValueError("指定された保存済みバックテスト結果が見つかりません。")
         if self.last_result is not None and self.last_result.run_id == str(selected.get("run_id")):
@@ -765,27 +850,35 @@ class LabApplication:
         record = self.store.load_run_record(run_id_value) or selected
         output_dir_value = str(record.get("output_dir") or "").strip()
         output_dir = Path(output_dir_value) if output_dir_value else None
-        snapshot = _safe_yaml_mapping(str(record.get("config_snapshot_yaml") or "")) or _load_report_snapshot(output_dir)
+        snapshot = _safe_yaml_mapping(
+            str(record.get("config_snapshot_yaml") or "")
+        ) or _load_report_snapshot(output_dir)
         start_date, end_date = _saved_run_period(snapshot, record)
 
         def _table(table_name: str) -> pd.DataFrame:
             frame = self.store.load_table(run_id_value, table_name)
             if frame.empty and output_dir is not None:
-                file_name = _REPORT_TABLE_FILES.get(table_name)
-                if file_name:
-                    return _load_report_frame(output_dir / file_name)
+                return _load_report_table_frame(output_dir, table_name)
             return frame
 
         def _signals_table() -> pd.DataFrame:
             frame = self.store.load_recent_table(run_id_value, "signals", 300)
             if frame.empty and output_dir is not None:
-                report_frame = _load_report_frame(output_dir / _REPORT_TABLE_FILES["signals"])
+                report_frame = _load_report_table_frame(output_dir, "signals")
                 if not report_frame.empty:
                     frame = report_frame.tail(300).reset_index(drop=True)
             return frame
 
-        equity_curve = _load_report_frame(output_dir / "equity_curve.csv") if output_dir is not None else pd.DataFrame()
-        drawdown_curve = _load_report_frame(output_dir / "drawdown.csv") if output_dir is not None else pd.DataFrame()
+        equity_curve = (
+            _load_report_frame(output_dir / "equity_curve.csv")
+            if output_dir is not None
+            else pd.DataFrame()
+        )
+        drawdown_curve = (
+            _load_report_frame(output_dir / "drawdown.csv")
+            if output_dir is not None
+            else pd.DataFrame()
+        )
         self.last_result = BacktestResult(
             run_id=run_id_value,
             strategy_name=str(record.get("strategy_name") or ""),
@@ -824,10 +917,12 @@ class LabApplication:
         frame = self.store.load_table(run_id, "signals")
         if frame.empty:
             record = self.store.load_run_record(run_id)
-            output_dir_value = str(record.get("output_dir") or "").strip() if record is not None else ""
+            output_dir_value = (
+                str(record.get("output_dir") or "").strip() if record is not None else ""
+            )
             output_dir = Path(output_dir_value) if output_dir_value else None
             if output_dir is not None:
-                frame = _load_report_frame(output_dir / _REPORT_TABLE_FILES["signals"])
+                frame = _load_report_table_frame(output_dir, "signals")
         self._saved_signals_cache[run_id] = frame.copy()
         return frame
 
@@ -845,12 +940,12 @@ class LabApplication:
         if output_dir is not None and output_dir.exists():
             snapshot = load_signal_snapshot_artifacts(output_dir)
         if snapshot is None:
-            snapshot = self.store.load_signal_snapshot(run_id, threshold=0.55, recent_limit=300, bins=11, symbol_limit=5)
+            snapshot = self.store.load_signal_snapshot(
+                run_id, threshold=0.55, recent_limit=300, bins=11, symbol_limit=5
+            )
             if output_dir is not None and output_dir.exists():
-                try:
+                with suppress(OSError):
                     write_signal_snapshot_artifacts(output_dir, snapshot)
-                except OSError:
-                    pass
         self._saved_signal_snapshot_cache[run_id] = {
             "recent_signals": snapshot.get("recent_signals", pd.DataFrame()).copy(),
             "summary": dict(snapshot.get("summary") or {}),
@@ -944,7 +1039,11 @@ class LabApplication:
             "private": {
                 "configured": private_credentials.configured,
                 "source": private_credentials.source,
-                "key_hint": self._mask_api_key(private_credentials.api_key) if private_credentials.configured else "未設定",
+                "key_hint": (
+                    self._mask_api_key(private_credentials.api_key)
+                    if private_credentials.configured
+                    else "未設定"
+                ),
                 "keychain_available": private_credentials.keychain_available,
             },
         }
@@ -974,7 +1073,9 @@ class LabApplication:
             "keychain_available": self._resolved_private_credentials().keychain_available,
         }
 
-    def save_gmo_credentials(self, profile: str, api_key: str, api_secret: str) -> dict[str, object]:
+    def save_gmo_credentials(
+        self, profile: str, api_key: str, api_secret: str
+    ) -> dict[str, object]:
         normalized = profile.lower().strip()
         if normalized != "private":
             raise ValueError("GMO private API の資格情報だけ保存できます。")
@@ -993,8 +1094,7 @@ class LabApplication:
     def import_jforex_csv(self, file_path: str, symbol: str | None = None) -> dict[str, object]:
         _ = file_path, symbol
         raise RuntimeError(
-            "単一 CSV のインポートは無効です。\n"
-            "Bid / Ask の 2 ファイルを指定してください。"
+            "単一 CSV のインポートは無効です。\n" "Bid / Ask の 2 ファイルを指定してください。"
         )
 
     def import_jforex_bid_ask_csv(
@@ -1003,7 +1103,9 @@ class LabApplication:
         ask_file_path: str,
         symbol: str | None = None,
     ) -> dict[str, object]:
-        result = JForexCsvImporter(MarketDataService(self.config, self.env).cache).import_bid_ask_files(
+        result = JForexCsvImporter(
+            MarketDataService(self.config, self.env).cache
+        ).import_bid_ask_files(
             bid_file_path=bid_file_path,
             ask_file_path=ask_file_path,
             symbol=symbol,
@@ -1090,7 +1192,13 @@ class LabApplication:
             ticks,
             symbol=normalized_symbol,
             config=self.config,
-            output_dir=output_root,
+            output_dir=None,
+        )
+        exported_dir = export_scalping_pipeline_result(result, output_root)
+        result.output_dir = exported_dir
+        model_path = (
+            self.config.strategy.fx_scalping.model_dir
+            / self.config.strategy.fx_scalping.latest_model_alias
         )
         _emit_progress(
             progress_callback,
@@ -1103,7 +1211,8 @@ class LabApplication:
         return {
             "run_id": result.run_id,
             "symbol": normalized_symbol,
-            "output_dir": str((output_root / result.run_id) if result.output_dir is not None else ""),
+            "output_dir": str(exported_dir),
+            "model_path": str(model_path),
             "import_summary": import_summary or {},
             "train_start": result.train_start,
             "train_end": result.train_end,
@@ -1156,7 +1265,8 @@ class LabApplication:
         snapshot = engine.snapshot()
         snapshot["observed_ticks"] = observed_ticks
         snapshot["mode_note_ja"] = (
-            "GMO public REST ticker をスキャルピング paper engine へ流し込む簡易リアルタイムシミュレーションです。"
+            "GMO public REST ticker をスキャルピング paper engine へ流し込む"
+            "簡易リアルタイムシミュレーションです。"
             " 本番運用前は WebSocket ticker 記録で shadow 検証してください。"
         )
         return snapshot
@@ -1175,9 +1285,19 @@ class LabApplication:
             symbol=normalized_symbol,
         ).run(max_ticks=max_ticks)
 
-    def _scalping_window(self, *, start: str | None, end: str | None) -> tuple[pd.Timestamp, pd.Timestamp]:
-        start_value = start or (self.config.backtest.start_date if self.config.backtest.use_custom_window else self.config.data.start_date)
-        end_value = end or (self.config.backtest.end_date if self.config.backtest.use_custom_window else self.config.data.end_date)
+    def _scalping_window(
+        self, *, start: str | None, end: str | None
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
+        start_value = start or (
+            self.config.backtest.start_date
+            if self.config.backtest.use_custom_window
+            else self.config.data.start_date
+        )
+        end_value = end or (
+            self.config.backtest.end_date
+            if self.config.backtest.use_custom_window
+            else self.config.data.end_date
+        )
         start_ts = pd.Timestamp(start_value)
         end_ts = pd.Timestamp(end_value)
         if start_ts.tzinfo is None:
@@ -1252,7 +1372,9 @@ class LabApplication:
             timeframe.value,
             self.config.strategy.name,
             self.config.strategy.entry_timeframe.value,
-            tuple(sorted((str(key), str(value)) for key, value in dict(latest_market_bar_at).items())),
+            tuple(
+                sorted((str(key), str(value)) for key, value in dict(latest_market_bar_at).items())
+            ),
             len(fills),
             last_fill_token,
         )
@@ -1277,7 +1399,9 @@ class LabApplication:
         quotes = client.fetch_ticker_quotes()
         rules = client.list_symbols()
         market_data_rows = 0
-        test_symbol = (self.config.watchlist.benchmark_symbols or self.config.watchlist.symbols or ["USD_JPY"])[0]
+        test_symbol = (
+            self.config.watchlist.benchmark_symbols or self.config.watchlist.symbols or ["USD_JPY"]
+        )[0]
         try:
             start = pd.Timestamp.now(tz="Asia/Tokyo") - pd.Timedelta(days=3)
             end = pd.Timestamp.now(tz="Asia/Tokyo")
@@ -1351,7 +1475,14 @@ class LabApplication:
         needs_user_copy = needs_user_copy or not os.access(candidate, os.W_OK)
         if not needs_user_copy:
             return candidate
-        target = Path.home() / "Library" / "Application Support" / "FXAutoTradeLab" / "configs" / candidate.name
+        target = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "FXAutoTradeLab"
+            / "configs"
+            / candidate.name
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             shutil.copy2(candidate, target)

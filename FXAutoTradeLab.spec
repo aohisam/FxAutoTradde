@@ -1,7 +1,32 @@
 # -*- mode: python ; coding: utf-8 -*-
 # ruff: noqa: F821, UP009
 
+import struct
 from pathlib import Path
+
+from PyInstaller.depend import bindepend
+from PyInstaller.utils.hooks.qt import QtLibraryInfo
+
+_original_get_imports = bindepend.get_imports
+_original_validate_qt_plugin_dependencies = QtLibraryInfo._validate_plugin_dependencies
+
+
+def _safe_get_imports(filename, search_paths=None):
+    try:
+        return _original_get_imports(filename, search_paths)
+    except struct.error:
+        return []
+
+
+def _safe_validate_qt_plugin_dependencies(self, plugin_file):
+    try:
+        return _original_validate_qt_plugin_dependencies(self, plugin_file)
+    except struct.error as exc:
+        return False, f"Mach-O dependency scan failed: {exc}"
+
+
+QtLibraryInfo._validate_plugin_dependencies = _safe_validate_qt_plugin_dependencies
+bindepend.get_imports = _safe_get_imports
 
 # PyInstaller executes the spec in the current working directory context.
 ROOT_DIR = Path.cwd().resolve()
@@ -11,6 +36,7 @@ CONFIGS_DIR = ROOT_DIR / "configs"
 RESOURCES_DIR = ROOT_DIR / "resources"
 DESKTOP_ASSETS_DIR = SRC_DIR / "fxautotrade_lab" / "desktop" / "assets"
 ICON_PATH = RESOURCES_DIR / "app_icon.icns"
+
 
 a = Analysis(
     [str(SCRIPT_PATH)],
@@ -22,7 +48,6 @@ a = Analysis(
         (str(DESKTOP_ASSETS_DIR), "fxautotrade_lab/desktop/assets"),
     ],
     hiddenimports=[
-        "pytz",
         "fxautotrade_lab.desktop.pages.automation",
         "fxautotrade_lab.desktop.pages.backtest",
         "fxautotrade_lab.desktop.pages.chart",
@@ -37,9 +62,8 @@ a = Analysis(
         "fxautotrade_lab.desktop.charts",
         "fxautotrade_lab.desktop.models",
         "fxautotrade_lab.desktop.workers",
-        "PySide6.QtCharts",
     ],
-    hookspath=[],
+    hookspath=[str(ROOT_DIR / "packaging" / "pyinstaller_hooks")],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
@@ -47,8 +71,13 @@ a = Analysis(
         # make PyInstaller traverse large optional dependency trees.
         "_pytest",
         "black",
+        "narwhals",
         "pip",
+        "plotly",
+        "PySide6.QtCharts",
+        "pygments",
         "pytest",
+        "rich",
         "ruff",
     ],
     noarchive=False,

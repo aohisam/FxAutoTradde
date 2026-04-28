@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.symbols import split_fx_symbol
 from fxautotrade_lab.data.quote_bars import validate_quote_bar_frame
 
@@ -63,7 +64,7 @@ def build_scalping_feature_frame(
 ) -> pd.DataFrame:
     """Build no-lookahead microstructure features from quote bars."""
 
-    bars = validate_quote_bar_frame(quote_bars)
+    bars = validate_quote_bar_frame(_normalize_feature_input_index(quote_bars))
     if bars.empty:
         return pd.DataFrame()
     pip = float(pip_size or pip_size_for_symbol(symbol))
@@ -145,7 +146,7 @@ def build_scalping_feature_frame(
         signed_weighted.rolling(30, min_periods=3).sum() / weight_30
     ).fillna(0.0)
 
-    local_index = bars.index.tz_convert("Asia/Tokyo") if bars.index.tz is not None else bars.index
+    local_index = bars.index.tz_convert(ASIA_TOKYO)
     minutes_of_day = local_index.hour * 60 + local_index.minute
     features["hour_sin"] = np.sin(2.0 * np.pi * local_index.hour / 24.0)
     features["hour_cos"] = np.cos(2.0 * np.pi * local_index.hour / 24.0)
@@ -181,6 +182,17 @@ def build_scalping_feature_frame(
     features["bid_close"] = pd.to_numeric(bars["bid_close"], errors="coerce")
     features["ask_close"] = pd.to_numeric(bars["ask_close"], errors="coerce")
     return features.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+
+def _normalize_feature_input_index(frame: pd.DataFrame) -> pd.DataFrame:
+    working = frame.copy()
+    if not isinstance(working.index, pd.DatetimeIndex):
+        raise TypeError("スキャルピング特徴量の入力indexは DatetimeIndex が必要です。")
+    index = pd.DatetimeIndex(working.index)
+    working.index = (
+        index.tz_localize(ASIA_TOKYO) if index.tz is None else index.tz_convert(ASIA_TOKYO)
+    )
+    return working
 
 
 def build_directional_feature_frame(features: pd.DataFrame, *, side: str) -> pd.DataFrame:

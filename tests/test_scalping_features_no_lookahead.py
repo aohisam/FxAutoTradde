@@ -62,3 +62,14 @@ def test_added_features_are_finite_and_directional_order_is_stable() -> None:
     assert np.isfinite(directional.to_numpy()).all()
     assert features["is_tokyo_session"].iloc[0] == 1.0
     assert features["is_london_session"].iloc[0] == 0.0
+
+
+def test_naive_scalping_feature_index_is_localized_to_tokyo() -> None:
+    naive_index = pd.date_range("2026-02-02 10:00:00", periods=20, freq="1s")
+    aware_index = naive_index.tz_localize(ASIA_TOKYO)
+
+    naive_features = build_scalping_feature_frame(_bars(naive_index), symbol="USD_JPY")
+    aware_features = build_scalping_feature_frame(_bars(aware_index), symbol="USD_JPY")
+
+    assert str(naive_features.index.tz) == str(ASIA_TOKYO)
+    pd.testing.assert_frame_equal(naive_features, aware_features)

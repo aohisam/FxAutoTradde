@@ -1,12 +1,13 @@
 """HTML report generation."""
 
+# ruff: noqa: E501
+
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.offline import plot
 
 from fxautotrade_lab.core.models import BacktestResult
 
@@ -14,6 +15,20 @@ from fxautotrade_lab.core.models import BacktestResult
 def _equity_chart_div(result: BacktestResult) -> str:
     if result.equity_curve.empty:
         return "<p>データがありません。</p>"
+    if os.environ.get("FXAUTOTRADE_DISABLE_PLOTLY") == "1":
+        latest = result.equity_curve[["equity"]].tail(120).reset_index()
+        return "<p>インタラクティブチャート部品を無効化しているため、直近の資産推移を表で表示しています。</p>" + latest.to_html(
+            index=False, classes="table"
+        )
+    try:
+        import plotly.graph_objects as go
+        from plotly.offline import plot
+    except ImportError:
+        latest = result.equity_curve[["equity"]].tail(120).reset_index()
+        return "<p>インタラクティブチャート部品を読み込めないため、直近の資産推移を表で表示しています。</p>" + latest.to_html(
+            index=False, classes="table"
+        )
+
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
@@ -76,8 +91,9 @@ def render_html_report(result: BacktestResult) -> str:
     </ul>
     """
     recent_signals = (
-        result.signals.tail(20)[["timestamp", "symbol", "signal_action", "signal_score", "explanation_ja"]]
-        .to_html(index=False, classes="table")
+        result.signals.tail(20)[
+            ["timestamp", "symbol", "signal_action", "signal_score", "explanation_ja"]
+        ].to_html(index=False, classes="table")
         if not result.signals.empty
         else "<p>シグナル履歴はありません。</p>"
     )

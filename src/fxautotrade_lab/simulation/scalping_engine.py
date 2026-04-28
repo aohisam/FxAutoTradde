@@ -310,6 +310,10 @@ def run_scalping_tick_backtest(
             "validation_sample_count": int(
                 model_bundle.train_metrics.get("validation_sample_count", 0)
             ),
+            "validation_gate_passed": bool(
+                model_bundle.train_metrics.get("validation_gate_passed", True)
+            ),
+            "validation_warning_ja": str(model_bundle.train_metrics.get("warning_ja", "")),
         }
     )
     return ScalpingBacktestResult(

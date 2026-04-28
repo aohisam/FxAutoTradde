@@ -40,6 +40,15 @@ strategy:
     min_walk_forward_folds: 1
     model_dir: models/fx_scalping
     latest_model_alias: latest_scalping_model.json
+    learning_rate: 0.08
+    max_iter: 500
+    l2_penalty: 0.002
+    feature_clip: 8.0
+    seed: 23
+    min_validation_net_pips: 0.0
+    min_validation_profit_factor: 1.0
+    min_validation_trade_count: 1
+    fail_closed_on_bad_validation: true
     entry_latency_ms: 250
     cooldown_seconds: 5
     max_trades_per_day: 120

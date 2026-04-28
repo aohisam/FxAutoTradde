@@ -103,3 +103,58 @@ def test_fit_metadata_records_validation_threshold_source(monkeypatch) -> None: 
 
     assert bundle.train_metrics["threshold_selected_on"] == "validation"
     assert bundle.metadata["threshold_selected_on"] == "validation"
+
+
+def test_validation_gate_fail_closed_sets_threshold_above_one(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    class DummyLogistic:
+        feature_names = list(SCALPING_FEATURE_COLUMNS)
+        metadata: dict[str, object] = {}
+
+        def predict_proba(self, features: pd.DataFrame) -> pd.Series:
+            return pd.Series(0.9, index=features.index, dtype="float64")
+
+    monkeypatch.setattr(
+        scalping_module.NumpyLogisticRegression,
+        "fit",
+        lambda *args, **kwargs: DummyLogistic(),
+    )
+    train_index = pd.date_range("2026-02-02 09:00:00", periods=8, freq="1s", tz=ASIA_TOKYO)
+    validation_index = pd.date_range("2026-02-02 09:01:00", periods=8, freq="1s", tz=ASIA_TOKYO)
+    train_labels = pd.DataFrame(
+        {
+            "long_net_pips": 1.0,
+            "short_net_pips": -1.0,
+            "long_win": True,
+            "short_win": False,
+        },
+        index=train_index,
+    )
+    validation_labels = pd.DataFrame(
+        {
+            "long_net_pips": -2.0,
+            "short_net_pips": -2.0,
+            "long_win": False,
+            "short_win": False,
+        },
+        index=validation_index,
+    )
+
+    bundle = fit_scalping_model(
+        neutral_features(train_index),
+        train_labels,
+        validation_features=neutral_features(validation_index),
+        validation_labels=validation_labels,
+        config=ScalpingTrainingConfig(
+            min_samples=1,
+            min_threshold_trades=1,
+            min_validation_net_pips=0.0,
+            min_validation_profit_factor=1.0,
+            min_validation_trade_count=1,
+            fail_closed_on_bad_validation=True,
+        ),
+    )
+
+    assert bundle.decision_threshold == 1.01
+    assert bundle.train_metrics["validation_gate_passed"] is False
+    assert bundle.metadata["validation_gate_passed"] is False
+    assert "validation gate未達" in str(bundle.train_metrics["warning_ja"])
