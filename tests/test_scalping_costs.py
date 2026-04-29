@@ -63,6 +63,9 @@ def test_tick_replay_net_pnl_subtracts_round_trip_fee() -> None:
 
     trade = result.trades.iloc[0]
     assert int(trade["quantity"]) > 0
+    assert abs(float(trade["gross_pnl"])) > 0.0
+    assert float(trade["fee_amount"]) > 0.0
+    assert abs(float(trade["net_pnl"])) > 0.0
     assert trade["net_pnl"] < trade["gross_pnl"]
     assert trade["realized_net_pips"] == trade["realized_gross_pips"] - 0.3
     assert result.metrics["total_fee_pips"] == 0.3
@@ -144,4 +147,5 @@ def test_full_scalping_backtest_keeps_positive_quantity_and_fee_amount(
     assert (result.backtest.trades["quantity"].astype(int) > 0).all()
     assert (result.backtest.trades["fee_amount"].astype(float) > 0.0).all()
     assert (result.backtest.trades["gross_pnl"].abs() > 0.0).all()
+    assert (result.backtest.trades["net_pnl"].abs() > 0.0).all()
     assert (result.backtest.trades["net_pnl"] != result.backtest.trades["gross_pnl"]).all()

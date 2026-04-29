@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import subprocess
 import sys
 
@@ -50,3 +51,125 @@ def test_cli_verify_broker_smoke(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "ブローカー確認完了" in result.stdout
+
+
+def test_cli_scalping_argparse_dispatches_application_methods(monkeypatch, capsys, tmp_path):
+    from fxautotrade_lab.cli import __main__ as cli_main
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    config_path = tmp_path / "config.yaml"
+    tick_path = tmp_path / "ticks.csv"
+
+    class FakeLabApplication:
+        def __init__(self, config: Path) -> None:
+            self.config = config
+
+        def import_jforex_tick_csv(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("import_jforex_tick_csv", {"config": self.config, **kwargs}))
+            return {"ok": True}
+
+        def run_scalping_backtest(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("run_scalping_backtest", {"config": self.config, **kwargs}))
+            return {"ok": True}
+
+        def run_scalping_realtime_sim(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("run_scalping_realtime_sim", {"config": self.config, **kwargs}))
+            return {"ok": True}
+
+        def record_gmo_scalping_ticks(self, **kwargs: object) -> dict[str, object]:
+            calls.append(("record_gmo_scalping_ticks", {"config": self.config, **kwargs}))
+            return {"ok": True}
+
+    monkeypatch.setattr(cli_main, "LabApplication", FakeLabApplication)
+    cases = [
+        (
+            [
+                "fxautotrade",
+                "import-tick-csv",
+                "--config",
+                str(config_path),
+                "--file",
+                str(tick_path),
+                "--symbol",
+                "USD_JPY",
+            ],
+            "import_jforex_tick_csv",
+            {
+                "config": config_path,
+                "file_path": str(tick_path),
+                "symbol": "USD_JPY",
+            },
+        ),
+        (
+            [
+                "fxautotrade",
+                "scalping-backtest",
+                "--config",
+                str(config_path),
+                "--tick-file",
+                str(tick_path),
+                "--symbol",
+                "EUR_JPY",
+                "--start",
+                "2026-02-02T09:00:00+09:00",
+                "--end",
+                "2026-02-02T10:00:00+09:00",
+            ],
+            "run_scalping_backtest",
+            {
+                "config": config_path,
+                "tick_file_path": str(tick_path),
+                "symbol": "EUR_JPY",
+                "start": "2026-02-02T09:00:00+09:00",
+                "end": "2026-02-02T10:00:00+09:00",
+            },
+        ),
+        (
+            [
+                "fxautotrade",
+                "scalping-realtime-sim",
+                "--config",
+                str(config_path),
+                "--symbol",
+                "GBP_JPY",
+                "--max-ticks",
+                "3",
+                "--poll-seconds",
+                "0",
+            ],
+            "run_scalping_realtime_sim",
+            {
+                "config": config_path,
+                "symbol": "GBP_JPY",
+                "max_ticks": 3,
+                "poll_seconds": 0.0,
+            },
+        ),
+        (
+            [
+                "fxautotrade",
+                "record-gmo-ticks",
+                "--config",
+                str(config_path),
+                "--symbol",
+                "AUD_JPY",
+                "--max-ticks",
+                "2",
+            ],
+            "record_gmo_scalping_ticks",
+            {
+                "config": config_path,
+                "symbol": "AUD_JPY",
+                "max_ticks": 2,
+            },
+        ),
+    ]
+
+    for argv, expected_method, expected_kwargs in cases:
+        calls.clear()
+        monkeypatch.setattr(sys, "argv", argv)
+
+        cli_main._argparse_main()
+
+        assert calls == [(expected_method, expected_kwargs)]
+        assert "{'ok': True}" in capsys.readouterr().out

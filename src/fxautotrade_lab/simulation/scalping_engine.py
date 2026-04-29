@@ -114,6 +114,7 @@ def run_scalping_tick_backtest(
         probability = max(lp, sp)
         signal_id = str(uuid4())
         reject_reason = ""
+        quantity = 0
         entry_index = -1
         entry_tick: pd.Series | None = None
         trade: dict[str, object] | None = None
@@ -169,8 +170,6 @@ def run_scalping_tick_backtest(
             )
             if quantity <= 0:
                 reject_reason = "quantity_too_small"
-        else:
-            quantity = 0
         if not reject_reason:
             trade = _simulate_trade_from_entry(
                 tick_frame,
