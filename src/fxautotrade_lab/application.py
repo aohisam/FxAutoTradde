@@ -41,6 +41,7 @@ from fxautotrade_lab.features.pipeline import (
 )
 from fxautotrade_lab.features.scalping import pip_size_for_symbol
 from fxautotrade_lab.ml.scalping import load_scalping_model_bundle
+from fxautotrade_lab.persistence.scalping_outcomes import ScalpingOutcomeStore
 from fxautotrade_lab.persistence.sqlite_store import SQLiteStore
 from fxautotrade_lab.reporting.signal_snapshot import (
     load_signal_snapshot_artifacts,
@@ -1218,6 +1219,16 @@ class LabApplication:
             "symbol": normalized_symbol,
             "output_dir": str(exported_dir),
             "model_path": str(model_path),
+            "candidate_model_path": str(result.candidate_model_path or ""),
+            "latest_model_path": str(result.latest_model_path or model_path),
+            "promoted_to_latest": bool(
+                result.model_bundle.metadata.get("promoted_to_latest", False)
+            ),
+            "promotion_reject_reason_ja": str(
+                result.model_bundle.metadata.get("promotion_reject_reason_ja", "")
+            ),
+            "promotion_metrics": result.promotion_metrics,
+            "outcome_store_summary": result.outcome_store_summary,
             "import_summary": import_summary or {},
             "train_start": result.train_start,
             "train_end": result.train_end,
@@ -1248,6 +1259,11 @@ class LabApplication:
             )
         training_config = training_config_from_app(self.config)
         model_bundle = load_scalping_model_bundle(model_path, training_config)
+        if model_bundle.metadata.get("promoted_to_latest") is not True:
+            raise RuntimeError(
+                "スキャルピング realtime paper は昇格済み latest モデルだけ使用できます。"
+                " scalping-backtest の promotion gate を通過したモデルを作成してください。"
+            )
         engine = ScalpingRealtimePaperEngine(
             symbol=normalized_symbol,
             pip_size=float(scalping_cfg.pip_size or pip_size_for_symbol(normalized_symbol)),
@@ -1268,7 +1284,31 @@ class LabApplication:
             if observed_ticks < max_ticks and poll_seconds > 0:
                 sleep(float(poll_seconds))
         snapshot = engine.snapshot()
+        paper_run_id = datetime.now(tz=ASIA_TOKYO).strftime("%Y%m%d_%H%M%S_scalping_paper")
+        model_id = str(
+            model_bundle.metadata.get("model_id")
+            or model_bundle.metadata.get("run_id")
+            or model_path.stem
+        )
+        if scalping_cfg.outcome_store_enabled:
+            store_dir = scalping_cfg.outcome_store_dir or (scalping_cfg.model_dir / "outcomes")
+            store_summary = ScalpingOutcomeStore(store_dir).append_paper(
+                run_id=paper_run_id,
+                model_id=model_id,
+                symbol=normalized_symbol,
+                signals=pd.DataFrame(snapshot.get("signals", [])),
+                trades=pd.DataFrame(snapshot.get("trades", [])),
+            )
+            snapshot["outcome_store_summary"] = {
+                "enabled": True,
+                "root_dir": str(store_dir),
+                **store_summary,
+            }
+        else:
+            snapshot["outcome_store_summary"] = {"enabled": False}
         snapshot["observed_ticks"] = observed_ticks
+        snapshot["run_id"] = paper_run_id
+        snapshot["model_id"] = model_id
         snapshot["mode_note_ja"] = (
             "GMO public REST ticker をスキャルピング paper engine へ流し込む"
             "簡易リアルタイムシミュレーションです。"

@@ -105,14 +105,19 @@ python -m fxautotrade_lab.cli import-bidask-csv \
 - ラベルは `max_hold_seconds` を実時間として扱い、不規則barや欠損barでも「行数=秒数」とみなしません。
 - `label_source: tick` では、entry latency 後の最初の tick、Bid/Ask による TP/SL 判定、round-trip fee を含む tick replay と同じ前提でラベルを作ります。`label_source: bar` は過去互換のfallbackです。
 - train / validation / test は purged split で分け、`max_hold_seconds`、entry latency、cooldown を含む境界purgeを入れます。
-- モデル係数は train で学習し、`decision_threshold` は validation で選び、test は最終評価まで使いません。
-- validation gate は `min_validation_net_pips`、`min_validation_profit_factor`、`min_validation_trade_count` で最低条件を確認します。`fail_closed_on_bad_validation: true` の場合、基準未達なら `decision_threshold=1.01` にして新規entryを止め、metadata に `validation_gate_passed` と `warning_ja` を残します。
+- モデル係数は train で学習し、`decision_threshold` は validation tick replay で選びます。cooldown、日次停止、spread filter、blackout、entry latency、最大取引回数まで含めた同じ売買エンジンで閾値を評価し、replay が使えない場合だけ label 集計へfallbackします。
+- validation gate は `min_validation_net_pips`、`min_validation_profit_factor`、`min_validation_trade_count` で最低条件を確認します。`fail_closed_on_bad_validation: true` の場合、基準未達なら `decision_threshold=1.01` にして新規entryを止め、metadata に `validation_gate_passed`、`threshold_selection_method`、`warning_ja` を残します。
+- 学習直後のモデルは `models/fx_scalping/candidates/{run_id}.json` に保存されます。test backtest、stress test、walk-forward の promotion gate を通過した候補だけ `latest_scalping_model.json` に昇格し、不合格時は既存 latest を更新しません。
+- realtime paper は昇格済み latest モデルだけを読み込みます。candidate や promotion 未通過モデルは、誤って shadow 運用に混ざらないよう日本語エラーで停止します。
 - fee、slippage、spread、entry latency は tick replay の損益へ反映します。`realized_pips` は net pips の別名で、gross は `realized_gross_pips` を確認してください。
 - accepted / rejected signal を `signals.csv` に出力します。`reject_reason` で threshold不足、spread超過、volatility不足、cooldown、日次損失停止、連敗停止、stale tick、blackout などを確認できます。
 - backtest で labels がある場合だけ、分析用に `future_long_net_pips` などをjoinします。実時間paper simulationや将来のlive系では未来結果を使いません。
 - `blackout_windows_jst` でロールオーバーや手動ニュース回避時間を設定できます。日跨ぎwindowにも対応します。
 - `spread_stress_multipliers` と `latency_ms_grid` で spread拡大 / latency悪化のstress結果を `stress_results.csv` / JSON に保存します。stress結果は自動合否ではなく、脆弱性の警告材料です。
 - `max_daily_loss_amount` と `max_consecutive_losses` はtick replayの新規entry停止に使われ、翌日にはリセットされます。
+- backtest と realtime paper は共通の signal/risk/execution policy を使います。paper 側も stale tick、blackout、spread z-score、spread-to-mean ratio、rejected signal logging、entry latency を再現します。
+- backtest と paper simulation の signals / trades / outcomes は `outcome_store_dir` 配下へ run 横断で保存され、次回以降の分析・再学習データとして読み込めます。
+- probability calibration report として probability decile 別の取引数、勝率、平均/合計 net pips、profit factor、Brier score、calibration curve CSV を出力します。
 - デスクトップの「レポート」ページは、通常バックテストに加えて `reports/scalping/*/summary.json` のスキャルピング検証結果も一覧表示します。
 - 将来のprivate broker連携向けには `ScalpingOrderPlan` で注文意図を共通化しています。ただし既定はdry-runで、private brokerへの実注文送信は未実装かつ無効です。
 
@@ -129,9 +134,19 @@ strategy:
     max_consecutive_losses: 5
     max_tick_gap_seconds: 5
     min_validation_net_pips: 0.0
-    min_validation_profit_factor: 1.0
-    min_validation_trade_count: 1
+    min_validation_profit_factor: 1.05
+    min_validation_trade_count: 50
     fail_closed_on_bad_validation: true
+    walk_forward_enabled: true
+    min_test_profit_factor: 1.05
+    min_test_trade_count: 50
+    min_test_net_profit: 0.0
+    max_test_drawdown_amount: 100000.0
+    min_stress_profit_factor: 1.0
+    min_stress_net_profit: -50000.0
+    min_walk_forward_pass_ratio: 0.6
+    outcome_store_enabled: true
+    outcome_store_dir: runtime/scalping_outcomes
     blackout_windows_jst:
       - start: "05:55"
         end: "06:10"

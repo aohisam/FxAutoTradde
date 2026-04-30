@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -95,4 +96,15 @@ def test_scalping_pipeline_trains_and_exports(tmp_path: Path) -> None:
     assert not result.stress_results.empty
     assert (tmp_path / "reports" / result.run_id / "summary.json").exists()
     assert (tmp_path / "reports" / result.run_id / "stress_results.json").exists()
+    assert (tmp_path / "reports" / result.run_id / "probability_deciles.csv").exists()
+    assert (tmp_path / "reports" / result.run_id / "calibration_curve.csv").exists()
+    assert result.candidate_model_path is not None
+    assert result.candidate_model_path.exists()
+    assert result.model_bundle.metadata["threshold_selection_method"] == "validation_replay"
+    assert result.model_bundle.metadata["promoted_to_latest"] is True
     assert (tmp_path / "models" / "latest_scalping_model.json").exists()
+    payload = json.loads(result.candidate_model_path.read_text(encoding="utf-8"))
+    metadata = payload["metadata"]
+    assert metadata["promoted_to_latest"] is True
+    assert metadata["promotion_metrics"]["test_trade_count"] >= 0
+    assert result.outcome_store_summary["enabled"] is True

@@ -60,7 +60,7 @@ class ScalpingModelBundle:
     model: NumpyLogisticRegression
     decision_threshold: float
     training_config: ScalpingTrainingConfig
-    train_metrics: dict[str, float | int | str | bool] = field(default_factory=dict)
+    train_metrics: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def save(self, path: str | Path) -> Path:

@@ -237,6 +237,15 @@ class FxScalpingConfig(BaseModel):
     min_validation_profit_factor: float = 1.0
     min_validation_trade_count: int = 1
     fail_closed_on_bad_validation: bool = True
+    min_test_profit_factor: float = 0.0
+    min_test_trade_count: int = 0
+    min_test_net_profit: float = -1_000_000_000_000.0
+    max_test_drawdown_amount: float | None = None
+    min_stress_profit_factor: float = 0.0
+    min_stress_net_profit: float = -1_000_000_000_000.0
+    min_walk_forward_pass_ratio: float = 0.0
+    outcome_store_enabled: bool = True
+    outcome_store_dir: Path | None = None
     entry_latency_ms: int = 250
     cooldown_seconds: int = 5
     max_trades_per_day: int = 120

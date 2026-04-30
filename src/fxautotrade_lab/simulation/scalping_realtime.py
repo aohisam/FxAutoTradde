@@ -14,20 +14,48 @@ from fxautotrade_lab.features.scalping import (
     build_scalping_feature_frame,
 )
 from fxautotrade_lab.ml.scalping import ScalpingModelBundle, ScalpingTrainingConfig
-from fxautotrade_lab.simulation.scalping_engine import ScalpingExecutionConfig
+from fxautotrade_lab.simulation.scalping_engine import (
+    ScalpingExecutionConfig,
+    ScalpingExecutionPolicy,
+    ScalpingRiskSnapshot,
+    ScalpingRiskState,
+    ScalpingSignalPolicy,
+)
 
 
 @dataclass(slots=True)
 class ScalpingPaperPosition:
     position_id: str
+    signal_id: str
     symbol: str
     side: str
     quantity: int
+    signal_time: pd.Timestamp
     entry_time: pd.Timestamp
     entry_price: float
     take_profit_price: float
     stop_loss_price: float
     probability: float
+    long_probability: float
+    short_probability: float
+
+
+@dataclass(slots=True)
+class ScalpingPendingEntry:
+    signal_id: str
+    symbol: str
+    side: str
+    signal_time: pd.Timestamp
+    target_time: pd.Timestamp
+    probability: float
+    long_probability: float
+    short_probability: float
+    threshold: float
+    spread: float
+    spread_mean: float
+    spread_z: float
+    volatility: float
+    risk_snapshot: ScalpingRiskSnapshot
 
 
 @dataclass(slots=True)
@@ -42,13 +70,25 @@ class ScalpingRealtimePaperEngine:
     max_buffer_ticks: int = 20_000
     cash: float = field(init=False)
     position: ScalpingPaperPosition | None = field(default=None, init=False)
+    pending_entry: ScalpingPendingEntry | None = field(default=None, init=False)
     tick_buffer: list[dict[str, object]] = field(default_factory=list, init=False)
     events: list[dict[str, object]] = field(default_factory=list, init=False)
     trades: list[dict[str, object]] = field(default_factory=list, init=False)
-    next_allowed_time: pd.Timestamp | None = field(default=None, init=False)
+    signals: list[dict[str, object]] = field(default_factory=list, init=False)
+    risk_state: ScalpingRiskState = field(init=False)
+    signal_policy: ScalpingSignalPolicy = field(init=False)
+    execution_policy: ScalpingExecutionPolicy = field(init=False)
+    last_signal_time: pd.Timestamp | None = field(default=None, init=False)
+    rejected_rows_recorded: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
-        self.cash = float(self.execution_config.starting_cash)
+        self.risk_state = ScalpingRiskState(self.execution_config)
+        self.signal_policy = ScalpingSignalPolicy(
+            training_config=self.training_config,
+            execution_config=self.execution_config,
+        )
+        self.execution_policy = ScalpingExecutionPolicy(self.execution_config)
+        self.cash = float(self.risk_state.cash)
 
     def on_tick(
         self, *, timestamp: pd.Timestamp, bid: float, ask: float
@@ -73,10 +113,22 @@ class ScalpingRealtimePaperEngine:
             close_event = self._maybe_close_position(ts=ts, bid=float(bid), ask=float(ask))
             if close_event is not None:
                 emitted.append(close_event)
-        if self.position is None and len(self.tick_buffer) >= self.min_buffer_ticks:
-            open_event = self._maybe_open_position(ts=ts, bid=float(bid), ask=float(ask))
-            if open_event is not None:
-                emitted.append(open_event)
+        if self.position is None and self.pending_entry is not None:
+            entry_event = self._activate_pending_entry(ts=ts, bid=float(bid), ask=float(ask))
+            if entry_event is not None:
+                emitted.append(entry_event)
+        if (
+            self.position is None
+            and self.pending_entry is None
+            and len(self.tick_buffer) >= self.min_buffer_ticks
+        ):
+            signal_event = self._maybe_create_pending_entry()
+            if signal_event is not None:
+                emitted.append(signal_event)
+            if self.position is None and self.pending_entry is not None:
+                entry_event = self._activate_pending_entry(ts=ts, bid=float(bid), ask=float(ask))
+                if entry_event is not None:
+                    emitted.append(entry_event)
         self.events.extend(emitted)
         self.events = self.events[-500:]
         return emitted
@@ -86,30 +138,30 @@ class ScalpingRealtimePaperEngine:
             "symbol": self.symbol,
             "cash": self.cash,
             "open_position": self.position.__dict__ if self.position is not None else None,
+            "pending_entry": (
+                self.pending_entry.__dict__ if self.pending_entry is not None else None
+            ),
             "events": list(self.events[-100:]),
+            "signals": list(self.signals[-500:]),
             "trades": list(self.trades[-100:]),
         }
 
-    def _maybe_open_position(
-        self, *, ts: pd.Timestamp, bid: float, ask: float
-    ) -> dict[str, object] | None:
-        if self.next_allowed_time is not None and ts < self.next_allowed_time:
-            return None
+    def _maybe_create_pending_entry(self) -> dict[str, object] | None:
         ticks = pd.DataFrame(self.tick_buffer).set_index("timestamp")
         tick_frame = validate_tick_frame(ticks, symbol=self.symbol)
         bars = resample_ticks_to_quote_bars(tick_frame, rule=self.bar_rule, symbol=self.symbol)
         if len(bars.index) < 40:
             return None
         features = build_scalping_feature_frame(bars, symbol=self.symbol, pip_size=self.pip_size)
-        latest_ts = features.index[-1]
-        latest = features.loc[[latest_ts]]
-        spread = float(latest["spread_close_pips"].iloc[0])
-        volatility = float(latest["micro_volatility_10_pips"].iloc[0])
-        if (
-            spread > self.training_config.max_spread_pips
-            or volatility < self.training_config.min_volatility_pips
-        ):
+        latest_ts = pd.Timestamp(features.index[-1])
+        latest_ts = _tokyo(latest_ts)
+        if self.last_signal_time is not None and latest_ts <= self.last_signal_time:
             return None
+        latest = features.loc[[features.index[-1]]]
+        spread = _feature_float(latest, "spread_close_pips")
+        spread_mean = _feature_float(latest, "spread_mean_20_pips")
+        spread_z = _feature_float(latest, "spread_z_120")
+        volatility = _feature_float(latest, "micro_volatility_10_pips")
         long_probability = float(
             self.model_bundle.model.predict_proba(
                 build_directional_feature_frame(latest, side="long")
@@ -122,45 +174,139 @@ class ScalpingRealtimePaperEngine:
         )
         side = "long" if long_probability >= short_probability else "short"
         probability = max(long_probability, short_probability)
-        if probability < self.model_bundle.decision_threshold:
+        threshold = float(self.model_bundle.decision_threshold)
+        signal_id = str(uuid4())
+        risk_snapshot = self.risk_state.snapshot(latest_ts)
+        reject_reason = self.risk_state.entry_reject_reason(latest_ts)
+        if not reject_reason:
+            reject_reason = self.signal_policy.entry_reject_reason(
+                timestamp=latest_ts,
+                tick_index=tick_frame.index,
+                spread=spread,
+                spread_mean=spread_mean,
+                spread_z=spread_z,
+                volatility=volatility,
+                probability=probability,
+                threshold=threshold,
+            )
+        self.last_signal_time = latest_ts
+        if reject_reason:
+            return self._record_signal(
+                signal_id=signal_id,
+                timestamp=latest_ts,
+                side=side,
+                accepted=False,
+                reject_reason=reject_reason,
+                probability=probability,
+                long_probability=long_probability,
+                short_probability=short_probability,
+                threshold=threshold,
+                spread=spread,
+                spread_mean=spread_mean,
+                spread_z=spread_z,
+                volatility=volatility,
+                risk_snapshot=risk_snapshot,
+            )
+        self.pending_entry = ScalpingPendingEntry(
+            signal_id=signal_id,
+            symbol=self.symbol,
+            side=side,
+            signal_time=latest_ts,
+            target_time=latest_ts
+            + pd.Timedelta(milliseconds=max(0, int(self.execution_config.entry_latency_ms))),
+            probability=probability,
+            long_probability=long_probability,
+            short_probability=short_probability,
+            threshold=threshold,
+            spread=spread,
+            spread_mean=spread_mean,
+            spread_z=spread_z,
+            volatility=volatility,
+            risk_snapshot=risk_snapshot,
+        )
+        return None
+
+    def _activate_pending_entry(
+        self, *, ts: pd.Timestamp, bid: float, ask: float
+    ) -> dict[str, object] | None:
+        pending = self.pending_entry
+        if pending is None or ts < pending.target_time:
             return None
-        price = ask if side == "long" else bid
-        quantity = self._quantity(price)
+        price = ask if pending.side == "long" else bid
+        quantity = self.execution_policy.quantity_for_price(price, cash=self.cash)
         if quantity <= 0:
-            return None
+            self.pending_entry = None
+            return self._record_signal(
+                signal_id=pending.signal_id,
+                timestamp=pending.signal_time,
+                side=pending.side,
+                accepted=False,
+                reject_reason="quantity_too_small",
+                probability=pending.probability,
+                long_probability=pending.long_probability,
+                short_probability=pending.short_probability,
+                threshold=pending.threshold,
+                spread=pending.spread,
+                spread_mean=pending.spread_mean,
+                spread_z=pending.spread_z,
+                volatility=pending.volatility,
+                risk_snapshot=pending.risk_snapshot,
+            )
         slip = (self.training_config.round_trip_slippage_pips / 2.0) * self.pip_size
-        entry_price = ask + slip if side == "long" else bid - slip
+        entry_price = ask + slip if pending.side == "long" else bid - slip
         take_profit = (
             entry_price + self.training_config.take_profit_pips * self.pip_size
-            if side == "long"
+            if pending.side == "long"
             else entry_price - self.training_config.take_profit_pips * self.pip_size
         )
         stop_loss = (
             entry_price - self.training_config.stop_loss_pips * self.pip_size
-            if side == "long"
+            if pending.side == "long"
             else entry_price + self.training_config.stop_loss_pips * self.pip_size
+        )
+        self._record_signal(
+            signal_id=pending.signal_id,
+            timestamp=pending.signal_time,
+            side=pending.side,
+            accepted=True,
+            reject_reason="accepted",
+            probability=pending.probability,
+            long_probability=pending.long_probability,
+            short_probability=pending.short_probability,
+            threshold=pending.threshold,
+            spread=pending.spread,
+            spread_mean=pending.spread_mean,
+            spread_z=pending.spread_z,
+            volatility=pending.volatility,
+            risk_snapshot=pending.risk_snapshot,
         )
         self.position = ScalpingPaperPosition(
             position_id=str(uuid4()),
+            signal_id=pending.signal_id,
             symbol=self.symbol,
-            side=side,
+            side=pending.side,
             quantity=quantity,
+            signal_time=pending.signal_time,
             entry_time=ts,
             entry_price=entry_price,
             take_profit_price=take_profit,
             stop_loss_price=stop_loss,
-            probability=probability,
+            probability=pending.probability,
+            long_probability=pending.long_probability,
+            short_probability=pending.short_probability,
         )
+        self.pending_entry = None
         return {
             "event": "paper_entry",
             "timestamp": ts.isoformat(),
+            "signal_time": pending.signal_time.isoformat(),
             "symbol": self.symbol,
-            "side": side,
+            "side": pending.side,
             "quantity": quantity,
             "entry_price": entry_price,
-            "probability": probability,
-            "long_probability": long_probability,
-            "short_probability": short_probability,
+            "probability": pending.probability,
+            "long_probability": pending.long_probability,
+            "short_probability": pending.short_probability,
             "message_ja": "GMO tick互換のスキャルピング paper entry を記録しました。",
         }
 
@@ -214,12 +360,20 @@ class ScalpingRealtimePaperEngine:
         fee_amount = fee_pips * self.pip_size * position.quantity
         pnl = gross_pnl - fee_amount
         net_pips = gross_pips - fee_pips
-        self.cash += pnl
+        self.risk_state.record_trade(
+            signal_time=position.signal_time,
+            exit_time=ts,
+            pnl=pnl,
+        )
+        self.cash = float(self.risk_state.cash)
         trade = {
+            "trade_id": str(uuid4()),
             "position_id": position.position_id,
+            "signal_id": position.signal_id,
             "symbol": position.symbol,
             "side": position.side,
             "quantity": position.quantity,
+            "signal_time": position.signal_time.isoformat(),
             "entry_time": position.entry_time.isoformat(),
             "exit_time": ts.isoformat(),
             "entry_price": position.entry_price,
@@ -233,11 +387,12 @@ class ScalpingRealtimePaperEngine:
             "realized_pips": net_pips,
             "exit_reason": reason,
             "probability": position.probability,
+            "long_probability": position.long_probability,
+            "short_probability": position.short_probability,
         }
         self.trades.append(trade)
         self.trades = self.trades[-500:]
         self.position = None
-        self.next_allowed_time = ts + pd.Timedelta(seconds=self.execution_config.cooldown_seconds)
         return {
             "event": "paper_exit",
             "timestamp": ts.isoformat(),
@@ -252,15 +407,68 @@ class ScalpingRealtimePaperEngine:
             "message_ja": "スキャルピング paper position を決済しました。",
         }
 
-    def _quantity(self, price: float) -> int:
-        max_notional = self.cash * self.execution_config.max_position_notional_fraction
-        target_notional = min(self.execution_config.fixed_order_amount, max_notional)
-        if price <= 0 or target_notional <= 0:
-            return 0
-        raw_quantity = int(target_notional // price)
-        step = max(1, int(self.execution_config.quantity_step))
-        quantity = (raw_quantity // step) * step
-        return quantity if quantity >= self.execution_config.minimum_order_quantity else 0
+    def _record_signal(
+        self,
+        *,
+        signal_id: str,
+        timestamp: pd.Timestamp,
+        side: str,
+        accepted: bool,
+        reject_reason: str,
+        probability: float,
+        long_probability: float,
+        short_probability: float,
+        threshold: float,
+        spread: float,
+        spread_mean: float,
+        spread_z: float,
+        volatility: float,
+        risk_snapshot: ScalpingRiskSnapshot,
+    ) -> dict[str, object] | None:
+        if not accepted:
+            if not self.execution_config.record_rejected_signals:
+                return None
+            if (
+                self.execution_config.max_rejected_signals is not None
+                and self.rejected_rows_recorded >= int(self.execution_config.max_rejected_signals)
+            ):
+                return None
+            self.rejected_rows_recorded += 1
+        row = {
+            "signal_id": signal_id,
+            "timestamp": timestamp.isoformat(),
+            "symbol": self.symbol,
+            "chosen_side": side,
+            "side": side if accepted else "",
+            "probability": float(probability),
+            "long_probability": float(long_probability),
+            "short_probability": float(short_probability),
+            "threshold": float(threshold),
+            "spread_pips": float(spread),
+            "spread_mean_20_pips": float(spread_mean),
+            "spread_z_120": float(spread_z),
+            "volatility_pips": float(volatility),
+            "accepted": bool(accepted),
+            "decision": "enter" if accepted else "reject",
+            "reject_reason": reject_reason if reject_reason else ("accepted" if accepted else ""),
+            "explanation_ja": _paper_signal_explanation(reject_reason, accepted=accepted),
+            "trades_today": int(risk_snapshot.trades_today),
+            "daily_pnl": float(risk_snapshot.daily_pnl),
+            "consecutive_losses": int(risk_snapshot.consecutive_losses),
+        }
+        self.signals.append(row)
+        self.signals = self.signals[-1_000:]
+        if accepted:
+            return None
+        return {
+            "event": "paper_signal_rejected",
+            "timestamp": timestamp.isoformat(),
+            "symbol": self.symbol,
+            "side": side,
+            "reject_reason": reject_reason,
+            "probability": probability,
+            "message_ja": row["explanation_ja"],
+        }
 
 
 def _tokyo(value: pd.Timestamp) -> pd.Timestamp:
@@ -268,3 +476,32 @@ def _tokyo(value: pd.Timestamp) -> pd.Timestamp:
     if ts.tzinfo is None:
         return ts.tz_localize(ASIA_TOKYO)
     return ts.tz_convert(ASIA_TOKYO)
+
+
+def _feature_float(features: pd.DataFrame, column: str) -> float:
+    if column not in features.columns:
+        return 0.0
+    value = pd.to_numeric(features[column], errors="coerce").iloc[0]
+    return float(value) if pd.notna(value) else 0.0
+
+
+def _paper_signal_explanation(reason: str, *, accepted: bool) -> str:
+    if accepted:
+        return "paper engine が backtest と同じentry条件を満たしたため採用"
+    mapping = {
+        "cooldown": "直前決済後のクールダウン中のためpaper entryを見送り",
+        "max_trades_per_day": "1日の最大取引回数に達したためpaper entryを見送り",
+        "daily_loss_halt": "当日損失停止に達したためpaper entryを停止",
+        "consecutive_loss_halt": "当日連敗停止に達したためpaper entryを停止",
+        "stale_tick": "直近tickが古く約定前提が不安定なためpaper entryを見送り",
+        "spread_exceeded": "スプレッドが許容上限を超えたためpaper entryを見送り",
+        "spread_z_exceeded": "スプレッドz-scoreが異常域のためpaper entryを見送り",
+        "spread_to_mean_exceeded": "スプレッドが短期平均比で大きすぎるためpaper entryを見送り",
+        "volatility_too_low": "短期ボラティリティが不足しているためpaper entryを見送り",
+        "threshold_not_met": "予測確率がdecision threshold未満のためpaper entryを見送り",
+        "quantity_too_small": "注文数量が最小数量を下回るためpaper entryを見送り",
+    }
+    if reason.startswith("blackout_window:"):
+        window_reason = reason.split(":", 1)[1]
+        return f"ブラックアウト時間帯({window_reason})のためpaper entryを見送り"
+    return mapping.get(reason, f"paper entry条件を満たさないため見送り: {reason}")

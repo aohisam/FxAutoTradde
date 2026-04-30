@@ -57,6 +57,155 @@ class ScalpingBacktestResult:
     model_summary: dict[str, object] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ScalpingRiskSnapshot:
+    local_day: str
+    trades_today: int
+    daily_pnl: float
+    consecutive_losses: int
+
+
+@dataclass(slots=True)
+class ScalpingRiskState:
+    execution_config: ScalpingExecutionConfig
+    cash: float = field(init=False)
+    next_allowed_time: pd.Timestamp | None = None
+    daily_start_cash: dict[str, float] = field(default_factory=dict)
+    daily_halts: dict[str, str] = field(default_factory=dict)
+    consecutive_losses_by_day: dict[str, int] = field(default_factory=dict)
+    trades_per_day: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.cash = float(self.execution_config.starting_cash)
+
+    def snapshot(self, timestamp: pd.Timestamp) -> ScalpingRiskSnapshot:
+        local_day = _local_day(timestamp)
+        self.daily_start_cash.setdefault(local_day, self.cash)
+        self.consecutive_losses_by_day.setdefault(local_day, 0)
+        return ScalpingRiskSnapshot(
+            local_day=local_day,
+            trades_today=int(self.trades_per_day.get(local_day, 0)),
+            daily_pnl=float(self.cash - self.daily_start_cash[local_day]),
+            consecutive_losses=int(self.consecutive_losses_by_day.get(local_day, 0)),
+        )
+
+    def entry_reject_reason(self, timestamp: pd.Timestamp) -> str:
+        snapshot = self.snapshot(timestamp)
+        if self.next_allowed_time is not None and timestamp < self.next_allowed_time:
+            return "cooldown"
+        if snapshot.local_day in self.daily_halts:
+            return self.daily_halts[snapshot.local_day]
+        if snapshot.trades_today >= int(self.execution_config.max_trades_per_day):
+            return "max_trades_per_day"
+        return ""
+
+    def record_trade(
+        self,
+        *,
+        signal_time: pd.Timestamp,
+        exit_time: pd.Timestamp,
+        pnl: float,
+    ) -> None:
+        snapshot = self.snapshot(signal_time)
+        local_day = snapshot.local_day
+        self.cash += float(pnl)
+        self.trades_per_day[local_day] = int(self.trades_per_day.get(local_day, 0)) + 1
+        if pnl < 0.0:
+            self.consecutive_losses_by_day[local_day] = (
+                int(self.consecutive_losses_by_day.get(local_day, 0)) + 1
+            )
+        elif pnl > 0.0:
+            self.consecutive_losses_by_day[local_day] = 0
+        daily_pnl = self.cash - self.daily_start_cash[local_day]
+        if (
+            self.execution_config.max_daily_loss_amount is not None
+            and self.execution_config.halt_for_day_on_daily_loss
+            and daily_pnl <= -abs(float(self.execution_config.max_daily_loss_amount))
+        ):
+            self.daily_halts[local_day] = "daily_loss_halt"
+        if (
+            self.execution_config.max_consecutive_losses is not None
+            and self.execution_config.halt_for_day_on_consecutive_losses
+            and int(self.consecutive_losses_by_day.get(local_day, 0))
+            >= int(self.execution_config.max_consecutive_losses)
+        ):
+            self.daily_halts[local_day] = "consecutive_loss_halt"
+        self.next_allowed_time = pd.Timestamp(exit_time) + pd.Timedelta(
+            seconds=self.execution_config.cooldown_seconds
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ScalpingSignalPolicy:
+    training_config: ScalpingTrainingConfig
+    execution_config: ScalpingExecutionConfig
+
+    def entry_reject_reason(
+        self,
+        *,
+        timestamp: pd.Timestamp,
+        tick_index: pd.DatetimeIndex,
+        spread: float,
+        spread_mean: float,
+        spread_z: float,
+        volatility: float,
+        probability: float,
+        threshold: float,
+    ) -> str:
+        blackout_reason = _blackout_reason(timestamp, self.execution_config.blackout_windows_jst)
+        if blackout_reason:
+            return f"blackout_window:{blackout_reason}"
+        if _is_stale_tick(
+            tick_index,
+            timestamp,
+            max_tick_gap_seconds=self.execution_config.max_tick_gap_seconds,
+            reject_on_stale_ticks=self.execution_config.reject_on_stale_ticks,
+        ):
+            return "stale_tick"
+        if spread > self.training_config.max_spread_pips:
+            return "spread_exceeded"
+        if self.execution_config.max_spread_z is not None and abs(spread_z) > float(
+            self.execution_config.max_spread_z
+        ):
+            return "spread_z_exceeded"
+        if (
+            self.execution_config.max_spread_to_mean_ratio is not None
+            and spread_mean > 0.0
+            and spread / spread_mean > float(self.execution_config.max_spread_to_mean_ratio)
+        ):
+            return "spread_to_mean_exceeded"
+        if volatility < self.training_config.min_volatility_pips:
+            return "volatility_too_low"
+        if probability < threshold:
+            return "threshold_not_met"
+        return ""
+
+
+@dataclass(frozen=True, slots=True)
+class ScalpingExecutionPolicy:
+    execution_config: ScalpingExecutionConfig
+
+    def entry_index(self, tick_index: pd.DatetimeIndex, timestamp: pd.Timestamp) -> int:
+        entry_target = timestamp + pd.Timedelta(milliseconds=self.execution_config.entry_latency_ms)
+        return int(tick_index.searchsorted(entry_target, side="left"))
+
+    def quantity_for_price(self, price: float, *, cash: float) -> int:
+        max_notional = cash * self.execution_config.max_position_notional_fraction
+        target_notional = min(float(self.execution_config.fixed_order_amount), max_notional)
+        if price <= 0 or target_notional <= 0:
+            return 0
+        raw_quantity = int(target_notional // price)
+        step = max(1, int(self.execution_config.quantity_step))
+        quantity = (raw_quantity // step) * step
+        if quantity < int(self.execution_config.minimum_order_quantity):
+            return 0
+        return quantity
+
+    def quantity_for_tick(self, tick: pd.Series, *, side: str, cash: float) -> int:
+        price = float(tick["ask"] if side == "long" else tick["bid"])
+        return self.quantity_for_price(price, cash=cash)
+
+
 def run_scalping_tick_backtest(
     ticks: pd.DataFrame,
     features: pd.DataFrame,
@@ -79,10 +228,14 @@ def run_scalping_tick_backtest(
     short_prob = model_bundle.model.predict_proba(short_features)
 
     threshold = float(model_bundle.decision_threshold)
-    cash = float(execution_config.starting_cash)
+    signal_policy = ScalpingSignalPolicy(
+        training_config=training_config,
+        execution_config=execution_config,
+    )
+    execution_policy = ScalpingExecutionPolicy(execution_config)
+    risk_state = ScalpingRiskState(execution_config)
+    cash = float(risk_state.cash)
     equity = cash
-    next_allowed_time: pd.Timestamp | None = None
-    trades_per_day: dict[str, int] = {}
     trade_rows: list[dict[str, object]] = []
     order_rows: list[dict[str, object]] = []
     fill_rows: list[dict[str, object]] = []
@@ -92,18 +245,13 @@ def run_scalping_tick_backtest(
     ]
 
     tick_index = tick_frame.index
-    daily_start_cash: dict[str, float] = {}
-    daily_halts: dict[str, str] = {}
-    consecutive_losses_by_day: dict[str, int] = {}
     rejected_rows_recorded = 0
     for timestamp in features.index:
         ts = pd.Timestamp(timestamp)
         ts = ts.tz_localize(ASIA_TOKYO) if ts.tzinfo is None else ts.tz_convert(ASIA_TOKYO)
-        local_day = ts.date().isoformat()
-        daily_start_cash.setdefault(local_day, cash)
-        consecutive_losses_by_day.setdefault(local_day, 0)
-        trades_today = trades_per_day.get(local_day, 0)
-        daily_pnl = cash - daily_start_cash[local_day]
+        risk_snapshot = risk_state.snapshot(ts)
+        trades_today = risk_snapshot.trades_today
+        daily_pnl = risk_snapshot.daily_pnl
         spread = _feature_float(features, timestamp, "spread_close_pips")
         spread_mean = _feature_float(features, timestamp, "spread_mean_20_pips")
         spread_z = _feature_float(features, timestamp, "spread_z_120")
@@ -120,53 +268,31 @@ def run_scalping_tick_backtest(
         trade: dict[str, object] | None = None
         if ts < tick_index[0] or ts >= tick_index[-1]:
             reject_reason = "outside_tick_window"
-        elif next_allowed_time is not None and ts < next_allowed_time:
-            reject_reason = "cooldown"
-        elif local_day in daily_halts:
-            reject_reason = daily_halts[local_day]
-        elif trades_today >= execution_config.max_trades_per_day:
-            reject_reason = "max_trades_per_day"
-        elif _blackout_reason(ts, execution_config.blackout_windows_jst):
-            reject_reason = (
-                f"blackout_window:{_blackout_reason(ts, execution_config.blackout_windows_jst)}"
-            )
-        elif _is_stale_tick(
-            tick_index,
-            ts,
-            max_tick_gap_seconds=execution_config.max_tick_gap_seconds,
-            reject_on_stale_ticks=execution_config.reject_on_stale_ticks,
-        ):
-            reject_reason = "stale_tick"
-        elif spread > training_config.max_spread_pips:
-            reject_reason = "spread_exceeded"
-        elif execution_config.max_spread_z is not None and abs(spread_z) > float(
-            execution_config.max_spread_z
-        ):
-            reject_reason = "spread_z_exceeded"
-        elif (
-            execution_config.max_spread_to_mean_ratio is not None
-            and spread_mean > 0.0
-            and spread / spread_mean > float(execution_config.max_spread_to_mean_ratio)
-        ):
-            reject_reason = "spread_to_mean_exceeded"
-        elif volatility < training_config.min_volatility_pips:
-            reject_reason = "volatility_too_low"
-        elif probability < threshold:
-            reject_reason = "threshold_not_met"
+        else:
+            reject_reason = risk_state.entry_reject_reason(ts)
         if not reject_reason:
-            entry_target = ts + pd.Timedelta(milliseconds=execution_config.entry_latency_ms)
-            entry_index = tick_index.searchsorted(entry_target, side="left")
+            reject_reason = signal_policy.entry_reject_reason(
+                timestamp=ts,
+                tick_index=tick_index,
+                spread=spread,
+                spread_mean=spread_mean,
+                spread_z=spread_z,
+                volatility=volatility,
+                probability=probability,
+                threshold=threshold,
+            )
+        if not reject_reason:
+            entry_index = execution_policy.entry_index(tick_index, ts)
             if entry_index >= len(tick_index):
                 reject_reason = "entry_tick_not_found"
             elif entry_index >= len(tick_index) - 1:
                 reject_reason = "exit_tick_not_found"
         if not reject_reason:
             entry_tick = tick_frame.iloc[entry_index]
-            quantity = _quantity_for_entry(
+            quantity = execution_policy.quantity_for_tick(
                 entry_tick,
                 side=side,
                 cash=cash,
-                execution_config=execution_config,
             )
             if quantity <= 0:
                 reject_reason = "quantity_too_small"
@@ -205,7 +331,7 @@ def run_scalping_tick_backtest(
                         volatility=volatility,
                         trades_today=trades_today,
                         daily_pnl=daily_pnl,
-                        consecutive_losses=consecutive_losses_by_day[local_day],
+                        consecutive_losses=risk_snapshot.consecutive_losses,
                         labels=labels,
                         include_future_outcomes=include_future_outcomes,
                     )
@@ -214,29 +340,15 @@ def run_scalping_tick_backtest(
             continue
 
         pnl = float(trade["net_pnl"])
-        cash += pnl
-        equity = cash
-        trades_per_day[local_day] = trades_per_day.get(local_day, 0) + 1
-        if pnl < 0.0:
-            consecutive_losses_by_day[local_day] += 1
-        elif pnl > 0.0:
-            consecutive_losses_by_day[local_day] = 0
-        daily_pnl = cash - daily_start_cash[local_day]
-        if (
-            execution_config.max_daily_loss_amount is not None
-            and execution_config.halt_for_day_on_daily_loss
-            and daily_pnl <= -abs(float(execution_config.max_daily_loss_amount))
-        ):
-            daily_halts[local_day] = "daily_loss_halt"
-        if (
-            execution_config.max_consecutive_losses is not None
-            and execution_config.halt_for_day_on_consecutive_losses
-            and consecutive_losses_by_day[local_day] >= int(execution_config.max_consecutive_losses)
-        ):
-            daily_halts[local_day] = "consecutive_loss_halt"
-        next_allowed_time = pd.Timestamp(trade["exit_time"]) + pd.Timedelta(
-            seconds=execution_config.cooldown_seconds
+        risk_state.record_trade(
+            signal_time=ts,
+            exit_time=pd.Timestamp(trade["exit_time"]),
+            pnl=pnl,
         )
+        cash = float(risk_state.cash)
+        equity = cash
+        risk_snapshot = risk_state.snapshot(ts)
+        daily_pnl = risk_snapshot.daily_pnl
         signal_rows.append(
             _signal_row(
                 signal_id=signal_id,
@@ -253,9 +365,9 @@ def run_scalping_tick_backtest(
                 spread_mean=spread_mean,
                 spread_z=spread_z,
                 volatility=volatility,
-                trades_today=trades_per_day[local_day],
+                trades_today=risk_snapshot.trades_today,
                 daily_pnl=daily_pnl,
-                consecutive_losses=consecutive_losses_by_day[local_day],
+                consecutive_losses=risk_snapshot.consecutive_losses,
                 labels=labels,
                 include_future_outcomes=include_future_outcomes,
             )
@@ -474,6 +586,15 @@ def _hhmm_to_minutes(value: str) -> int:
     return hour * 60 + minute
 
 
+def _local_day(timestamp: pd.Timestamp) -> str:
+    local = (
+        timestamp.tz_convert(ASIA_TOKYO)
+        if timestamp.tzinfo is not None
+        else timestamp.tz_localize(ASIA_TOKYO)
+    )
+    return local.date().isoformat()
+
+
 def _quantity_for_entry(
     tick: pd.Series,
     *,
@@ -663,6 +784,7 @@ def _compute_scalping_metrics(
     )
     equity = pd.to_numeric(equity_curve["equity"], errors="coerce")
     drawdown = equity / equity.cummax() - 1.0
+    drawdown_amount = equity - equity.cummax()
     turnover = (
         float(fills["price"].mul(fills["quantity"]).sum() / max(equity.mean(), 1.0))
         if not fills.empty
@@ -725,6 +847,7 @@ def _compute_scalping_metrics(
         "average_pips": float(realized_net.mean()) if not realized_net.empty else 0.0,
         "average_hold_seconds": float(trades["hold_seconds"].mean()) if not trades.empty else 0.0,
         "max_drawdown": float(drawdown.min()) if not drawdown.empty else 0.0,
+        "max_drawdown_amount": float(drawdown_amount.min()) if not drawdown_amount.empty else 0.0,
         "turnover": turnover,
         "accepted_signal_count": accepted_signal_count,
         "rejected_signal_count": rejected_signal_count,

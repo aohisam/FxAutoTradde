@@ -33,7 +33,7 @@ strategy:
     validation_ratio: 0.15
     test_ratio: 0.15
     purge_seconds: null
-    walk_forward_enabled: false
+    walk_forward_enabled: true
     walk_forward_train_days: 20
     walk_forward_validation_days: 5
     walk_forward_test_days: 5
@@ -46,9 +46,18 @@ strategy:
     feature_clip: 8.0
     seed: 23
     min_validation_net_pips: 0.0
-    min_validation_profit_factor: 1.0
-    min_validation_trade_count: 1
+    min_validation_profit_factor: 1.05
+    min_validation_trade_count: 50
     fail_closed_on_bad_validation: true
+    min_test_profit_factor: 1.05
+    min_test_trade_count: 50
+    min_test_net_profit: 0.0
+    max_test_drawdown_amount: 100000.0
+    min_stress_profit_factor: 1.0
+    min_stress_net_profit: -50000.0
+    min_walk_forward_pass_ratio: 0.6
+    outcome_store_enabled: true
+    outcome_store_dir: runtime/scalping_outcomes
     entry_latency_ms: 250
     cooldown_seconds: 5
     max_trades_per_day: 120
