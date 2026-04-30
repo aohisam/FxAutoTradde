@@ -99,6 +99,8 @@ def test_full_scalping_backtest_keeps_positive_quantity_and_fee_amount(
     scalping = config.strategy.fx_scalping
     scalping.tick_cache_dir = tmp_path / "ticks"
     scalping.model_dir = tmp_path / "models"
+    scalping.candidate_model_dir = tmp_path / "models" / "candidates"
+    scalping.outcome_store_dir = tmp_path / "outcomes"
     scalping.min_samples = 5
     scalping.min_threshold_trades = 1
     scalping.min_volatility_pips = 0.0

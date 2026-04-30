@@ -8,41 +8,24 @@ from uuid import uuid4
 import pandas as pd
 
 from fxautotrade_lab.core.constants import ASIA_TOKYO
-from fxautotrade_lab.core.enums import BrokerMode, OrderSide
+from fxautotrade_lab.core.enums import OrderSide
 from fxautotrade_lab.data.ticks import validate_tick_frame
 from fxautotrade_lab.features.scalping import build_directional_feature_frame
 from fxautotrade_lab.ml.scalping import ScalpingModelBundle, ScalpingTrainingConfig
+from fxautotrade_lab.simulation.scalping_policy import (
+    BlackoutWindow,
+    ScalpingExecutionConfig,
+    ScalpingExecutionPolicy,
+    ScalpingRiskState,
+    ScalpingSignalPolicy,
+)
 
-
-@dataclass(frozen=True, slots=True)
-class BlackoutWindow:
-    start: str
-    end: str
-    reason: str = "manual"
-
-
-@dataclass(slots=True)
-class ScalpingExecutionConfig:
-    starting_cash: float = 5_000_000.0
-    fixed_order_amount: float = 300_000.0
-    minimum_order_quantity: int = 1_000
-    quantity_step: int = 1_000
-    max_position_notional_fraction: float = 0.25
-    entry_latency_ms: int = 250
-    cooldown_seconds: int = 5
-    max_trades_per_day: int = 120
-    mode: BrokerMode = BrokerMode.LOCAL_SIM
-    max_daily_loss_amount: float | None = None
-    max_consecutive_losses: int | None = None
-    halt_for_day_on_daily_loss: bool = True
-    halt_for_day_on_consecutive_losses: bool = True
-    max_tick_gap_seconds: int | None = None
-    reject_on_stale_ticks: bool = True
-    max_spread_z: float | None = None
-    max_spread_to_mean_ratio: float | None = None
-    record_rejected_signals: bool = True
-    max_rejected_signals: int | None = None
-    blackout_windows_jst: tuple[BlackoutWindow, ...] = ()
+__all__ = [
+    "BlackoutWindow",
+    "ScalpingBacktestResult",
+    "ScalpingExecutionConfig",
+    "run_scalping_tick_backtest",
+]
 
 
 @dataclass(slots=True)
@@ -55,155 +38,6 @@ class ScalpingBacktestResult:
     signals: pd.DataFrame
     equity_curve: pd.DataFrame
     model_summary: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class ScalpingRiskSnapshot:
-    local_day: str
-    trades_today: int
-    daily_pnl: float
-    consecutive_losses: int
-
-
-@dataclass(slots=True)
-class ScalpingRiskState:
-    execution_config: ScalpingExecutionConfig
-    cash: float = field(init=False)
-    next_allowed_time: pd.Timestamp | None = None
-    daily_start_cash: dict[str, float] = field(default_factory=dict)
-    daily_halts: dict[str, str] = field(default_factory=dict)
-    consecutive_losses_by_day: dict[str, int] = field(default_factory=dict)
-    trades_per_day: dict[str, int] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        self.cash = float(self.execution_config.starting_cash)
-
-    def snapshot(self, timestamp: pd.Timestamp) -> ScalpingRiskSnapshot:
-        local_day = _local_day(timestamp)
-        self.daily_start_cash.setdefault(local_day, self.cash)
-        self.consecutive_losses_by_day.setdefault(local_day, 0)
-        return ScalpingRiskSnapshot(
-            local_day=local_day,
-            trades_today=int(self.trades_per_day.get(local_day, 0)),
-            daily_pnl=float(self.cash - self.daily_start_cash[local_day]),
-            consecutive_losses=int(self.consecutive_losses_by_day.get(local_day, 0)),
-        )
-
-    def entry_reject_reason(self, timestamp: pd.Timestamp) -> str:
-        snapshot = self.snapshot(timestamp)
-        if self.next_allowed_time is not None and timestamp < self.next_allowed_time:
-            return "cooldown"
-        if snapshot.local_day in self.daily_halts:
-            return self.daily_halts[snapshot.local_day]
-        if snapshot.trades_today >= int(self.execution_config.max_trades_per_day):
-            return "max_trades_per_day"
-        return ""
-
-    def record_trade(
-        self,
-        *,
-        signal_time: pd.Timestamp,
-        exit_time: pd.Timestamp,
-        pnl: float,
-    ) -> None:
-        snapshot = self.snapshot(signal_time)
-        local_day = snapshot.local_day
-        self.cash += float(pnl)
-        self.trades_per_day[local_day] = int(self.trades_per_day.get(local_day, 0)) + 1
-        if pnl < 0.0:
-            self.consecutive_losses_by_day[local_day] = (
-                int(self.consecutive_losses_by_day.get(local_day, 0)) + 1
-            )
-        elif pnl > 0.0:
-            self.consecutive_losses_by_day[local_day] = 0
-        daily_pnl = self.cash - self.daily_start_cash[local_day]
-        if (
-            self.execution_config.max_daily_loss_amount is not None
-            and self.execution_config.halt_for_day_on_daily_loss
-            and daily_pnl <= -abs(float(self.execution_config.max_daily_loss_amount))
-        ):
-            self.daily_halts[local_day] = "daily_loss_halt"
-        if (
-            self.execution_config.max_consecutive_losses is not None
-            and self.execution_config.halt_for_day_on_consecutive_losses
-            and int(self.consecutive_losses_by_day.get(local_day, 0))
-            >= int(self.execution_config.max_consecutive_losses)
-        ):
-            self.daily_halts[local_day] = "consecutive_loss_halt"
-        self.next_allowed_time = pd.Timestamp(exit_time) + pd.Timedelta(
-            seconds=self.execution_config.cooldown_seconds
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ScalpingSignalPolicy:
-    training_config: ScalpingTrainingConfig
-    execution_config: ScalpingExecutionConfig
-
-    def entry_reject_reason(
-        self,
-        *,
-        timestamp: pd.Timestamp,
-        tick_index: pd.DatetimeIndex,
-        spread: float,
-        spread_mean: float,
-        spread_z: float,
-        volatility: float,
-        probability: float,
-        threshold: float,
-    ) -> str:
-        blackout_reason = _blackout_reason(timestamp, self.execution_config.blackout_windows_jst)
-        if blackout_reason:
-            return f"blackout_window:{blackout_reason}"
-        if _is_stale_tick(
-            tick_index,
-            timestamp,
-            max_tick_gap_seconds=self.execution_config.max_tick_gap_seconds,
-            reject_on_stale_ticks=self.execution_config.reject_on_stale_ticks,
-        ):
-            return "stale_tick"
-        if spread > self.training_config.max_spread_pips:
-            return "spread_exceeded"
-        if self.execution_config.max_spread_z is not None and abs(spread_z) > float(
-            self.execution_config.max_spread_z
-        ):
-            return "spread_z_exceeded"
-        if (
-            self.execution_config.max_spread_to_mean_ratio is not None
-            and spread_mean > 0.0
-            and spread / spread_mean > float(self.execution_config.max_spread_to_mean_ratio)
-        ):
-            return "spread_to_mean_exceeded"
-        if volatility < self.training_config.min_volatility_pips:
-            return "volatility_too_low"
-        if probability < threshold:
-            return "threshold_not_met"
-        return ""
-
-
-@dataclass(frozen=True, slots=True)
-class ScalpingExecutionPolicy:
-    execution_config: ScalpingExecutionConfig
-
-    def entry_index(self, tick_index: pd.DatetimeIndex, timestamp: pd.Timestamp) -> int:
-        entry_target = timestamp + pd.Timedelta(milliseconds=self.execution_config.entry_latency_ms)
-        return int(tick_index.searchsorted(entry_target, side="left"))
-
-    def quantity_for_price(self, price: float, *, cash: float) -> int:
-        max_notional = cash * self.execution_config.max_position_notional_fraction
-        target_notional = min(float(self.execution_config.fixed_order_amount), max_notional)
-        if price <= 0 or target_notional <= 0:
-            return 0
-        raw_quantity = int(target_notional // price)
-        step = max(1, int(self.execution_config.quantity_step))
-        quantity = (raw_quantity // step) * step
-        if quantity < int(self.execution_config.minimum_order_quantity):
-            return 0
-        return quantity
-
-    def quantity_for_tick(self, tick: pd.Series, *, side: str, cash: float) -> int:
-        price = float(tick["ask"] if side == "long" else tick["bid"])
-        return self.quantity_for_price(price, cash=cash)
 
 
 def run_scalping_tick_backtest(
@@ -417,6 +251,9 @@ def run_scalping_tick_backtest(
             "threshold_selected_on": str(
                 model_bundle.train_metrics.get("threshold_selected_on", "")
             ),
+            "threshold_selection_method": str(
+                model_bundle.train_metrics.get("threshold_selection_method", "")
+            ),
             "train_sample_count": int(model_bundle.train_metrics.get("train_sample_count", 0)),
             "validation_sample_count": int(
                 model_bundle.train_metrics.get("validation_sample_count", 0)
@@ -487,6 +324,7 @@ def _signal_row(
         "spread_z_120": float(spread_z),
         "volatility_pips": float(volatility),
         "accepted": bool(accepted),
+        "decision": "enter" if accepted else "reject",
         "reject_reason": reject_reason if reject_reason else ("accepted" if accepted else ""),
         "explanation_ja": _reject_explanation(reject_reason, accepted=accepted),
         "trades_today": int(trades_today),
@@ -535,84 +373,6 @@ def _reject_explanation(reason: str, *, accepted: bool) -> str:
         window_reason = reason.split(":", 1)[1]
         return f"ブラックアウト時間帯({window_reason})のため不採用"
     return mapping.get(reason, f"検証条件を満たさないため不採用: {reason}")
-
-
-def _is_stale_tick(
-    tick_index: pd.DatetimeIndex,
-    timestamp: pd.Timestamp,
-    *,
-    max_tick_gap_seconds: int | None,
-    reject_on_stale_ticks: bool,
-) -> bool:
-    if not reject_on_stale_ticks or max_tick_gap_seconds is None:
-        return False
-    previous_index = tick_index.searchsorted(timestamp, side="right") - 1
-    if previous_index < 0:
-        return True
-    previous_tick_time = pd.Timestamp(tick_index[previous_index])
-    gap = (timestamp - previous_tick_time).total_seconds()
-    return gap > float(max_tick_gap_seconds)
-
-
-def _blackout_reason(timestamp: pd.Timestamp, windows: tuple[BlackoutWindow, ...]) -> str:
-    if not windows:
-        return ""
-    local = (
-        timestamp.tz_convert(ASIA_TOKYO)
-        if timestamp.tzinfo is not None
-        else timestamp.tz_localize(ASIA_TOKYO)
-    )
-    minutes = local.hour * 60 + local.minute
-    for window in windows:
-        start = _hhmm_to_minutes(window.start)
-        end = _hhmm_to_minutes(window.end)
-        if start == end:
-            continue
-        in_window = start <= minutes < end if start < end else minutes >= start or minutes < end
-        if in_window:
-            return window.reason
-    return ""
-
-
-def _hhmm_to_minutes(value: str) -> int:
-    try:
-        hour_text, minute_text = str(value).split(":", 1)
-        hour = int(hour_text)
-        minute = int(minute_text)
-    except Exception as exc:
-        raise ValueError(f"blackout window の時刻は HH:MM 形式で指定してください: {value}") from exc
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        raise ValueError(f"blackout window の時刻が範囲外です: {value}")
-    return hour * 60 + minute
-
-
-def _local_day(timestamp: pd.Timestamp) -> str:
-    local = (
-        timestamp.tz_convert(ASIA_TOKYO)
-        if timestamp.tzinfo is not None
-        else timestamp.tz_localize(ASIA_TOKYO)
-    )
-    return local.date().isoformat()
-
-
-def _quantity_for_entry(
-    tick: pd.Series,
-    *,
-    side: str,
-    cash: float,
-    execution_config: ScalpingExecutionConfig,
-) -> int:
-    price = float(tick["ask"] if side == "long" else tick["bid"])
-    max_notional = cash * execution_config.max_position_notional_fraction
-    target_notional = min(float(execution_config.fixed_order_amount), max_notional)
-    if price <= 0 or target_notional <= 0:
-        return 0
-    raw_quantity = int(target_notional // price)
-    step = max(1, int(execution_config.quantity_step))
-    quantity = (raw_quantity // step) * step
-    if quantity < int(execution_config.minimum_order_quantity):
-        return 0
-    return quantity
 
 
 def _simulate_trade_from_entry(

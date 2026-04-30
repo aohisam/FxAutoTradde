@@ -14,7 +14,7 @@ from fxautotrade_lab.features.scalping import (
     build_scalping_feature_frame,
 )
 from fxautotrade_lab.ml.scalping import ScalpingModelBundle, ScalpingTrainingConfig
-from fxautotrade_lab.simulation.scalping_engine import (
+from fxautotrade_lab.simulation.scalping_policy import (
     ScalpingExecutionConfig,
     ScalpingExecutionPolicy,
     ScalpingRiskSnapshot,

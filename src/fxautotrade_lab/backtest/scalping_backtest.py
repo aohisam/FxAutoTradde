@@ -94,6 +94,7 @@ def training_config_from_app(config: AppConfig) -> ScalpingTrainingConfig:
         min_validation_profit_factor=float(scalping.min_validation_profit_factor),
         min_validation_trade_count=int(scalping.min_validation_trade_count),
         fail_closed_on_bad_validation=bool(scalping.fail_closed_on_bad_validation),
+        threshold_selection_method=str(scalping.threshold_selection_method),
     )
 
 
@@ -224,16 +225,23 @@ def run_scalping_pipeline(
         pip_size=pip_size,
         training_config=training_config,
         execution_config=execution_config,
+        scalping_config=scalping_cfg,
     )
-    candidate_model_path = scalping_cfg.model_dir / "candidates" / f"{run_id}.json"
+    candidate_model_dir = Path(scalping_cfg.candidate_model_dir)
+    candidate_model_path = candidate_model_dir / f"{run_id}.json"
     latest_model_path = scalping_cfg.model_dir / scalping_cfg.latest_model_alias
+    previous_latest_exists = latest_model_path.exists()
     model_bundle.metadata.update(
         {
             "candidate_model_path": str(candidate_model_path),
+            "approved_model_path": "",
             "latest_model_path": str(latest_model_path),
             "promoted_to_latest": False,
+            "promotion_gate_passed": False,
             "promotion_reject_reason_ja": "promotion評価前です。",
+            "promotion_reject_reasons_ja": ["promotion評価前です。"],
             "promotion_metrics": {},
+            "previous_latest_preserved": bool(previous_latest_exists),
         }
     )
     model_bundle.save(candidate_model_path)
@@ -278,9 +286,10 @@ def run_scalping_pipeline(
         latency_ms_grid=list(scalping_cfg.latency_ms_grid),
         evaluation_index=split.test_index,
     )
-    probability_calibration = build_probability_calibration_report(
-        backtest.signals,
-        backtest.trades,
+    probability_calibration = (
+        build_probability_calibration_report(backtest.signals, backtest.trades)
+        if bool(scalping_cfg.calibration_report_enabled)
+        else ScalpingCalibrationReport()
     )
     promoted, promotion_reject_reason_ja, promotion_metrics = evaluate_scalping_model_promotion(
         test_metrics=backtest.metrics,
@@ -288,18 +297,31 @@ def run_scalping_pipeline(
         walk_forward_results=walk_forward_results,
         scalping_config=scalping_cfg,
         calibration_report=probability_calibration,
+        validation_gate_passed=bool(model_bundle.train_metrics.get("validation_gate_passed", True)),
     )
+    promotion_reject_reasons_ja = (
+        [part.strip() for part in promotion_reject_reason_ja.split(" / ") if part.strip()]
+        if promotion_reject_reason_ja
+        else []
+    )
+    approved_model_path = latest_model_path if promoted else None
+    previous_latest_preserved = bool((not promoted) and previous_latest_exists)
     model_bundle.metadata.update(
         {
             "promoted_to_latest": bool(promoted),
+            "promotion_gate_passed": bool(promoted),
             "promotion_reject_reason_ja": promotion_reject_reason_ja,
+            "promotion_reject_reasons_ja": promotion_reject_reasons_ja,
             "promotion_metrics": promotion_metrics,
+            "approved_model_path": str(approved_model_path or ""),
+            "previous_latest_preserved": previous_latest_preserved,
         }
     )
     model_bundle.train_metrics.update(
         {
             "promoted_to_latest": bool(promoted),
             "promotion_reject_reason_ja": promotion_reject_reason_ja,
+            "promotion_reject_reasons_ja": promotion_reject_reasons_ja,
         }
     )
     model_bundle.save(candidate_model_path)
@@ -319,10 +341,14 @@ def run_scalping_pipeline(
             "stress_test_summary": _stress_summary_records(stress_results),
             "probability_calibration": probability_calibration.metrics,
             "promoted_to_latest": bool(promoted),
+            "promotion_gate_passed": bool(promoted),
             "promotion_reject_reason_ja": promotion_reject_reason_ja,
+            "promotion_reject_reasons_ja": promotion_reject_reasons_ja,
             "promotion_metrics": promotion_metrics,
             "candidate_model_path": str(candidate_model_path),
+            "approved_model_path": str(approved_model_path or ""),
             "latest_model_path": str(latest_model_path),
+            "previous_latest_preserved": previous_latest_preserved,
         }
     )
     backtest.model_summary["metadata"] = dict(model_bundle.metadata)
@@ -331,6 +357,8 @@ def run_scalping_pipeline(
         config=config,
         run_id=run_id,
         model_id=run_id,
+        model_path=str(candidate_model_path),
+        model_promoted=bool(promoted),
         symbol=symbol,
         backtest=backtest,
         features=test_features,
@@ -429,6 +457,7 @@ def _run_walk_forward_if_enabled(
             pip_size=pip_size,
             training_config=training_config,
             execution_config=execution_config,
+            scalping_config=scalping_cfg,
         )
         test_ticks = evaluation_tick_window(
             tick_frame,
@@ -457,12 +486,8 @@ def _run_walk_forward_if_enabled(
                 "test_start": split.test_start.isoformat(),
                 "test_end": split.test_end.isoformat(),
                 "selected_threshold": bundle.decision_threshold,
-                "threshold_selection_method": bundle.metadata.get(
-                    "threshold_selection_method", ""
-                ),
-                "validation_gate_passed": bundle.train_metrics.get(
-                    "validation_gate_passed", True
-                ),
+                "threshold_selection_method": bundle.metadata.get("threshold_selection_method", ""),
+                "validation_gate_passed": bundle.train_metrics.get("validation_gate_passed", True),
                 "number_of_trades": result.metrics.get("number_of_trades", 0),
                 "net_profit": result.metrics.get("net_profit", 0.0),
                 "total_return": result.metrics.get("total_return", 0.0),
@@ -485,13 +510,13 @@ def select_decision_threshold_by_replay(
     training_config: ScalpingTrainingConfig,
     execution_config: ScalpingExecutionConfig,
     labels: pd.DataFrame | None = None,
-) -> tuple[float, dict[str, float | int]]:
+) -> tuple[float, dict[str, object]]:
     """Select a decision threshold by replaying the validation tick window."""
 
     if validation_ticks.empty or validation_features.empty:
         raise ValueError("validation replay に必要な tick/features が空です。")
     best_threshold = float(training_config.decision_threshold)
-    best_metrics: dict[str, float | int] = {
+    best_metrics: dict[str, object] = {
         "candidate_count": int(len(validation_features.index)),
         "selected_count": 0,
         "selected_net_pips": 0.0,
@@ -500,6 +525,7 @@ def select_decision_threshold_by_replay(
         "selected_max_drawdown_pips": 0.0,
         "objective": float("-inf"),
     }
+    threshold_candidates: list[dict[str, object]] = []
     for threshold in training_config.threshold_grid:
         replay_bundle = replace(model_bundle, decision_threshold=float(threshold))
         replay = run_scalping_tick_backtest(
@@ -514,6 +540,11 @@ def select_decision_threshold_by_replay(
             include_future_outcomes=True,
         )
         metrics = _threshold_metrics_from_replay(replay, validation_features)
+        metrics["threshold"] = float(threshold)
+        metrics["validation_gate_passed"] = bool(
+            _validation_gate_status(metrics, config=training_config)[0]
+        )
+        threshold_candidates.append(dict(metrics))
         if metrics["selected_count"] < int(training_config.min_threshold_trades):
             continue
         if float(metrics["objective"]) > float(best_metrics["objective"]):
@@ -521,6 +552,7 @@ def select_decision_threshold_by_replay(
             best_metrics = metrics
     if best_metrics["selected_count"] == 0:
         best_metrics["objective"] = 0.0
+    best_metrics["threshold_candidates"] = threshold_candidates
     return best_threshold, best_metrics
 
 
@@ -531,15 +563,29 @@ def evaluate_scalping_model_promotion(
     walk_forward_results: pd.DataFrame,
     scalping_config: Any,
     calibration_report: ScalpingCalibrationReport | None = None,
+    validation_gate_passed: bool = True,
 ) -> tuple[bool, str, dict[str, object]]:
     """Return whether a candidate model can become the approved latest model."""
 
+    if not bool(getattr(scalping_config, "model_promotion_enabled", True)):
+        return (
+            True,
+            "",
+            {
+                "promotion_disabled": True,
+                "test_profit_factor": _metric_float(test_metrics, "profit_factor"),
+                "test_trade_count": int(_metric_float(test_metrics, "number_of_trades")),
+                "test_net_profit": _metric_float(test_metrics, "net_profit"),
+                "note_ja": "model_promotion_enabled=false のため候補を latest として保存しました。",
+            },
+        )
     test_profit_factor = _metric_float(test_metrics, "profit_factor")
     test_trade_count = int(_metric_float(test_metrics, "number_of_trades"))
     test_net_profit = _metric_float(test_metrics, "net_profit")
     test_drawdown_amount = abs(min(0.0, _metric_float(test_metrics, "max_drawdown_amount")))
-    stress_profit_factor = _frame_min(stress_results, "profit_factor")
-    stress_net_profit = _frame_min(stress_results, "net_profit")
+    required_stress = _required_stress_metrics(stress_results, scalping_config)
+    stress_profit_factor = required_stress.get("profit_factor")
+    stress_net_profit = required_stress.get("net_profit")
     walk_forward_pass_ratio = _walk_forward_pass_ratio(
         walk_forward_results,
         min_profit_factor=float(getattr(scalping_config, "min_test_profit_factor", 0.0)),
@@ -553,29 +599,54 @@ def evaluate_scalping_model_promotion(
         "test_drawdown_amount": test_drawdown_amount,
         "stress_min_profit_factor": stress_profit_factor,
         "stress_min_net_profit": stress_net_profit,
+        "required_stress_found": bool(required_stress.get("found", False)),
+        "required_stress_spread_multiplier": float(
+            getattr(scalping_config, "required_stress_spread_multiplier", 1.5)
+        ),
+        "required_stress_latency_ms": int(
+            getattr(scalping_config, "required_stress_latency_ms", 500)
+        ),
         "walk_forward_pass_ratio": walk_forward_pass_ratio,
+        "walk_forward_fold_count": int(len(walk_forward_results.index)),
+        "validation_gate_passed": bool(validation_gate_passed),
         "calibration": dict(calibration_report.metrics) if calibration_report is not None else {},
         "requirements": {
+            "require_validation_gate_passed_for_promotion": bool(
+                getattr(scalping_config, "require_validation_gate_passed_for_promotion", True)
+            ),
             "min_test_profit_factor": float(
                 getattr(scalping_config, "min_test_profit_factor", 0.0)
             ),
             "min_test_trade_count": int(getattr(scalping_config, "min_test_trade_count", 0)),
             "min_test_net_profit": float(getattr(scalping_config, "min_test_net_profit", -1e18)),
-            "max_test_drawdown_amount": getattr(
-                scalping_config, "max_test_drawdown_amount", None
-            ),
+            "max_test_drawdown_amount": getattr(scalping_config, "max_test_drawdown_amount", None),
             "min_stress_profit_factor": float(
                 getattr(scalping_config, "min_stress_profit_factor", 0.0)
             ),
-            "min_stress_net_profit": float(
-                getattr(scalping_config, "min_stress_net_profit", -1e18)
-            ),
+            "min_stress_net_profit": getattr(scalping_config, "min_stress_net_profit", None),
             "min_walk_forward_pass_ratio": float(
                 getattr(scalping_config, "min_walk_forward_pass_ratio", 0.0)
+            ),
+            "min_walk_forward_folds": int(getattr(scalping_config, "min_walk_forward_folds", 0)),
+            "fail_closed_on_promotion_fail": bool(
+                getattr(scalping_config, "fail_closed_on_promotion_fail", True)
+            ),
+            "max_brier_score": getattr(scalping_config, "max_brier_score", None),
+            "min_high_probability_decile_win_rate": getattr(
+                scalping_config, "min_high_probability_decile_win_rate", None
+            ),
+            "min_high_probability_decile_average_net_pips": getattr(
+                scalping_config, "min_high_probability_decile_average_net_pips", None
             ),
         },
     }
     failures: list[str] = []
+    warnings: list[str] = []
+    if (
+        bool(getattr(scalping_config, "require_validation_gate_passed_for_promotion", True))
+        and not validation_gate_passed
+    ):
+        failures.append("validation gate failed のためlatestへ昇格しません")
     min_test_pf = float(getattr(scalping_config, "min_test_profit_factor", 0.0))
     if test_profit_factor < min_test_pf:
         failures.append(
@@ -587,9 +658,9 @@ def evaluate_scalping_model_promotion(
             f"test trade count が不足しています({test_trade_count} < {min_test_trades})"
         )
     min_test_profit = float(getattr(scalping_config, "min_test_net_profit", -1e18))
-    if test_net_profit < min_test_profit:
+    if test_net_profit < min_test_profit or (min_test_profit >= 0.0 and test_net_profit <= 0.0):
         failures.append(
-            f"test net profit が基準未満です({test_net_profit:.3f} < {min_test_profit:.3f})"
+            f"test net profit が基準未満です({test_net_profit:.3f} <= {min_test_profit:.3f})"
         )
     max_drawdown_amount = getattr(scalping_config, "max_test_drawdown_amount", None)
     if max_drawdown_amount is not None and test_drawdown_amount > float(max_drawdown_amount):
@@ -598,24 +669,42 @@ def evaluate_scalping_model_promotion(
             f"({test_drawdown_amount:.3f} > {float(max_drawdown_amount):.3f})"
         )
     min_stress_pf = float(getattr(scalping_config, "min_stress_profit_factor", 0.0))
-    if stress_profit_factor is None:
-        if min_stress_pf > 0.0:
-            failures.append("stress test 結果がありません")
-    elif stress_profit_factor < min_stress_pf:
+    if not bool(required_stress.get("found", False)):
         failures.append(
-            "stress min profit factor が基準未満です"
-            f"({stress_profit_factor:.3f} < {min_stress_pf:.3f})"
+            "必須stress条件"
+            f"(spread={metrics['required_stress_spread_multiplier']}, "
+            f"latency_ms={metrics['required_stress_latency_ms']})の結果がありません"
         )
-    min_stress_profit = float(getattr(scalping_config, "min_stress_net_profit", -1e18))
+    else:
+        if bool(required_stress.get("missing_required_columns", False)):
+            warnings.append(
+                "stress結果にspread_multiplier/entry_latency_ms列がないため全stress行で判定しました"
+            )
+        if stress_profit_factor is None:
+            if min_stress_pf > 0.0:
+                failures.append("stress test 結果がありません")
+        elif stress_profit_factor < min_stress_pf:
+            failures.append(
+                "stress min profit factor が基準未満です"
+                f"({stress_profit_factor:.3f} < {min_stress_pf:.3f})"
+            )
+    min_stress_profit_raw = getattr(scalping_config, "min_stress_net_profit", None)
+    min_stress_profit = float(min_stress_profit_raw) if min_stress_profit_raw is not None else None
     if stress_net_profit is None:
-        if min_stress_profit > -1e11:
+        if min_stress_profit is not None:
             failures.append("stress test net profit 結果がありません")
-    elif stress_net_profit < min_stress_profit:
+    elif min_stress_profit is not None and stress_net_profit < min_stress_profit:
         failures.append(
             "stress min net profit が基準未満です"
             f"({stress_net_profit:.3f} < {min_stress_profit:.3f})"
         )
     min_wf_ratio = float(getattr(scalping_config, "min_walk_forward_pass_ratio", 0.0))
+    min_wf_folds = int(getattr(scalping_config, "min_walk_forward_folds", 0))
+    if min_wf_folds > 0 and len(walk_forward_results.index) < min_wf_folds:
+        failures.append(
+            "walk-forward fold数が不足しています"
+            f"({len(walk_forward_results.index)} < {min_wf_folds})"
+        )
     if walk_forward_pass_ratio is None:
         if min_wf_ratio > 0.0:
             failures.append("walk-forward 結果がありません")
@@ -624,6 +713,18 @@ def evaluate_scalping_model_promotion(
             "walk-forward pass ratio が基準未満です"
             f"({walk_forward_pass_ratio:.3f} < {min_wf_ratio:.3f})"
         )
+    calibration_failures = _calibration_promotion_failures(
+        scalping_config=scalping_config,
+        calibration_report=calibration_report,
+    )
+    if calibration_failures:
+        metrics["calibration_warnings_ja"] = list(calibration_failures)
+        if bool(getattr(scalping_config, "calibration_fail_closed", False)):
+            failures.extend(calibration_failures)
+        else:
+            warnings.extend(calibration_failures)
+    if warnings:
+        metrics["warnings_ja"] = warnings
     if failures:
         return False, " / ".join(failures), metrics
     return True, "", metrics
@@ -664,26 +765,17 @@ def _apply_validation_threshold_selection(
     pip_size: float,
     training_config: ScalpingTrainingConfig,
     execution_config: ScalpingExecutionConfig,
+    scalping_config: Any,
 ) -> ScalpingModelBundle:
-    method = "validation_replay"
+    configured_method = (
+        str(getattr(scalping_config, "threshold_selection_method", "replay") or "replay")
+        .strip()
+        .lower()
+    )
+    method = configured_method if configured_method in {"replay", "label"} else "replay"
     warning = ""
-    try:
-        threshold, selected_metrics = select_decision_threshold_by_replay(
-            validation_ticks,
-            validation_features,
-            symbol=symbol,
-            pip_size=pip_size,
-            model_bundle=model_bundle,
-            training_config=training_config,
-            execution_config=execution_config,
-            labels=validation_labels,
-        )
-    except Exception as exc:  # noqa: BLE001
-        method = "label_fallback"
-        warning = (
-            "validation replay によるthreshold選択に失敗したため、"
-            f"label集計fallbackを使いました: {exc}"
-        )
+    threshold_candidates: list[dict[str, object]] = []
+    if method == "label":
         threshold, selected_metrics = _select_decision_threshold_by_labels(
             model_bundle,
             train_features=train_features,
@@ -692,6 +784,37 @@ def _apply_validation_threshold_selection(
             validation_labels=validation_labels,
             training_config=training_config,
         )
+    else:
+        try:
+            threshold, selected_metrics = select_decision_threshold_by_replay(
+                validation_ticks,
+                validation_features,
+                symbol=symbol,
+                pip_size=pip_size,
+                model_bundle=model_bundle,
+                training_config=training_config,
+                execution_config=execution_config,
+                labels=validation_labels,
+            )
+            raw_candidates = selected_metrics.get("threshold_candidates", [])
+            if isinstance(raw_candidates, list):
+                threshold_candidates = [
+                    dict(candidate) for candidate in raw_candidates if isinstance(candidate, dict)
+                ]
+        except Exception as exc:  # noqa: BLE001
+            method = "label"
+            warning = (
+                "validation replay によるthreshold選択に失敗したため、"
+                f"label集計fallbackを使いました: {exc}"
+            )
+            threshold, selected_metrics = _select_decision_threshold_by_labels(
+                model_bundle,
+                train_features=train_features,
+                train_labels=train_labels,
+                validation_features=validation_features,
+                validation_labels=validation_labels,
+                training_config=training_config,
+            )
     selected_threshold_before_gate = float(threshold)
     validation_gate_passed, gate_warning = _validation_gate_status(
         selected_metrics,
@@ -705,16 +828,17 @@ def _apply_validation_threshold_selection(
         {
             "threshold_selected_on": "validation",
             "threshold_selection_method": method,
+            "threshold_grid": list(training_config.threshold_grid),
             "selected_threshold": float(threshold),
             "selected_threshold_before_validation_gate": selected_threshold_before_gate,
+            "selected_threshold_validation_metrics": dict(selected_metrics),
+            "threshold_candidates": threshold_candidates,
             "validation_gate_passed": bool(validation_gate_passed),
             "validation_sample_count": int(len(validation_features.index)),
             "validation_selected_count": int(selected_metrics.get("selected_count", 0)),
             "validation_net_pips": float(selected_metrics.get("selected_net_pips", 0.0)),
             "validation_mean_pips": float(selected_metrics.get("selected_mean_pips", 0.0)),
-            "validation_profit_factor": float(
-                selected_metrics.get("selected_profit_factor", 0.0)
-            ),
+            "validation_profit_factor": float(selected_metrics.get("selected_profit_factor", 0.0)),
             "validation_max_drawdown": float(
                 selected_metrics.get("selected_max_drawdown_pips", 0.0)
             ),
@@ -727,6 +851,11 @@ def _apply_validation_threshold_selection(
         {
             "threshold_selected_on": "validation",
             "threshold_selection_method": method,
+            "threshold_grid": list(training_config.threshold_grid),
+            "selected_threshold": float(threshold),
+            "selected_threshold_before_validation_gate": selected_threshold_before_gate,
+            "selected_threshold_validation_metrics": dict(selected_metrics),
+            "threshold_candidates": threshold_candidates,
             "validation_gate_passed": bool(validation_gate_passed),
         }
     )
@@ -743,7 +872,7 @@ def _select_decision_threshold_by_labels(
     validation_features: pd.DataFrame,
     validation_labels: pd.DataFrame,
     training_config: ScalpingTrainingConfig,
-) -> tuple[float, dict[str, float | int]]:
+) -> tuple[float, dict[str, object]]:
     threshold_features, _, threshold_meta = build_scalping_training_set(
         validation_features,
         validation_labels,
@@ -778,7 +907,7 @@ def _select_decision_threshold_by_labels(
 
 
 def _validation_gate_status(
-    selected_metrics: dict[str, float | int],
+    selected_metrics: dict[str, object],
     *,
     config: ScalpingTrainingConfig,
 ) -> tuple[bool, str]:
@@ -868,6 +997,8 @@ def _append_scalping_outcomes(
     config: AppConfig,
     run_id: str,
     model_id: str,
+    model_path: str,
+    model_promoted: bool,
     symbol: str,
     backtest: ScalpingBacktestResult,
     features: pd.DataFrame,
@@ -875,17 +1006,88 @@ def _append_scalping_outcomes(
     scalping_cfg = config.strategy.fx_scalping
     if not scalping_cfg.outcome_store_enabled:
         return {"enabled": False}
-    store_dir = scalping_cfg.outcome_store_dir or (scalping_cfg.model_dir / "outcomes")
-    store = ScalpingOutcomeStore(store_dir)
+    store_dir = scalping_cfg.outcome_store_dir or Path("data/scalping_outcomes")
+    store = ScalpingOutcomeStore(store_dir, storage_format=scalping_cfg.outcome_store_format)
     summary = store.append_backtest(
         run_id=run_id,
         model_id=model_id,
+        model_path=model_path,
+        model_promoted=model_promoted,
         symbol=symbol,
         signals=backtest.signals,
         trades=backtest.trades,
         features=features,
     )
     return {"enabled": True, "root_dir": str(store_dir), **summary}
+
+
+def _required_stress_metrics(
+    stress_results: pd.DataFrame,
+    scalping_config: Any,
+) -> dict[str, object]:
+    if stress_results.empty:
+        return {"found": False}
+    required_spread = float(getattr(scalping_config, "required_stress_spread_multiplier", 1.5))
+    required_latency = int(getattr(scalping_config, "required_stress_latency_ms", 500))
+    if (
+        "spread_multiplier" not in stress_results.columns
+        or "entry_latency_ms" not in stress_results
+    ):
+        return {
+            "found": True,
+            "missing_required_columns": True,
+            "profit_factor": _frame_min(stress_results, "profit_factor"),
+            "net_profit": _frame_min(stress_results, "net_profit"),
+            "row_count": int(len(stress_results.index)),
+        }
+    working = stress_results.copy()
+    spread = pd.to_numeric(working["spread_multiplier"], errors="coerce")
+    latency = pd.to_numeric(working["entry_latency_ms"], errors="coerce")
+    matching = working[(spread >= required_spread) & (latency >= required_latency)]
+    if matching.empty:
+        return {"found": False}
+    return {
+        "found": True,
+        "profit_factor": _frame_min(matching, "profit_factor"),
+        "net_profit": _frame_min(matching, "net_profit"),
+        "row_count": int(len(matching.index)),
+    }
+
+
+def _calibration_promotion_failures(
+    *,
+    scalping_config: Any,
+    calibration_report: ScalpingCalibrationReport | None,
+) -> list[str]:
+    if calibration_report is None:
+        return []
+    metrics = calibration_report.metrics
+    failures: list[str] = []
+    max_brier = getattr(scalping_config, "max_brier_score", None)
+    brier = metrics.get("brier_score")
+    if max_brier is not None and brier is not None and float(brier) > float(max_brier):
+        failures.append(
+            f"calibration Brier score が基準超過です({float(brier):.4f} > {float(max_brier):.4f})"
+        )
+    min_high_win = getattr(scalping_config, "min_high_probability_decile_win_rate", None)
+    high_win = metrics.get("high_probability_decile_win_rate")
+    if min_high_win is not None and high_win is not None and float(high_win) < float(min_high_win):
+        failures.append(
+            "高確率decileの勝率が基準未満です"
+            f"({float(high_win):.3f} < {float(min_high_win):.3f})"
+        )
+    min_high_pips = getattr(scalping_config, "min_high_probability_decile_average_net_pips", None)
+    high_pips = metrics.get("high_probability_decile_average_net_pips")
+    if (
+        min_high_pips is not None
+        and high_pips is not None
+        and float(high_pips) < float(min_high_pips)
+    ):
+        failures.append(
+            "高確率decileの平均net pipsが基準未満です"
+            f"({float(high_pips):.3f} < {float(min_high_pips):.3f})"
+        )
+    return failures
 
 
 def _metric_float(metrics: dict[str, object], key: str) -> float:
@@ -967,10 +1169,34 @@ def export_scalping_pipeline_result(result: ScalpingPipelineResult, output_dir: 
         "model_summary": result.backtest.model_summary,
         "stress_summary": _jsonable(_stress_summary_records(result.stress_results)),
         "candidate_model_path": str(result.candidate_model_path or ""),
+        "approved_model_path": str(result.model_bundle.metadata.get("approved_model_path", "")),
         "latest_model_path": str(result.latest_model_path or ""),
+        "promoted_to_latest": bool(result.model_bundle.metadata.get("promoted_to_latest", False)),
+        "promotion_gate_passed": bool(
+            result.model_bundle.metadata.get("promotion_gate_passed", False)
+        ),
+        "promotion_reject_reasons_ja": list(
+            result.model_bundle.metadata.get("promotion_reject_reasons_ja", [])
+        ),
+        "previous_latest_preserved": bool(
+            result.model_bundle.metadata.get("previous_latest_preserved", False)
+        ),
         "promotion_metrics": _jsonable(result.promotion_metrics),
         "outcome_store_summary": _jsonable(result.outcome_store_summary),
         "probability_calibration": _jsonable(result.probability_calibration.to_summary()),
+        "brier_score": result.probability_calibration.metrics.get("brier_score"),
+        "calibration_sample_count": result.probability_calibration.metrics.get(
+            "calibration_sample_count", 0
+        ),
+        "trade_sample_count": result.probability_calibration.metrics.get("trade_sample_count", 0),
+        "best_decile": result.probability_calibration.metrics.get("best_decile"),
+        "worst_decile": result.probability_calibration.metrics.get("worst_decile"),
+        "high_probability_decile_win_rate": result.probability_calibration.metrics.get(
+            "high_probability_decile_win_rate"
+        ),
+        "high_probability_decile_average_net_pips": result.probability_calibration.metrics.get(
+            "high_probability_decile_average_net_pips"
+        ),
         "artifacts": {
             "trades": "trades.csv",
             "orders": "orders.csv",

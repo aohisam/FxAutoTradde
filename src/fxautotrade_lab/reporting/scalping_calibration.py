@@ -36,6 +36,7 @@ def build_probability_calibration_report(
         "calibration_sample_count": int(curve["signal_count"].sum()) if not curve.empty else 0,
         "trade_sample_count": int(deciles["trade_count"].sum()) if not deciles.empty else 0,
     }
+    metrics.update(_decile_extremes(deciles))
     return ScalpingCalibrationReport(deciles=deciles, curve=curve, metrics=metrics)
 
 
@@ -49,9 +50,54 @@ def write_probability_calibration_report(
     curve_path = target / "calibration_curve.csv"
     report.deciles.to_csv(decile_path, index=False)
     report.curve.to_csv(curve_path, index=False)
+    summary_path = target / "calibration_summary.json"
+    summary_path.write_text(
+        pd.Series(report.metrics, dtype="object").to_json(force_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return {
         "probability_deciles": decile_path.name,
         "calibration_curve": curve_path.name,
+        "calibration_summary": summary_path.name,
+    }
+
+
+def _decile_extremes(deciles: pd.DataFrame) -> dict[str, object]:
+    if deciles.empty or "probability_decile" not in deciles.columns:
+        return {
+            "best_decile": None,
+            "worst_decile": None,
+            "high_probability_decile_win_rate": None,
+            "high_probability_decile_average_net_pips": None,
+        }
+    working = deciles.copy()
+    working["average_net_pips"] = pd.to_numeric(working.get("average_net_pips"), errors="coerce")
+    working["win_rate"] = pd.to_numeric(working.get("win_rate"), errors="coerce")
+    valid = working.dropna(subset=["average_net_pips"])
+    if valid.empty:
+        best_decile = None
+        worst_decile = None
+    else:
+        best_decile = int(
+            valid.sort_values("average_net_pips", ascending=False).iloc[0]["probability_decile"]
+        )
+        worst_decile = int(
+            valid.sort_values("average_net_pips", ascending=True).iloc[0]["probability_decile"]
+        )
+    high_decile = working.sort_values("probability_decile", ascending=False).head(1)
+    if high_decile.empty:
+        high_win_rate = None
+        high_average = None
+    else:
+        high_win_rate_value = high_decile.iloc[0].get("win_rate")
+        high_average_value = high_decile.iloc[0].get("average_net_pips")
+        high_win_rate = float(high_win_rate_value) if pd.notna(high_win_rate_value) else None
+        high_average = float(high_average_value) if pd.notna(high_average_value) else None
+    return {
+        "best_decile": best_decile,
+        "worst_decile": worst_decile,
+        "high_probability_decile_win_rate": high_win_rate,
+        "high_probability_decile_average_net_pips": high_average,
     }
 
 

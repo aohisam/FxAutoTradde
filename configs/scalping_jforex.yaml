@@ -37,8 +37,9 @@ strategy:
     walk_forward_train_days: 20
     walk_forward_validation_days: 5
     walk_forward_test_days: 5
-    min_walk_forward_folds: 1
+    min_walk_forward_folds: 3
     model_dir: models/fx_scalping
+    candidate_model_dir: models/fx_scalping/candidates
     latest_model_alias: latest_scalping_model.json
     learning_rate: 0.08
     max_iter: 500
@@ -49,15 +50,23 @@ strategy:
     min_validation_profit_factor: 1.05
     min_validation_trade_count: 50
     fail_closed_on_bad_validation: true
+    threshold_selection_method: replay
+    model_promotion_enabled: true
+    require_validation_gate_passed_for_promotion: true
     min_test_profit_factor: 1.05
-    min_test_trade_count: 50
+    min_test_trade_count: 100
     min_test_net_profit: 0.0
     max_test_drawdown_amount: 100000.0
     min_stress_profit_factor: 1.0
-    min_stress_net_profit: -50000.0
+    min_stress_net_profit: 0.0
+    required_stress_spread_multiplier: 1.5
+    required_stress_latency_ms: 500
     min_walk_forward_pass_ratio: 0.6
+    fail_closed_on_promotion_fail: true
+    calibration_report_enabled: true
     outcome_store_enabled: true
-    outcome_store_dir: runtime/scalping_outcomes
+    outcome_store_dir: data/scalping_outcomes
+    outcome_store_format: parquet
     entry_latency_ms: 250
     cooldown_seconds: 5
     max_trades_per_day: 120

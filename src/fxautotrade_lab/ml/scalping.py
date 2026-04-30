@@ -40,6 +40,7 @@ class ScalpingTrainingConfig:
     min_validation_profit_factor: float = 1.0
     min_validation_trade_count: int = 1
     fail_closed_on_bad_validation: bool = True
+    threshold_selection_method: str = "replay"
     threshold_grid: tuple[float, ...] = (
         0.52,
         0.54,

@@ -53,6 +53,8 @@ def test_scalping_pipeline_trains_and_exports(tmp_path: Path) -> None:
     config = AppConfig()
     config.strategy.fx_scalping.tick_cache_dir = tmp_path / "tick_cache"
     config.strategy.fx_scalping.model_dir = tmp_path / "models"
+    config.strategy.fx_scalping.candidate_model_dir = tmp_path / "models" / "candidates"
+    config.strategy.fx_scalping.outcome_store_dir = tmp_path / "outcomes"
     config.strategy.fx_scalping.min_samples = 20
     config.strategy.fx_scalping.min_threshold_trades = 2
     config.strategy.fx_scalping.min_volatility_pips = 0.0
@@ -61,6 +63,7 @@ def test_scalping_pipeline_trains_and_exports(tmp_path: Path) -> None:
     config.strategy.fx_scalping.stop_loss_pips = 0.25
     config.strategy.fx_scalping.max_hold_seconds = 8
     config.strategy.fx_scalping.train_ratio = 0.6
+    config.strategy.fx_scalping.model_promotion_enabled = False
     config.risk.starting_cash = 100_000
     config.risk.fixed_order_amount = 20_000
     config.risk.minimum_order_quantity = 1
@@ -100,7 +103,7 @@ def test_scalping_pipeline_trains_and_exports(tmp_path: Path) -> None:
     assert (tmp_path / "reports" / result.run_id / "calibration_curve.csv").exists()
     assert result.candidate_model_path is not None
     assert result.candidate_model_path.exists()
-    assert result.model_bundle.metadata["threshold_selection_method"] == "validation_replay"
+    assert result.model_bundle.metadata["threshold_selection_method"] == "replay"
     assert result.model_bundle.metadata["promoted_to_latest"] is True
     assert (tmp_path / "models" / "latest_scalping_model.json").exists()
     payload = json.loads(result.candidate_model_path.read_text(encoding="utf-8"))

@@ -225,7 +225,7 @@ class FxScalpingConfig(BaseModel):
     walk_forward_train_days: int = 20
     walk_forward_validation_days: int = 5
     walk_forward_test_days: int = 5
-    min_walk_forward_folds: int = 1
+    min_walk_forward_folds: int = 3
     model_dir: Path = Path("models/fx_scalping")
     latest_model_alias: str = "latest_scalping_model.json"
     learning_rate: float = 0.08
@@ -237,15 +237,28 @@ class FxScalpingConfig(BaseModel):
     min_validation_profit_factor: float = 1.0
     min_validation_trade_count: int = 1
     fail_closed_on_bad_validation: bool = True
-    min_test_profit_factor: float = 0.0
-    min_test_trade_count: int = 0
-    min_test_net_profit: float = -1_000_000_000_000.0
+    threshold_selection_method: str = "replay"
+    model_promotion_enabled: bool = True
+    candidate_model_dir: Path = Path("models/scalping/candidates")
+    require_validation_gate_passed_for_promotion: bool = True
+    min_test_profit_factor: float = 1.05
+    min_test_trade_count: int = 100
+    min_test_net_profit: float = 0.0
     max_test_drawdown_amount: float | None = None
-    min_stress_profit_factor: float = 0.0
-    min_stress_net_profit: float = -1_000_000_000_000.0
-    min_walk_forward_pass_ratio: float = 0.0
+    min_stress_profit_factor: float = 1.0
+    min_stress_net_profit: float | None = 0.0
+    required_stress_spread_multiplier: float = 1.5
+    required_stress_latency_ms: int = 500
+    min_walk_forward_pass_ratio: float = 0.6
+    fail_closed_on_promotion_fail: bool = True
+    max_brier_score: float | None = None
+    min_high_probability_decile_win_rate: float | None = None
+    min_high_probability_decile_average_net_pips: float | None = None
+    calibration_fail_closed: bool = False
+    calibration_report_enabled: bool = True
     outcome_store_enabled: bool = True
-    outcome_store_dir: Path | None = None
+    outcome_store_dir: Path | None = Path("data/scalping_outcomes")
+    outcome_store_format: str = "parquet"
     entry_latency_ms: int = 250
     cooldown_seconds: int = 5
     max_trades_per_day: int = 120
@@ -270,6 +283,27 @@ class FxScalpingConfig(BaseModel):
         if normalized not in {"tick", "bar"}:
             raise ValueError(
                 "スキャルピングMLの label_source は 'tick' または 'bar' を指定してください。"
+            )
+        return normalized
+
+    @field_validator("threshold_selection_method")
+    @classmethod
+    def validate_threshold_selection_method(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"replay", "label"}:
+            raise ValueError(
+                "スキャルピングMLの threshold_selection_method は "
+                "'replay' または 'label' を指定してください。"
+            )
+        return normalized
+
+    @field_validator("outcome_store_format")
+    @classmethod
+    def validate_outcome_store_format(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized not in {"parquet", "csv"}:
+            raise ValueError(
+                "スキャルピング OutcomeStore の形式は 'parquet' または 'csv' を指定してください。"
             )
         return normalized
 

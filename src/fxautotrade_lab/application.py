@@ -1202,9 +1202,14 @@ class LabApplication:
         )
         exported_dir = export_scalping_pipeline_result(result, output_root)
         result.output_dir = exported_dir
-        model_path = (
+        latest_model_path = (
             self.config.strategy.fx_scalping.model_dir
             / self.config.strategy.fx_scalping.latest_model_alias
+        )
+        effective_model_path = (
+            latest_model_path
+            if result.model_bundle.metadata.get("promoted_to_latest", False)
+            else result.candidate_model_path
         )
         _emit_progress(
             progress_callback,
@@ -1218,9 +1223,10 @@ class LabApplication:
             "run_id": result.run_id,
             "symbol": normalized_symbol,
             "output_dir": str(exported_dir),
-            "model_path": str(model_path),
+            "model_path": str(effective_model_path or latest_model_path),
             "candidate_model_path": str(result.candidate_model_path or ""),
-            "latest_model_path": str(result.latest_model_path or model_path),
+            "approved_model_path": str(result.model_bundle.metadata.get("approved_model_path", "")),
+            "latest_model_path": str(result.latest_model_path or latest_model_path),
             "promoted_to_latest": bool(
                 result.model_bundle.metadata.get("promoted_to_latest", False)
             ),
@@ -1291,10 +1297,15 @@ class LabApplication:
             or model_path.stem
         )
         if scalping_cfg.outcome_store_enabled:
-            store_dir = scalping_cfg.outcome_store_dir or (scalping_cfg.model_dir / "outcomes")
-            store_summary = ScalpingOutcomeStore(store_dir).append_paper(
+            store_dir = scalping_cfg.outcome_store_dir or Path("data/scalping_outcomes")
+            store_summary = ScalpingOutcomeStore(
+                store_dir,
+                storage_format=scalping_cfg.outcome_store_format,
+            ).append_paper(
                 run_id=paper_run_id,
                 model_id=model_id,
+                model_path=str(model_path),
+                model_promoted=bool(model_bundle.metadata.get("promoted_to_latest", False)),
                 symbol=normalized_symbol,
                 signals=pd.DataFrame(snapshot.get("signals", [])),
                 trades=pd.DataFrame(snapshot.get("trades", [])),
@@ -1315,6 +1326,14 @@ class LabApplication:
             " 本番運用前は WebSocket ticker 記録で shadow 検証してください。"
         )
         return snapshot
+
+    def load_scalping_outcome_summary(self) -> dict[str, object]:
+        scalping_cfg = self.config.strategy.fx_scalping
+        store_dir = scalping_cfg.outcome_store_dir or Path("data/scalping_outcomes")
+        return ScalpingOutcomeStore(
+            store_dir,
+            storage_format=scalping_cfg.outcome_store_format,
+        ).load_summary()
 
     def record_gmo_scalping_ticks(
         self,

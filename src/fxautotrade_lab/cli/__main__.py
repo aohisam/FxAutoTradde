@@ -42,7 +42,11 @@ def _typer_main() -> None:
     @app.command("import-csv")
     def import_csv(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
-        file_path: str = typer.Option(..., "--file", help="現在は未対応。Bid / Ask の 2 ファイルを import-bidask-csv で指定してください"),
+        file_path: str = typer.Option(
+            ...,
+            "--file",
+            help="現在は未対応。Bid / Ask の 2 ファイルを import-bidask-csv で指定してください",
+        ),
         symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時はファイル名から推定"),
     ) -> None:
         _ = config, file_path, symbol
@@ -80,7 +84,9 @@ def _typer_main() -> None:
     @app.command("scalping-backtest")
     def scalping_backtest(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
-        tick_file: str = typer.Option("", "--tick-file", help="取り込みも同時に行う JForex tick CSV"),
+        tick_file: str = typer.Option(
+            "", "--tick-file", help="取り込みも同時に行う JForex tick CSV"
+        ),
         symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時は watchlist 先頭"),
         start: str = typer.Option("", "--start", help="検証開始日時"),
         end: str = typer.Option("", "--end", help="検証終了日時"),
@@ -119,6 +125,13 @@ def _typer_main() -> None:
         )
         typer.echo(f"GMO WebSocket tick 記録完了: {summary}")
 
+    @app.command("scalping-outcomes-summary")
+    def scalping_outcomes_summary(
+        config: str = typer.Option(..., "--config", help="設定ファイル"),
+    ) -> None:
+        summary = LabApplication(Path(config)).load_scalping_outcome_summary()
+        typer.echo(f"スキャルピングOutcomeStore集計: {summary}")
+
     @app.command("realtime-sim")
     def realtime_sim(
         config: str = typer.Option(..., "--config", help="設定ファイル"),
@@ -143,7 +156,9 @@ def _typer_main() -> None:
         typer.echo(str(html_path if html_path.exists() else path))
 
     @app.command("launch-desktop")
-    def launch_desktop(config: str = typer.Option("configs/mac_desktop_default.yaml", "--config")) -> None:
+    def launch_desktop(
+        config: str = typer.Option("configs/mac_desktop_default.yaml", "--config")
+    ) -> None:
         from fxautotrade_lab.desktop.app import launch_desktop_app
 
         launch_desktop_app(Path(config))
@@ -196,6 +211,7 @@ def _argparse_main() -> None:
     record_gmo = subparsers.add_parser("record-gmo-ticks", parents=[config_parser])
     record_gmo.add_argument("--symbol", default="")
     record_gmo.add_argument("--max-ticks", type=int, default=0)
+    subparsers.add_parser("scalping-outcomes-summary", parents=[config_parser])
     realtime = subparsers.add_parser("realtime-sim", parents=[config_parser])
     realtime.add_argument("--max-cycles", type=int, default=None)
     subparsers.add_parser("demo-run", parents=[config_parser])
@@ -256,6 +272,8 @@ def _argparse_main() -> None:
             max_ticks=args.max_ticks or None,
         )
         print(summary)
+    elif args.command == "scalping-outcomes-summary":
+        print(LabApplication(Path(args.config)).load_scalping_outcome_summary())
     elif args.command == "realtime-sim":
         logs = LabApplication(Path(args.config)).run_realtime_sim(max_cycles=args.max_cycles)
         print(len(logs))
