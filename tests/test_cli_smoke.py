@@ -7,6 +7,23 @@ import sys
 from tests.conftest import write_config
 
 
+def test_lab_application_exposes_scalping_cli_methods(tmp_path):
+    from fxautotrade_lab.application import LabApplication
+
+    config_path = write_config(tmp_path)
+    app = LabApplication(config_path)
+
+    for method_name in (
+        "import_jforex_tick_csv",
+        "run_scalping_backtest",
+        "run_scalping_realtime_sim",
+        "record_gmo_scalping_ticks",
+        "import_jforex_bid_ask_csv",
+    ):
+        assert hasattr(app, method_name)
+        assert callable(getattr(app, method_name))
+
+
 def test_cli_backtest_smoke(tmp_path):
     config_path = write_config(tmp_path)
     result = subprocess.run(

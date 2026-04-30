@@ -606,8 +606,8 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         append_log("INFO", "Bid / Ask CSV を取り込み中…")
         submit_task(
             lambda: app_state.import_jforex_bid_ask_csv(
-                str(selection.bid_source_path),
-                str(selection.ask_source_path),
+                bid_file_path=str(selection.bid_source_path),
+                ask_file_path=str(selection.ask_source_path),
                 symbol=selection.symbol,
             ),
             on_import_finished,

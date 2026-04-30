@@ -1099,8 +1099,9 @@ class LabApplication:
 
     def import_jforex_bid_ask_csv(
         self,
-        bid_file_path: str,
-        ask_file_path: str,
+        *,
+        bid_file_path: str | Path,
+        ask_file_path: str | Path,
         symbol: str | None = None,
     ) -> dict[str, object]:
         result = JForexCsvImporter(
@@ -1132,7 +1133,8 @@ class LabApplication:
 
     def import_jforex_tick_csv(
         self,
-        file_path: str,
+        *,
+        file_path: str | Path,
         symbol: str | None = None,
     ) -> dict[str, object]:
         tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
@@ -1153,7 +1155,7 @@ class LabApplication:
     def run_scalping_backtest(
         self,
         *,
-        tick_file_path: str | None = None,
+        tick_file_path: str | Path | None = None,
         symbol: str | None = None,
         start: str | None = None,
         end: str | None = None,
@@ -1163,7 +1165,10 @@ class LabApplication:
         tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
         import_summary: dict[str, object] | None = None
         if tick_file_path:
-            import_summary = self.import_jforex_tick_csv(tick_file_path, normalized_symbol)
+            import_summary = self.import_jforex_tick_csv(
+                file_path=tick_file_path,
+                symbol=normalized_symbol,
+            )
         start_ts, end_ts = self._scalping_window(start=start, end=end)
         _emit_progress(
             progress_callback,
@@ -1177,7 +1182,7 @@ class LabApplication:
         if ticks.empty:
             raise RuntimeError(
                 "指定期間の tick キャッシュが空です。"
-                " JForex tick CSV を import-jforex-tick-csv で取り込んでください。"
+                " JForex tick CSV を import-tick-csv で取り込んでください。"
             )
         _emit_progress(
             progress_callback,
