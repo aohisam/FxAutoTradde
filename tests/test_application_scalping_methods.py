@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 import yaml
 
+from fxautotrade_lab import application as application_module
 from fxautotrade_lab.application import LabApplication
+from tests.scalping_helpers import constant_bundle
 
 
 def _write_scalping_config(tmp_path: Path) -> Path:
@@ -108,7 +112,130 @@ def test_import_tick_csv_then_scalping_backtest_smoke(tmp_path: Path) -> None:
     result = app.run_scalping_backtest(tick_file_path=None, symbol="USD_JPY")
 
     assert import_summary["imported_rows"] > 0
+    assert import_summary["cache_dir"]
     assert result["run_id"]
     assert Path(str(result["candidate_model_path"])).exists()
+    assert "promotion_gate_passed" in result
     assert result["promoted_to_latest"] is True
     assert app.env.live_trading_enabled is False
+
+
+def test_scalping_realtime_sim_uses_latest_paper_engine_and_appends_outcomes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = _write_scalping_config(tmp_path)
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["strategy"]["fx_scalping"]["outcome_store_enabled"] = True
+    payload["strategy"]["fx_scalping"]["outcome_store_dir"] = str(tmp_path / "paper_outcomes")
+    payload["strategy"]["fx_scalping"]["outcome_store_format"] = "csv"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    latest_path = tmp_path / "models" / "latest_scalping_model.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text("{}", encoding="utf-8")
+    bundle = constant_bundle()
+    bundle.metadata.update({"promoted_to_latest": True, "model_id": "approved_model"})
+
+    class FakeClient:
+        def __init__(self, env) -> None:  # noqa: ANN001
+            assert env.live_trading_enabled is False
+
+        def fetch_ticker_quotes(self) -> dict[str, object]:
+            return {
+                "USD_JPY": SimpleNamespace(
+                    timestamp=pd.Timestamp("2026-02-02T09:00:00+09:00"),
+                    bid=150.0,
+                    ask=150.001,
+                )
+            }
+
+    class FakePaperEngine:
+        def __init__(self, **kwargs: object) -> None:
+            self.symbol = kwargs["symbol"]
+
+        def on_tick(self, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "symbol": self.symbol,
+                "events": [],
+                "signals": [
+                    {
+                        "signal_id": "paper-s1",
+                        "timestamp": "2026-02-02T09:00:00+09:00",
+                        "symbol": self.symbol,
+                        "probability": 0.7,
+                        "chosen_side": "long",
+                        "accepted": False,
+                        "reject_reason": "threshold_not_met",
+                    }
+                ],
+                "trades": [],
+            }
+
+    monkeypatch.setattr(application_module, "load_scalping_model_bundle", lambda *a, **k: bundle)
+    monkeypatch.setattr(application_module, "GmoForexPublicClient", FakeClient)
+    monkeypatch.setattr(application_module, "ScalpingRealtimePaperEngine", FakePaperEngine)
+
+    result = LabApplication(config_path).run_scalping_realtime_sim(
+        symbol="USD_JPY",
+        max_ticks=1,
+        poll_seconds=0,
+    )
+
+    assert result["model_path"] == str(latest_path)
+    assert result["outcome_store_summary"]["enabled"] is True
+    assert result["outcome_store_summary"]["signals"] == 1
+    assert result["trades"] == []
+
+
+def test_realtime_sim_does_not_use_candidate_without_latest(tmp_path: Path) -> None:
+    config_path = _write_scalping_config(tmp_path)
+    candidate_dir = tmp_path / "models" / "candidates"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    (candidate_dir / "candidate.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="latest|学習済みモデル"):
+        LabApplication(config_path).run_scalping_realtime_sim(
+            symbol="USD_JPY",
+            max_ticks=1,
+            poll_seconds=0,
+        )
+
+
+def test_record_gmo_scalping_ticks_uses_public_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created: dict[str, object] = {}
+
+    class FakeRecorder:
+        def __init__(self, env: object, cache: object, *, symbol: str) -> None:
+            created["env"] = env
+            created["cache"] = cache
+            created["symbol"] = symbol
+
+        def run(self, *, max_ticks: int | None = None) -> dict[str, object]:
+            return {"symbol": created["symbol"], "recorded_ticks": max_ticks or 0}
+
+    monkeypatch.setattr(application_module, "GmoPublicWebSocketTickRecorder", FakeRecorder)
+
+    result = LabApplication(_write_scalping_config(tmp_path)).record_gmo_scalping_ticks(
+        symbol="USD_JPY",
+        max_ticks=2,
+        output_path=tmp_path / "shadow_ticks",
+    )
+
+    assert result["symbol"] == "USD_JPY"
+    assert result["recorded_ticks"] == 2
+    assert result["cache_dir"] == str(tmp_path / "shadow_ticks")
+    env = created["env"]
+    assert env.live_trading_enabled is False
+
+
+def test_load_scalping_outcome_summary_empty_store(tmp_path: Path) -> None:
+    summary = LabApplication(_write_scalping_config(tmp_path)).load_scalping_outcome_summary()
+
+    assert summary["total_runs"] == 0
+    assert summary["total_trades"] == 0
+    assert summary["total_signals"] == 0

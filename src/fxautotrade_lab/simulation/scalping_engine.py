@@ -16,7 +16,10 @@ from fxautotrade_lab.simulation.scalping_policy import (
     BlackoutWindow,
     ScalpingExecutionConfig,
     ScalpingExecutionPolicy,
+    ScalpingRejectReason,
+    ScalpingRiskSnapshot,
     ScalpingRiskState,
+    ScalpingSignalContext,
     ScalpingSignalPolicy,
 )
 
@@ -83,9 +86,7 @@ def run_scalping_tick_backtest(
     for timestamp in features.index:
         ts = pd.Timestamp(timestamp)
         ts = ts.tz_localize(ASIA_TOKYO) if ts.tzinfo is None else ts.tz_convert(ASIA_TOKYO)
-        risk_snapshot = risk_state.snapshot(ts)
-        trades_today = risk_snapshot.trades_today
-        daily_pnl = risk_snapshot.daily_pnl
+        pre_risk_snapshot = risk_state.snapshot(ts)
         spread = _feature_float(features, timestamp, "spread_close_pips")
         spread_mean = _feature_float(features, timestamp, "spread_mean_20_pips")
         spread_z = _feature_float(features, timestamp, "spread_z_120")
@@ -101,26 +102,29 @@ def run_scalping_tick_backtest(
         entry_tick: pd.Series | None = None
         trade: dict[str, object] | None = None
         if ts < tick_index[0] or ts >= tick_index[-1]:
-            reject_reason = "outside_tick_window"
+            reject_reason = ScalpingRejectReason.OUTSIDE_TICK_WINDOW.value
         else:
-            reject_reason = risk_state.entry_reject_reason(ts)
-        if not reject_reason:
-            reject_reason = signal_policy.entry_reject_reason(
-                timestamp=ts,
-                tick_index=tick_index,
-                spread=spread,
-                spread_mean=spread_mean,
-                spread_z=spread_z,
-                volatility=volatility,
-                probability=probability,
-                threshold=threshold,
+            decision = signal_policy.decide_entry(
+                ScalpingSignalContext(
+                    timestamp=ts,
+                    tick_index=tick_index,
+                    spread=spread,
+                    spread_mean=spread_mean,
+                    spread_z=spread_z,
+                    volatility=volatility,
+                    probability=probability,
+                    threshold=threshold,
+                    chosen_side=side,
+                    risk_reject_reason=risk_state.entry_reject_reason(ts),
+                )
             )
+            reject_reason = "" if decision.accepted else decision.reject_reason
         if not reject_reason:
             entry_index = execution_policy.entry_index(tick_index, ts)
             if entry_index >= len(tick_index):
-                reject_reason = "entry_tick_not_found"
+                reject_reason = ScalpingRejectReason.ENTRY_TICK_NOT_FOUND.value
             elif entry_index >= len(tick_index) - 1:
-                reject_reason = "exit_tick_not_found"
+                reject_reason = ScalpingRejectReason.EXIT_TICK_NOT_FOUND.value
         if not reject_reason:
             entry_tick = tick_frame.iloc[entry_index]
             quantity = execution_policy.quantity_for_tick(
@@ -128,8 +132,21 @@ def run_scalping_tick_backtest(
                 side=side,
                 cash=cash,
             )
-            if quantity <= 0:
-                reject_reason = "quantity_too_small"
+            decision = signal_policy.decide_entry(
+                ScalpingSignalContext(
+                    timestamp=ts,
+                    tick_index=tick_index,
+                    spread=spread,
+                    spread_mean=spread_mean,
+                    spread_z=spread_z,
+                    volatility=volatility,
+                    probability=probability,
+                    threshold=threshold,
+                    chosen_side=side,
+                    quantity=quantity,
+                )
+            )
+            reject_reason = "" if decision.accepted else decision.reject_reason
         if not reject_reason:
             trade = _simulate_trade_from_entry(
                 tick_frame,
@@ -141,7 +158,7 @@ def run_scalping_tick_backtest(
                 training_config=training_config,
             )
             if trade is None:
-                reject_reason = "exit_tick_not_found"
+                reject_reason = ScalpingRejectReason.EXIT_TICK_NOT_FOUND.value
         if reject_reason:
             if execution_config.record_rejected_signals and (
                 execution_config.max_rejected_signals is None
@@ -163,9 +180,8 @@ def run_scalping_tick_backtest(
                         spread_mean=spread_mean,
                         spread_z=spread_z,
                         volatility=volatility,
-                        trades_today=trades_today,
-                        daily_pnl=daily_pnl,
-                        consecutive_losses=risk_snapshot.consecutive_losses,
+                        risk_snapshot_before=pre_risk_snapshot,
+                        risk_snapshot_after=pre_risk_snapshot,
                         labels=labels,
                         include_future_outcomes=include_future_outcomes,
                     )
@@ -181,8 +197,7 @@ def run_scalping_tick_backtest(
         )
         cash = float(risk_state.cash)
         equity = cash
-        risk_snapshot = risk_state.snapshot(ts)
-        daily_pnl = risk_snapshot.daily_pnl
+        post_risk_snapshot = risk_state.snapshot(ts)
         signal_rows.append(
             _signal_row(
                 signal_id=signal_id,
@@ -199,9 +214,8 @@ def run_scalping_tick_backtest(
                 spread_mean=spread_mean,
                 spread_z=spread_z,
                 volatility=volatility,
-                trades_today=risk_snapshot.trades_today,
-                daily_pnl=daily_pnl,
-                consecutive_losses=risk_snapshot.consecutive_losses,
+                risk_snapshot_before=pre_risk_snapshot,
+                risk_snapshot_after=post_risk_snapshot,
                 labels=labels,
                 include_future_outcomes=include_future_outcomes,
             )
@@ -303,9 +317,8 @@ def _signal_row(
     spread_mean: float,
     spread_z: float,
     volatility: float,
-    trades_today: int,
-    daily_pnl: float,
-    consecutive_losses: int,
+    risk_snapshot_before: ScalpingRiskSnapshot,
+    risk_snapshot_after: ScalpingRiskSnapshot,
     labels: pd.DataFrame | None,
     include_future_outcomes: bool,
 ) -> dict[str, object]:
@@ -327,9 +340,15 @@ def _signal_row(
         "decision": "enter" if accepted else "reject",
         "reject_reason": reject_reason if reject_reason else ("accepted" if accepted else ""),
         "explanation_ja": _reject_explanation(reject_reason, accepted=accepted),
-        "trades_today": int(trades_today),
-        "daily_pnl": float(daily_pnl),
-        "consecutive_losses": int(consecutive_losses),
+        "trades_today": int(risk_snapshot_before.trades_today),
+        "daily_pnl": float(risk_snapshot_before.daily_pnl),
+        "consecutive_losses": int(risk_snapshot_before.consecutive_losses),
+        "trades_today_before": int(risk_snapshot_before.trades_today),
+        "daily_pnl_before": float(risk_snapshot_before.daily_pnl),
+        "consecutive_losses_before": int(risk_snapshot_before.consecutive_losses),
+        "trades_today_after": int(risk_snapshot_after.trades_today),
+        "daily_pnl_after": float(risk_snapshot_after.daily_pnl),
+        "consecutive_losses_after": int(risk_snapshot_after.consecutive_losses),
     }
     if include_future_outcomes and labels is not None and not labels.empty:
         row.update(_future_label_outcome(labels, timestamp))

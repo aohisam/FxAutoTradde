@@ -19,6 +19,7 @@ from fxautotrade_lab.simulation.scalping_policy import (
     ScalpingExecutionPolicy,
     ScalpingRiskSnapshot,
     ScalpingRiskState,
+    ScalpingSignalContext,
     ScalpingSignalPolicy,
 )
 
@@ -177,9 +178,8 @@ class ScalpingRealtimePaperEngine:
         threshold = float(self.model_bundle.decision_threshold)
         signal_id = str(uuid4())
         risk_snapshot = self.risk_state.snapshot(latest_ts)
-        reject_reason = self.risk_state.entry_reject_reason(latest_ts)
-        if not reject_reason:
-            reject_reason = self.signal_policy.entry_reject_reason(
+        decision = self.signal_policy.decide_entry(
+            ScalpingSignalContext(
                 timestamp=latest_ts,
                 tick_index=tick_frame.index,
                 spread=spread,
@@ -188,15 +188,18 @@ class ScalpingRealtimePaperEngine:
                 volatility=volatility,
                 probability=probability,
                 threshold=threshold,
+                chosen_side=side,
+                risk_reject_reason=self.risk_state.entry_reject_reason(latest_ts),
             )
+        )
         self.last_signal_time = latest_ts
-        if reject_reason:
+        if not decision.accepted:
             return self._record_signal(
                 signal_id=signal_id,
                 timestamp=latest_ts,
                 side=side,
                 accepted=False,
-                reject_reason=reject_reason,
+                reject_reason=decision.reject_reason,
                 probability=probability,
                 long_probability=long_probability,
                 short_probability=short_probability,
@@ -205,7 +208,8 @@ class ScalpingRealtimePaperEngine:
                 spread_mean=spread_mean,
                 spread_z=spread_z,
                 volatility=volatility,
-                risk_snapshot=risk_snapshot,
+                risk_snapshot_before=risk_snapshot,
+                risk_snapshot_after=risk_snapshot,
             )
         self.pending_entry = ScalpingPendingEntry(
             signal_id=signal_id,
@@ -234,14 +238,29 @@ class ScalpingRealtimePaperEngine:
             return None
         price = ask if pending.side == "long" else bid
         quantity = self.execution_policy.quantity_for_price(price, cash=self.cash)
-        if quantity <= 0:
+        tick_index = pd.DatetimeIndex([pd.Timestamp(row["timestamp"]) for row in self.tick_buffer])
+        decision = self.signal_policy.decide_entry(
+            ScalpingSignalContext(
+                timestamp=pending.signal_time,
+                tick_index=tick_index,
+                spread=pending.spread,
+                spread_mean=pending.spread_mean,
+                spread_z=pending.spread_z,
+                volatility=pending.volatility,
+                probability=pending.probability,
+                threshold=pending.threshold,
+                chosen_side=pending.side,
+                quantity=quantity,
+            )
+        )
+        if not decision.accepted:
             self.pending_entry = None
             return self._record_signal(
                 signal_id=pending.signal_id,
                 timestamp=pending.signal_time,
                 side=pending.side,
                 accepted=False,
-                reject_reason="quantity_too_small",
+                reject_reason=decision.reject_reason,
                 probability=pending.probability,
                 long_probability=pending.long_probability,
                 short_probability=pending.short_probability,
@@ -250,7 +269,8 @@ class ScalpingRealtimePaperEngine:
                 spread_mean=pending.spread_mean,
                 spread_z=pending.spread_z,
                 volatility=pending.volatility,
-                risk_snapshot=pending.risk_snapshot,
+                risk_snapshot_before=pending.risk_snapshot,
+                risk_snapshot_after=pending.risk_snapshot,
             )
         slip = (self.training_config.round_trip_slippage_pips / 2.0) * self.pip_size
         entry_price = ask + slip if pending.side == "long" else bid - slip
@@ -278,7 +298,8 @@ class ScalpingRealtimePaperEngine:
             spread_mean=pending.spread_mean,
             spread_z=pending.spread_z,
             volatility=pending.volatility,
-            risk_snapshot=pending.risk_snapshot,
+            risk_snapshot_before=pending.risk_snapshot,
+            risk_snapshot_after=self.risk_state.snapshot(pending.signal_time),
         )
         self.position = ScalpingPaperPosition(
             position_id=str(uuid4()),
@@ -423,7 +444,8 @@ class ScalpingRealtimePaperEngine:
         spread_mean: float,
         spread_z: float,
         volatility: float,
-        risk_snapshot: ScalpingRiskSnapshot,
+        risk_snapshot_before: ScalpingRiskSnapshot,
+        risk_snapshot_after: ScalpingRiskSnapshot,
     ) -> dict[str, object] | None:
         if not accepted:
             if not self.execution_config.record_rejected_signals:
@@ -452,9 +474,15 @@ class ScalpingRealtimePaperEngine:
             "decision": "enter" if accepted else "reject",
             "reject_reason": reject_reason if reject_reason else ("accepted" if accepted else ""),
             "explanation_ja": _paper_signal_explanation(reject_reason, accepted=accepted),
-            "trades_today": int(risk_snapshot.trades_today),
-            "daily_pnl": float(risk_snapshot.daily_pnl),
-            "consecutive_losses": int(risk_snapshot.consecutive_losses),
+            "trades_today": int(risk_snapshot_before.trades_today),
+            "daily_pnl": float(risk_snapshot_before.daily_pnl),
+            "consecutive_losses": int(risk_snapshot_before.consecutive_losses),
+            "trades_today_before": int(risk_snapshot_before.trades_today),
+            "daily_pnl_before": float(risk_snapshot_before.daily_pnl),
+            "consecutive_losses_before": int(risk_snapshot_before.consecutive_losses),
+            "trades_today_after": int(risk_snapshot_after.trades_today),
+            "daily_pnl_after": float(risk_snapshot_after.daily_pnl),
+            "consecutive_losses_after": int(risk_snapshot_after.consecutive_losses),
         }
         self.signals.append(row)
         self.signals = self.signals[-1_000:]

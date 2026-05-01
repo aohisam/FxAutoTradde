@@ -118,10 +118,12 @@ def _typer_main() -> None:
         config: str = typer.Option(..., "--config", help="設定ファイル"),
         symbol: str = typer.Option("", "--symbol", help="通貨ペア。省略時は watchlist 先頭"),
         max_ticks: int = typer.Option(0, "--max-ticks", help="記録tick数。0 は停止するまで記録"),
+        output_path: str = typer.Option("", "--output-path", help="tick cache 出力先"),
     ) -> None:
         summary = LabApplication(Path(config)).record_gmo_scalping_ticks(
             symbol=symbol or None,
             max_ticks=max_ticks or None,
+            output_path=output_path or None,
         )
         typer.echo(f"GMO WebSocket tick 記録完了: {summary}")
 
@@ -211,6 +213,7 @@ def _argparse_main() -> None:
     record_gmo = subparsers.add_parser("record-gmo-ticks", parents=[config_parser])
     record_gmo.add_argument("--symbol", default="")
     record_gmo.add_argument("--max-ticks", type=int, default=0)
+    record_gmo.add_argument("--output-path", default="")
     subparsers.add_parser("scalping-outcomes-summary", parents=[config_parser])
     realtime = subparsers.add_parser("realtime-sim", parents=[config_parser])
     realtime.add_argument("--max-cycles", type=int, default=None)
@@ -270,6 +273,7 @@ def _argparse_main() -> None:
         summary = LabApplication(Path(args.config)).record_gmo_scalping_ticks(
             symbol=args.symbol or None,
             max_ticks=args.max_ticks or None,
+            output_path=args.output_path or None,
         )
         print(summary)
     elif args.command == "scalping-outcomes-summary":

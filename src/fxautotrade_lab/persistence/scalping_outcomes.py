@@ -55,9 +55,10 @@ class ScalpingOutcomeStore:
         trades: pd.DataFrame,
         model_path: str = "",
         model_promoted: bool = False,
+        source: str = "paper",
     ) -> dict[str, object]:
         return self._append(
-            source="paper",
+            source=source if source in {"paper", "live_sim"} else "paper",
             run_id=run_id,
             model_id=model_id,
             model_path=model_path,
@@ -81,15 +82,33 @@ class ScalpingOutcomeStore:
         outcomes = self.load_outcomes()
         signals = self.load_signals()
         trades = self.load_trades()
+        run_ids = set()
+        for frame in (signals, trades, outcomes):
+            if not frame.empty and "run_id" in frame.columns:
+                run_ids.update(str(run_id) for run_id in frame["run_id"].dropna().unique())
+        probability_deciles = _probability_decile_summary(outcomes)
+        sessions = _session_summary(outcomes)
+        reject_reasons = _column_summary(signals, "reject_reason")
+        model_ids = _column_summary(outcomes, "model_id")
+        paper_vs_backtest = _paper_vs_backtest_summary(outcomes)
         return {
+            "total_runs": int(len(run_ids)),
+            "total_signals": int(len(signals.index)),
+            "total_trades": int(len(trades.index)),
+            "total_outcomes": int(len(outcomes.index)),
             "signal_count": int(len(signals.index)),
             "trade_count": int(len(trades.index)),
             "outcome_count": int(len(outcomes.index)),
-            "by_probability_decile": _probability_decile_summary(outcomes),
-            "by_session": _session_summary(outcomes),
-            "by_reject_reason": _column_summary(signals, "reject_reason"),
-            "by_model_id": _column_summary(outcomes, "model_id"),
-            "paper_vs_backtest": _paper_vs_backtest_summary(outcomes),
+            "by_probability_decile": probability_deciles,
+            "by_session": sessions,
+            "by_reject_reason": reject_reasons,
+            "by_model_id": model_ids,
+            "paper_vs_backtest": paper_vs_backtest,
+            "probability_decile_summary": probability_deciles,
+            "session_summary": sessions,
+            "reject_reason_summary": reject_reasons,
+            "model_id_summary": model_ids,
+            "paper_vs_backtest_summary": paper_vs_backtest,
         }
 
     def _append(
@@ -120,6 +139,8 @@ class ScalpingOutcomeStore:
             source=source,
             run_id=run_id,
             model_id=model_id,
+            model_path=model_path,
+            model_promoted=model_promoted,
             symbol=symbol,
         )
         outcome_frame = _prepare_outcomes(signal_frame, trade_frame)
@@ -211,12 +232,16 @@ def _prepare_trades(
     source: str,
     run_id: str,
     model_id: str,
+    model_path: str,
+    model_promoted: bool,
     symbol: str,
 ) -> pd.DataFrame:
     frame = trades.copy().reset_index(drop=True)
     if frame.empty:
         frame = pd.DataFrame(columns=["trade_id", "signal_id", "symbol"])
     frame.insert(0, "source", source)
+    frame.insert(0, "model_promoted", bool(model_promoted))
+    frame.insert(0, "model_path", model_path)
     frame.insert(0, "model_id", model_id)
     frame.insert(0, "run_id", run_id)
     if "symbol" not in frame.columns:

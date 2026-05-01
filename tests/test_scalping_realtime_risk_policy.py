@@ -68,3 +68,10 @@ def test_realtime_paper_records_blackout_rejection() -> None:
     _feed(engine, start="2026-02-02T09:00:00+09:00")
 
     assert any(signal["reject_reason"] == "blackout_window:news" for signal in engine.signals)
+    rejected = next(
+        signal for signal in engine.signals if signal["reject_reason"] == "blackout_window:news"
+    )
+    assert rejected["trades_today_before"] == rejected["trades_today_after"]
+    assert rejected["daily_pnl_before"] == rejected["daily_pnl_after"]
+    assert rejected["consecutive_losses_before"] == rejected["consecutive_losses_after"]
+    assert rejected["trades_today"] == rejected["trades_today_before"]

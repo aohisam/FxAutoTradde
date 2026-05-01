@@ -67,4 +67,47 @@ def test_outcome_store_appends_backtest_and_paper_without_paper_future_outcomes(
     paper = outcomes.loc[outcomes["source"] == "paper"].iloc[0]
     assert "future_long_net_pips" not in paper.index or pd.isna(paper["future_long_net_pips"])
     assert summary["outcome_count"] == 2
+    assert summary["total_runs"] == 2
+    assert summary["total_signals"] == 2
+    assert summary["total_trades"] == 1
     assert summary["by_model_id"]
+
+
+def test_outcome_store_summarizes_multiple_paper_runs(tmp_path) -> None:
+    store = ScalpingOutcomeStore(tmp_path / "outcomes", storage_format="csv")
+    for index in range(2):
+        store.append_paper(
+            run_id=f"paper{index}",
+            model_id="model-paper",
+            model_path="latest.json",
+            model_promoted=True,
+            symbol="USD_JPY",
+            signals=pd.DataFrame(
+                {
+                    "signal_id": [f"s{index}"],
+                    "timestamp": [f"2026-02-02T09:0{index}:00+09:00"],
+                    "symbol": ["USD_JPY"],
+                    "probability": [0.6 + index * 0.1],
+                    "chosen_side": ["long"],
+                    "accepted": [True],
+                    "reject_reason": ["accepted"],
+                }
+            ),
+            trades=pd.DataFrame(
+                {
+                    "trade_id": [f"t{index}"],
+                    "signal_id": [f"s{index}"],
+                    "symbol": ["USD_JPY"],
+                    "net_pnl": [100.0 + index],
+                    "realized_net_pips": [1.0],
+                }
+            ),
+        )
+
+    outcomes = store.load_outcomes()
+    summary = store.load_summary()
+
+    assert "future_long_net_pips" not in outcomes.columns
+    assert summary["total_runs"] == 2
+    assert summary["total_trades"] == 2
+    assert summary["model_id_summary"][0]["model_id"] == "model-paper"

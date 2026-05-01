@@ -1144,6 +1144,7 @@ class LabApplication:
             "symbol": result.symbol,
             "source_path": str(result.source_path),
             "imported_rows": result.imported_rows,
+            "cache_dir": str(tick_cache.cache_dir),
             "dropped_rows": result.dropped_rows,
             "duplicate_timestamps": result.duplicate_timestamps,
             "crossed_quotes": result.crossed_quotes,
@@ -1229,6 +1230,9 @@ class LabApplication:
             "latest_model_path": str(result.latest_model_path or latest_model_path),
             "promoted_to_latest": bool(
                 result.model_bundle.metadata.get("promoted_to_latest", False)
+            ),
+            "promotion_gate_passed": bool(
+                result.model_bundle.metadata.get("promotion_gate_passed", False)
             ),
             "promotion_reject_reason_ja": str(
                 result.model_bundle.metadata.get("promotion_reject_reason_ja", "")
@@ -1317,6 +1321,7 @@ class LabApplication:
             }
         else:
             snapshot["outcome_store_summary"] = {"enabled": False}
+        snapshot["model_path"] = str(model_path)
         snapshot["observed_ticks"] = observed_ticks
         snapshot["run_id"] = paper_run_id
         snapshot["model_id"] = model_id
@@ -1340,14 +1345,20 @@ class LabApplication:
         *,
         symbol: str | None = None,
         max_ticks: int | None = None,
+        output_path: str | Path | None = None,
     ) -> dict[str, object]:
         normalized_symbol = normalize_fx_symbol(symbol or self.config.watchlist.symbols[0])
-        tick_cache = ParquetTickCache(self.config.strategy.fx_scalping.tick_cache_dir)
-        return GmoPublicWebSocketTickRecorder(
+        tick_cache = ParquetTickCache(
+            Path(output_path)
+            if output_path is not None
+            else self.config.strategy.fx_scalping.tick_cache_dir
+        )
+        summary = GmoPublicWebSocketTickRecorder(
             self.env,
             tick_cache,
             symbol=normalized_symbol,
         ).run(max_ticks=max_ticks)
+        return {"cache_dir": str(tick_cache.cache_dir), **summary}
 
     def _scalping_window(
         self, *, start: str | None, end: str | None
