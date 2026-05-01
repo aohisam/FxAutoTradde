@@ -134,6 +134,8 @@ class ScalpingOutcomeStore:
             symbol=symbol,
             features=features,
         )
+        if source != "backtest":
+            signal_frame = _drop_future_columns(signal_frame)
         trade_frame = _prepare_trades(
             trades,
             source=source,
@@ -280,6 +282,11 @@ def _prepare_outcomes(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFra
         ]
         if column in signals.columns
     ]
+    signal_columns.extend(
+        column
+        for column in signals.columns
+        if str(column).startswith("future_") and column not in signal_columns
+    )
     base = signals[signal_columns].copy()
     if trades.empty or "signal_id" not in trades.columns or "signal_id" not in base.columns:
         return base
@@ -304,6 +311,13 @@ def _prepare_outcomes(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFra
         if column in trades.columns
     ]
     return base.merge(trades[trade_columns], on="signal_id", how="left")
+
+
+def _drop_future_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    future_columns = [column for column in frame.columns if str(column).startswith("future_")]
+    if not future_columns:
+        return frame
+    return frame.drop(columns=future_columns)
 
 
 def _probability_decile_summary(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -362,17 +376,40 @@ def _summary_row(frame: pd.DataFrame, key_name: str, key_value: object) -> dict[
         if "accepted" in frame.columns
         else pd.Series(False, index=frame.index)
     )
+    trade_mask = _trade_mask(frame, accepted)
     net_pnl = _numeric_column(frame, "net_pnl")
     net_pips = _numeric_column(frame, "realized_net_pips")
+    trade_net_pnl = net_pnl.loc[trade_mask] if len(trade_mask.index) else pd.Series(dtype="float64")
+    trade_net_pips = (
+        net_pips.loc[trade_mask] if len(trade_mask.index) else pd.Series(dtype="float64")
+    )
     return {
         key_name: key_value,
         "signals": int(len(frame.index)),
         "accepted": int(accepted.sum()) if len(accepted.index) else 0,
-        "trades": int(net_pnl.ne(0.0).sum()) if len(net_pnl.index) else 0,
+        "trades": int(trade_mask.sum()) if len(trade_mask.index) else 0,
         "net_pnl": float(net_pnl.sum()) if len(net_pnl.index) else 0.0,
-        "average_net_pips": float(net_pips.mean()) if len(net_pips.index) else 0.0,
-        "win_rate": float((net_pnl > 0.0).mean()) if len(net_pnl.index) else 0.0,
+        "average_net_pips": float(trade_net_pips.mean()) if len(trade_net_pips.index) else 0.0,
+        "win_rate": float((trade_net_pnl > 0.0).mean()) if len(trade_net_pnl.index) else 0.0,
     }
+
+
+def _trade_mask(frame: pd.DataFrame, accepted: pd.Series) -> pd.Series:
+    if frame.empty:
+        return pd.Series(False, index=frame.index)
+    if "trade_id" in frame.columns:
+        trade_id = frame["trade_id"]
+        return trade_id.notna() & ~trade_id.astype("string").str.strip().str.lower().isin(
+            {"", "nan", "none", "<na>"}
+        )
+    if "entry_time" in frame.columns and "exit_time" in frame.columns:
+        entry = frame["entry_time"]
+        exit_ = frame["exit_time"]
+        return entry.notna() & exit_.notna()
+    if "accepted" in frame.columns:
+        return accepted.astype(bool)
+    net_pnl = _numeric_column(frame, "net_pnl")
+    return net_pnl.ne(0.0)
 
 
 def _numeric_column(frame: pd.DataFrame, column: str) -> pd.Series:

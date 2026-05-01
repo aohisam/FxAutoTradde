@@ -76,6 +76,9 @@ class ScalpingRealtimePaperEngine:
     events: list[dict[str, object]] = field(default_factory=list, init=False)
     trades: list[dict[str, object]] = field(default_factory=list, init=False)
     signals: list[dict[str, object]] = field(default_factory=list, init=False)
+    all_events: list[dict[str, object]] = field(default_factory=list, init=False)
+    all_trades: list[dict[str, object]] = field(default_factory=list, init=False)
+    all_signals: list[dict[str, object]] = field(default_factory=list, init=False)
     risk_state: ScalpingRiskState = field(init=False)
     signal_policy: ScalpingSignalPolicy = field(init=False)
     execution_policy: ScalpingExecutionPolicy = field(init=False)
@@ -132,9 +135,18 @@ class ScalpingRealtimePaperEngine:
                     emitted.append(entry_event)
         self.events.extend(emitted)
         self.events = self.events[-500:]
+        self.all_events.extend(emitted)
         return emitted
 
-    def snapshot(self) -> dict[str, object]:
+    def snapshot(self, *, include_history: bool = False) -> dict[str, object]:
+        if include_history:
+            events = list(self.all_events)
+            signals = list(self.all_signals)
+            trades = list(self.all_trades)
+        else:
+            events = list(self.events[-100:])
+            signals = list(self.signals[-500:])
+            trades = list(self.trades[-100:])
         return {
             "symbol": self.symbol,
             "cash": self.cash,
@@ -142,10 +154,13 @@ class ScalpingRealtimePaperEngine:
             "pending_entry": (
                 self.pending_entry.__dict__ if self.pending_entry is not None else None
             ),
-            "events": list(self.events[-100:]),
-            "signals": list(self.signals[-500:]),
-            "trades": list(self.trades[-100:]),
+            "events": events,
+            "signals": signals,
+            "trades": trades,
         }
+
+    def full_history(self) -> dict[str, object]:
+        return self.snapshot(include_history=True)
 
     def _maybe_create_pending_entry(self) -> dict[str, object] | None:
         ticks = pd.DataFrame(self.tick_buffer).set_index("timestamp")
@@ -387,6 +402,8 @@ class ScalpingRealtimePaperEngine:
             pnl=pnl,
         )
         self.cash = float(self.risk_state.cash)
+        post_risk_snapshot = self.risk_state.snapshot(position.signal_time)
+        self._update_signal_risk_after(position.signal_id, post_risk_snapshot)
         trade = {
             "trade_id": str(uuid4()),
             "position_id": position.position_id,
@@ -413,6 +430,7 @@ class ScalpingRealtimePaperEngine:
         }
         self.trades.append(trade)
         self.trades = self.trades[-500:]
+        self.all_trades.append(trade)
         self.position = None
         return {
             "event": "paper_exit",
@@ -486,6 +504,7 @@ class ScalpingRealtimePaperEngine:
         }
         self.signals.append(row)
         self.signals = self.signals[-1_000:]
+        self.all_signals.append(row)
         if accepted:
             return None
         return {
@@ -497,6 +516,18 @@ class ScalpingRealtimePaperEngine:
             "probability": probability,
             "message_ja": row["explanation_ja"],
         }
+
+    def _update_signal_risk_after(
+        self,
+        signal_id: str,
+        risk_snapshot_after: ScalpingRiskSnapshot,
+    ) -> None:
+        for row in self.all_signals:
+            if row.get("signal_id") == signal_id:
+                row["trades_today_after"] = int(risk_snapshot_after.trades_today)
+                row["daily_pnl_after"] = float(risk_snapshot_after.daily_pnl)
+                row["consecutive_losses_after"] = int(risk_snapshot_after.consecutive_losses)
+                break
 
 
 def _tokyo(value: pd.Timestamp) -> pd.Timestamp:

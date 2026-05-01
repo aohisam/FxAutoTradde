@@ -1294,6 +1294,9 @@ class LabApplication:
             if observed_ticks < max_ticks and poll_seconds > 0:
                 sleep(float(poll_seconds))
         snapshot = engine.snapshot()
+        persistence_snapshot = (
+            engine.full_history() if hasattr(engine, "full_history") else snapshot
+        )
         paper_run_id = datetime.now(tz=ASIA_TOKYO).strftime("%Y%m%d_%H%M%S_scalping_paper")
         model_id = str(
             model_bundle.metadata.get("model_id")
@@ -1311,8 +1314,8 @@ class LabApplication:
                 model_path=str(model_path),
                 model_promoted=bool(model_bundle.metadata.get("promoted_to_latest", False)),
                 symbol=normalized_symbol,
-                signals=pd.DataFrame(snapshot.get("signals", [])),
-                trades=pd.DataFrame(snapshot.get("trades", [])),
+                signals=pd.DataFrame(persistence_snapshot.get("signals", [])),
+                trades=pd.DataFrame(persistence_snapshot.get("trades", [])),
             )
             snapshot["outcome_store_summary"] = {
                 "enabled": True,

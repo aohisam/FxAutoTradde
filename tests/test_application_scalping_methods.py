@@ -190,6 +190,79 @@ def test_scalping_realtime_sim_uses_latest_paper_engine_and_appends_outcomes(
     assert result["trades"] == []
 
 
+def test_scalping_realtime_sim_persists_full_history_not_recent_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = _write_scalping_config(tmp_path)
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    payload["strategy"]["fx_scalping"]["outcome_store_enabled"] = True
+    payload["strategy"]["fx_scalping"]["outcome_store_dir"] = str(tmp_path / "paper_outcomes")
+    payload["strategy"]["fx_scalping"]["outcome_store_format"] = "csv"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    latest_path = tmp_path / "models" / "latest_scalping_model.json"
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_path.write_text("{}", encoding="utf-8")
+    bundle = constant_bundle()
+    bundle.metadata.update({"promoted_to_latest": True, "model_id": "approved_model"})
+
+    class FakeClient:
+        def __init__(self, env) -> None:  # noqa: ANN001
+            assert env.live_trading_enabled is False
+
+        def fetch_ticker_quotes(self) -> dict[str, object]:
+            return {
+                "USD_JPY": SimpleNamespace(
+                    timestamp=pd.Timestamp("2026-02-02T09:00:00+09:00"),
+                    bid=150.0,
+                    ask=150.001,
+                )
+            }
+
+    class FakePaperEngine:
+        def __init__(self, **kwargs: object) -> None:
+            self.symbol = str(kwargs["symbol"])
+            self.full_signals = [
+                {
+                    "signal_id": f"paper-s{index}",
+                    "timestamp": "2026-02-02T09:00:00+09:00",
+                    "symbol": self.symbol,
+                    "probability": 0.7,
+                    "chosen_side": "long",
+                    "accepted": False,
+                    "reject_reason": "threshold_not_met",
+                }
+                for index in range(1_005)
+            ]
+
+        def on_tick(self, **kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "symbol": self.symbol,
+                "events": [],
+                "signals": self.full_signals[-500:],
+                "trades": [],
+            }
+
+        def full_history(self) -> dict[str, object]:
+            return {"symbol": self.symbol, "events": [], "signals": self.full_signals, "trades": []}
+
+    monkeypatch.setattr(application_module, "load_scalping_model_bundle", lambda *a, **k: bundle)
+    monkeypatch.setattr(application_module, "GmoForexPublicClient", FakeClient)
+    monkeypatch.setattr(application_module, "ScalpingRealtimePaperEngine", FakePaperEngine)
+
+    result = LabApplication(config_path).run_scalping_realtime_sim(
+        symbol="USD_JPY",
+        max_ticks=1,
+        poll_seconds=0,
+    )
+
+    assert len(result["signals"]) == 500
+    assert result["outcome_store_summary"]["signals"] == 1_005
+
+
 def test_realtime_sim_does_not_use_candidate_without_latest(tmp_path: Path) -> None:
     config_path = _write_scalping_config(tmp_path)
     candidate_dir = tmp_path / "models" / "candidates"

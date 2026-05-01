@@ -349,6 +349,7 @@ def run_scalping_pipeline(
             "approved_model_path": str(approved_model_path or ""),
             "latest_model_path": str(latest_model_path),
             "previous_latest_preserved": previous_latest_preserved,
+            "research_safety_warnings_ja": scalping_cfg.research_safety_warnings_ja(),
         }
     )
     backtest.model_summary["metadata"] = dict(model_bundle.metadata)
@@ -1183,6 +1184,9 @@ def export_scalping_pipeline_result(result: ScalpingPipelineResult, output_dir: 
         ),
         "promotion_metrics": _jsonable(result.promotion_metrics),
         "outcome_store_summary": _jsonable(result.outcome_store_summary),
+        "research_safety_warnings_ja": list(
+            result.backtest.metrics.get("research_safety_warnings_ja", [])
+        ),
         "probability_calibration": _jsonable(result.probability_calibration.to_summary()),
         "brier_score": result.probability_calibration.metrics.get("brier_score"),
         "calibration_sample_count": result.probability_calibration.metrics.get(

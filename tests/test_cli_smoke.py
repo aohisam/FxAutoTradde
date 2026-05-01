@@ -93,6 +93,7 @@ def test_cli_scalping_help_commands_smoke():
         ["scalping-backtest"],
         ["scalping-realtime-sim"],
         ["record-gmo-ticks"],
+        ["scalping-outcomes-summary"],
     ]
     for command in commands:
         result = subprocess.run(
@@ -130,6 +131,10 @@ def test_cli_scalping_argparse_dispatches_application_methods(monkeypatch, capsy
 
         def record_gmo_scalping_ticks(self, **kwargs: object) -> dict[str, object]:
             calls.append(("record_gmo_scalping_ticks", {"config": self.config, **kwargs}))
+            return {"ok": True}
+
+        def load_scalping_outcome_summary(self) -> dict[str, object]:
+            calls.append(("load_scalping_outcome_summary", {"config": self.config}))
             return {"ok": True}
 
     monkeypatch.setattr(cli_main, "LabApplication", FakeLabApplication)
@@ -214,6 +219,18 @@ def test_cli_scalping_argparse_dispatches_application_methods(monkeypatch, capsy
                 "symbol": "AUD_JPY",
                 "max_ticks": 2,
                 "output_path": None,
+            },
+        ),
+        (
+            [
+                "fxautotrade",
+                "scalping-outcomes-summary",
+                "--config",
+                str(config_path),
+            ],
+            "load_scalping_outcome_summary",
+            {
+                "config": config_path,
             },
         ),
     ]

@@ -239,7 +239,7 @@ class FxScalpingConfig(BaseModel):
     fail_closed_on_bad_validation: bool = True
     threshold_selection_method: str = "replay"
     model_promotion_enabled: bool = True
-    candidate_model_dir: Path = Path("models/scalping/candidates")
+    candidate_model_dir: Path = Path("models/fx_scalping/candidates")
     require_validation_gate_passed_for_promotion: bool = True
     min_test_profit_factor: float = 1.05
     min_test_trade_count: int = 100
@@ -306,6 +306,31 @@ class FxScalpingConfig(BaseModel):
                 "スキャルピング OutcomeStore の形式は 'parquet' または 'csv' を指定してください。"
             )
         return normalized
+
+    def research_safety_warnings_ja(self) -> list[str]:
+        warnings: list[str] = []
+        if not self.walk_forward_enabled:
+            warnings.append("walk_forward_enabled=false のため研究用途では検証が弱くなります。")
+        if int(self.min_validation_trade_count) < 50:
+            warnings.append("min_validation_trade_count が小さいため閾値選択が過学習しやすいです。")
+        if float(self.min_validation_profit_factor) < 1.05:
+            warnings.append(
+                "min_validation_profit_factor が 1.05 未満のため検証基準が緩くなります。"
+            )
+        spread_multipliers = [float(value) for value in self.spread_stress_multipliers]
+        if max(spread_multipliers or [0.0]) < 1.5:
+            warnings.append("spread stress が1.5倍未満のためスプレッド悪化耐性の確認が弱いです。")
+        latency_values = [int(value) for value in self.latency_ms_grid]
+        if 500 not in latency_values:
+            warnings.append("latency_ms_grid に500msがないため遅延耐性の確認が弱いです。")
+        if self.threshold_selection_method != "replay":
+            warnings.append(
+                "threshold_selection_method が replay ではないため"
+                "実売買条件との差が残りやすいです。"
+            )
+        if not self.model_promotion_enabled:
+            warnings.append("model_promotion_enabled=false のためlatest昇格ゲートが無効です。")
+        return warnings
 
 
 class FxBreakoutPullbackConfig(BaseModel):

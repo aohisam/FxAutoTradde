@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fxautotrade_lab.config.loader import load_app_config
+from fxautotrade_lab.config.models import FxScalpingConfig
 from tests.conftest import write_config
 
 
@@ -30,3 +31,33 @@ def test_load_scalping_strict_validation_config() -> None:
     assert scalping.record_rejected_signals is True
     assert scalping.blackout_windows_jst[0].start == "05:55"
     assert config.automation.enabled is False
+
+
+def test_scalping_config_research_safety_warnings_are_japanese() -> None:
+    loose = FxScalpingConfig(
+        walk_forward_enabled=False,
+        min_validation_profit_factor=1.0,
+        min_validation_trade_count=1,
+        spread_stress_multipliers=[1.0],
+        latency_ms_grid=[250],
+        threshold_selection_method="label",
+        model_promotion_enabled=False,
+    )
+    warnings = loose.research_safety_warnings_ja()
+
+    assert any("walk_forward_enabled=false" in warning for warning in warnings)
+    assert any("min_validation_trade_count" in warning for warning in warnings)
+    assert any("spread stress" in warning for warning in warnings)
+    assert any("500ms" in warning for warning in warnings)
+
+    safer = FxScalpingConfig(
+        walk_forward_enabled=True,
+        min_validation_profit_factor=1.05,
+        min_validation_trade_count=50,
+        spread_stress_multipliers=[1.0, 1.2, 1.5, 2.0],
+        latency_ms_grid=[0, 250, 500, 1000],
+        threshold_selection_method="replay",
+        model_promotion_enabled=True,
+    )
+    assert safer.research_safety_warnings_ja() == []
+    assert FxScalpingConfig().candidate_model_dir.as_posix() == "models/fx_scalping/candidates"
