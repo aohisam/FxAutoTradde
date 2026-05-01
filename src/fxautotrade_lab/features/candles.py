@@ -27,15 +27,21 @@ def hammer(frame: pd.DataFrame) -> pd.Series:
     rng = candle_range(frame)
     lower_shadow = frame[["open", "close"]].min(axis=1) - frame["low"]
     upper_shadow = frame["high"] - frame[["open", "close"]].max(axis=1)
-    return ((lower_shadow >= body * 2.2) & (upper_shadow <= body * 0.8) & (body / rng < 0.45)).astype(float)
+    return (
+        (lower_shadow >= body * 2.2) & (upper_shadow <= body * 0.8) & (body / rng < 0.45)
+    ).astype(float)
 
 
 def inside_bar(frame: pd.DataFrame) -> pd.Series:
-    return ((frame["high"] < frame["high"].shift(1)) & (frame["low"] > frame["low"].shift(1))).astype(float)
+    return (
+        (frame["high"] < frame["high"].shift(1)) & (frame["low"] > frame["low"].shift(1))
+    ).astype(float)
 
 
 def inside_bar_breakout(frame: pd.DataFrame) -> pd.Series:
-    return ((inside_bar(frame).shift(1) > 0) & (frame["close"] > frame["high"].shift(1))).astype(float)
+    return ((inside_bar(frame).shift(1) > 0) & (frame["close"] > frame["high"].shift(1))).astype(
+        float
+    )
 
 
 def doji(frame: pd.DataFrame) -> pd.Series:

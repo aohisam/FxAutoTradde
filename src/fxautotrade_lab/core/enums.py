@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class BrokerMode(str, Enum):
+class BrokerMode(StrEnum):
     LOCAL_SIM = "local_sim"
     GMO_SIM = "gmo_sim"
 
 
-class TimeFrame(str, Enum):
+class TimeFrame(StrEnum):
     MIN_1 = "1Min"
     MIN_5 = "5Min"
     MIN_10 = "10Min"
@@ -25,25 +25,25 @@ class TimeFrame(str, Enum):
     MONTH_1 = "1Month"
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderSizingMode(str, Enum):
+class OrderSizingMode(StrEnum):
     FIXED_AMOUNT = "fixed_amount"
     EQUITY_FRACTION = "equity_fraction"
     RISK_BASED = "risk_based"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "pending"
     FILLED = "filled"
     CANCELLED = "cancelled"
     REJECTED = "rejected"
 
 
-class AutomationStatus(str, Enum):
+class AutomationStatus(StrEnum):
     STOPPED = "stopped"
     STARTING = "starting"
     RUNNING = "running"
@@ -51,14 +51,14 @@ class AutomationStatus(str, Enum):
     ERROR = "error"
 
 
-class SignalAction(str, Enum):
+class SignalAction(StrEnum):
     BUY = "buy"
     SELL = "sell"
     HOLD = "hold"
     SKIP = "skip"
 
 
-class RunKind(str, Enum):
+class RunKind(StrEnum):
     BACKTEST = "backtest"
     AUTOMATION = "automation"
     DEMO = "demo"

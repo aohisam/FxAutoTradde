@@ -20,7 +20,9 @@ def set_button_role(button, role: str) -> None:  # pragma: no cover - UI helper
     _refresh_widget_style(button)
 
 
-def set_button_enabled(button, enabled: bool, *, busy: bool = False) -> None:  # pragma: no cover - UI helper
+def set_button_enabled(
+    button, enabled: bool, *, busy: bool = False
+) -> None:  # pragma: no cover - UI helper
     from PySide6.QtCore import Qt
 
     button.setEnabled(enabled)

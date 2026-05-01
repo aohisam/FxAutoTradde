@@ -8,18 +8,17 @@ from uuid import uuid4
 
 import pandas as pd
 
-from fxautotrade_lab.backtest.metrics import compute_drawdown, compute_metrics
 from fxautotrade_lab.backtest.fx_backtest import run_fx_backtest
+from fxautotrade_lab.backtest.metrics import compute_drawdown, compute_metrics
 from fxautotrade_lab.backtest.walk_forward import rolling_walk_forward, split_in_out_sample
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
-from fxautotrade_lab.core.enums import BrokerMode
 from fxautotrade_lab.core.models import BacktestResult
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
 from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
-from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
 from fxautotrade_lab.simulation.engine import PortfolioSimulator
+from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 from fxautotrade_lab.strategies.registry import create_strategy
 
@@ -76,13 +75,21 @@ class BacktestRunner:
         signal_logs: list[pd.DataFrame] = []
         chart_frames: dict[str, dict[str, pd.DataFrame]] = {}
         benchmark_curve = None
-        benchmark_symbol = self.config.watchlist.benchmark_symbols[0] if self.config.watchlist.benchmark_symbols else None
+        benchmark_symbol = (
+            self.config.watchlist.benchmark_symbols[0]
+            if self.config.watchlist.benchmark_symbols
+            else None
+        )
         benchmark_entry_frame = None
         if benchmark_symbol:
             benchmark_frames = bundle.benchmarks.get(benchmark_symbol, {})
             if benchmark_frames:
                 benchmark_entry_frame = benchmark_frames[self.config.strategy.entry_timeframe]
-        sector_symbol = self.config.watchlist.sector_symbols[0] if self.config.watchlist.sector_symbols else None
+        sector_symbol = (
+            self.config.watchlist.sector_symbols[0]
+            if self.config.watchlist.sector_symbols
+            else None
+        )
         sector_frames = bundle.sectors.get(sector_symbol, {}) if sector_symbol else None
 
         _emit_progress(
@@ -111,7 +118,9 @@ class BacktestRunner:
                 feature_set = build_multi_timeframe_feature_set(
                     symbol=symbol,
                     bars_by_timeframe=frames,
-                    benchmark_bars=bundle.benchmarks.get(benchmark_symbol, {}) if benchmark_symbol else None,
+                    benchmark_bars=(
+                        bundle.benchmarks.get(benchmark_symbol, {}) if benchmark_symbol else None
+                    ),
                     sector_bars=sector_frames,
                     config=self.config,
                 )
@@ -151,13 +160,21 @@ class BacktestRunner:
         equity_curve = sim_outputs["equity_curve"]
         if not equity_curve.empty:
             equity_curve["drawdown"] = compute_drawdown(equity_curve["equity"])
-        drawdown_curve = equity_curve[["drawdown"]].copy() if "drawdown" in equity_curve.columns else pd.DataFrame()
+        drawdown_curve = (
+            equity_curve[["drawdown"]].copy()
+            if "drawdown" in equity_curve.columns
+            else pd.DataFrame()
+        )
         signals_frame = (
             pd.concat(signal_logs, ignore_index=True).sort_values("timestamp")
             if signal_logs
             else pd.DataFrame()
         )
-        if benchmark_entry_frame is not None and not benchmark_entry_frame.empty and not equity_curve.empty:
+        if (
+            benchmark_entry_frame is not None
+            and not benchmark_entry_frame.empty
+            and not equity_curve.empty
+        ):
             benchmark_prices = benchmark_entry_frame.reindex(equity_curve.index, method="ffill")
             benchmark_curve = pd.DataFrame(
                 {

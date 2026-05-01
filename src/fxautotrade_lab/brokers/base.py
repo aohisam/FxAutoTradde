@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fxautotrade_lab.core.enums import BrokerMode, OrderSide
 
@@ -16,7 +15,9 @@ class BaseBroker(ABC):
     mode: BrokerMode
 
     @abstractmethod
-    def submit_market_order(self, symbol: str, qty: int, side: OrderSide, reason: str) -> dict[str, Any]:
+    def submit_market_order(
+        self, symbol: str, qty: int, side: OrderSide, reason: str
+    ) -> dict[str, Any]:
         """Submit market order."""
 
     @abstractmethod
@@ -55,10 +56,11 @@ class BaseBroker(ABC):
     def update_market_data(
         self,
         prices: dict[str, float],
-        timestamp: "pd.Timestamp | None" = None,
+        timestamp: pd.Timestamp | None = None,
     ) -> None:
         """Apply the latest observable market prices to the broker state."""
         _ = prices, timestamp
 
     def shutdown(self) -> None:
         """Close broker resources."""
+        return None

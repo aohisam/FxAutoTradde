@@ -26,9 +26,9 @@ class MultiTimeframePatternScoringStrategy(BaseStrategy):
             + (working["benchmark_trend"] > 0).astype(float) * 0.1
         )
         pullback_continuation = (
-            working["pullback_depth_atr"].clip(lower=-0.5, upper=2.0).map(
-                lambda x: max(0.0, min(1.0, 1 - abs(x - 0.7) / 1.5))
-            )
+            working["pullback_depth_atr"]
+            .clip(lower=-0.5, upper=2.0)
+            .map(lambda x: max(0.0, min(1.0, 1 - abs(x - 0.7) / 1.5)))
             * 0.35
             + (working["entry_rsi_14"] > 48).astype(float) * 0.2
             + working["continuation_ready"].astype(float) * 0.25

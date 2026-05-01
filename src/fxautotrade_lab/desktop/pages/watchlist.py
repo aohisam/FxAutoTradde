@@ -85,9 +85,9 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
         QMessageBox.warning(page, "警告", message)
 
     sections = [
-        ("symbols",    "運用通貨ペア", "info",    "primary", "例: USD_JPY"),
-        ("benchmarks", "比較通貨ペア", "neutral", "",        "例: USD_CHF"),
-        ("sectors",    "補助通貨ペア", "neutral", "",        "例: NZD_JPY"),
+        ("symbols", "運用通貨ペア", "info", "primary", "例: USD_JPY"),
+        ("benchmarks", "比較通貨ペア", "neutral", "", "例: USD_CHF"),
+        ("sectors", "補助通貨ペア", "neutral", "", "例: NZD_JPY"),
     ]
 
     for column, (key, caption, chip_tone, add_variant, placeholder) in enumerate(sections):
@@ -114,9 +114,9 @@ def build_watchlist_page(app_state, log_message):  # pragma: no cover - UI helpe
     summary_values: dict[str, QLabel] = {}
     cells = [
         ("operated", "運用通貨ペア"),
-        ("bench",    "比較通貨ペア"),
-        ("sector",   "補助通貨ペア"),
-        ("saved",    "最終保存"),
+        ("bench", "比較通貨ペア"),
+        ("sector", "補助通貨ペア"),
+        ("saved", "最終保存"),
     ]
     for index, (key, eyebrow_text) in enumerate(cells):
         summary_grid.setColumnStretch(index, 1)

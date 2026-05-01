@@ -39,6 +39,9 @@ class ScalpingTrainingConfig:
     min_validation_net_pips: float = 0.0
     min_validation_profit_factor: float = 1.0
     min_validation_trade_count: int = 1
+    max_validation_drawdown_amount: float | None = None
+    max_validation_daily_loss_amount: float | None = None
+    max_validation_drawdown_pips: float | None = None
     fail_closed_on_bad_validation: bool = True
     threshold_selection_method: str = "replay"
     threshold_grid: tuple[float, ...] = (
@@ -462,10 +465,18 @@ def fit_scalping_model(
     selected_threshold_before_gate = float(threshold)
     validation_gate_passed = True
     validation_gate_warning = ""
+    validation_drawdown_gate_passed = True
+    validation_daily_loss_gate_passed = True
+    validation_drawdown_warning_ja = ""
     if threshold_source == "validation":
         validation_gate_passed, validation_gate_warning = _evaluate_validation_gate(
             selected_metrics, config=config
         )
+        (
+            validation_drawdown_gate_passed,
+            validation_daily_loss_gate_passed,
+            validation_drawdown_warning_ja,
+        ) = _validation_risk_gate_detail(selected_metrics, config=config)
         if not validation_gate_passed and config.fail_closed_on_bad_validation:
             threshold = 1.01
 
@@ -473,9 +484,14 @@ def fit_scalping_model(
         "train_sample_count": int(len(training_features.index)),
         "validation_sample_count": validation_sample_count,
         "threshold_selected_on": threshold_source,
+        "threshold_grid": list(config.threshold_grid),
         "selected_threshold": float(threshold),
         "selected_threshold_before_validation_gate": selected_threshold_before_gate,
         "validation_gate_passed": bool(validation_gate_passed),
+        "validation_drawdown_gate_passed": bool(validation_drawdown_gate_passed),
+        "validation_daily_loss_gate_passed": bool(validation_daily_loss_gate_passed),
+        "validation_drawdown_warning_ja": validation_drawdown_warning_ja,
+        "selected_threshold_validation_metrics": dict(selected_metrics),
         "validation_selected_count": (
             int(selected_metrics.get("selected_count", 0))
             if threshold_source == "validation"
@@ -513,7 +529,12 @@ def fit_scalping_model(
     bundle_metadata = {
         **dict(metadata or {}),
         "threshold_selected_on": threshold_source,
+        "threshold_grid": list(config.threshold_grid),
         "validation_gate_passed": bool(validation_gate_passed),
+        "validation_drawdown_gate_passed": bool(validation_drawdown_gate_passed),
+        "validation_daily_loss_gate_passed": bool(validation_daily_loss_gate_passed),
+        "validation_drawdown_warning_ja": validation_drawdown_warning_ja,
+        "selected_threshold_validation_metrics": dict(selected_metrics),
     }
     if validation_gate_warning:
         bundle_metadata["warning_ja"] = validation_gate_warning
@@ -550,6 +571,9 @@ def _evaluate_validation_gate(
             "validation profit factor が基準未満です"
             f"({selected_profit_factor:.3f} < {float(config.min_validation_profit_factor):.3f})"
         )
+    _, _, risk_warning = _validation_risk_gate_detail(selected_metrics, config=config)
+    if risk_warning:
+        failures.append(risk_warning)
     if not failures:
         return True, ""
     warning = "validation gate未達: " + " / ".join(failures)
@@ -558,6 +582,48 @@ def _evaluate_validation_gate(
     else:
         warning += "。fail_closed_on_bad_validation=false のため閾値は維持します。"
     return False, warning
+
+
+def _validation_risk_gate_detail(
+    selected_metrics: dict[str, float | int],
+    *,
+    config: ScalpingTrainingConfig,
+) -> tuple[bool, bool, str]:
+    drawdown_failures: list[str] = []
+    daily_loss_failures: list[str] = []
+    max_drawdown_amount = config.max_validation_drawdown_amount
+    if max_drawdown_amount is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_max_drawdown_amount", 0.0))
+        limit = float(max_drawdown_amount)
+        if selected > limit:
+            drawdown_failures.append(
+                "validation max drawdown amount が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    max_drawdown_pips = config.max_validation_drawdown_pips
+    if max_drawdown_pips is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_max_drawdown_pips", 0.0))
+        limit = float(max_drawdown_pips)
+        if selected > limit:
+            drawdown_failures.append(
+                "validation max drawdown pips が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    max_daily_loss = config.max_validation_daily_loss_amount
+    if max_daily_loss is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_daily_max_loss", 0.0))
+        limit = float(max_daily_loss)
+        if selected > limit:
+            daily_loss_failures.append(
+                "validation daily max loss が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    failures = drawdown_failures + daily_loss_failures
+    return not drawdown_failures, not daily_loss_failures, " / ".join(failures)
+
+
+def _loss_magnitude(value: object) -> float:
+    try:
+        return abs(float(value))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def select_decision_threshold(
@@ -575,6 +641,8 @@ def select_decision_threshold(
         "selected_net_pips": 0.0,
         "selected_mean_pips": 0.0,
         "selected_profit_factor": 0.0,
+        "selected_max_drawdown_amount": 0.0,
+        "selected_daily_max_loss": 0.0,
         "selected_max_drawdown_pips": 0.0,
         "objective": float("-inf"),
     }
@@ -603,6 +671,8 @@ def select_decision_threshold(
                 "selected_net_pips": total,
                 "selected_mean_pips": mean,
                 "selected_profit_factor": float(profit_factor),
+                "selected_max_drawdown_amount": 0.0,
+                "selected_daily_max_loss": 0.0,
                 "selected_max_drawdown_pips": max_drawdown,
                 "objective": float(objective),
             }

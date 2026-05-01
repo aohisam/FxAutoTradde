@@ -62,7 +62,11 @@ class StaticCsvEconomicEventProvider(BaseEconomicEventProvider):
             timestamps = timestamps.dt.tz_convert(ASIA_TOKYO)
         selected = frame.assign(timestamp=timestamps).dropna(subset=["timestamp"])
         selected["currency"] = selected["currency"].astype(str).str.upper()
-        importance = selected["importance"] if "importance" in selected.columns else pd.Series("high", index=selected.index)
+        importance = (
+            selected["importance"]
+            if "importance" in selected.columns
+            else pd.Series("high", index=selected.index)
+        )
         selected["importance"] = importance.astype(str).str.lower()
         mask = (
             selected["timestamp"].between(start, end, inclusive="both")

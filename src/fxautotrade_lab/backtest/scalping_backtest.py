@@ -93,8 +93,12 @@ def training_config_from_app(config: AppConfig) -> ScalpingTrainingConfig:
         min_validation_net_pips=float(scalping.min_validation_net_pips),
         min_validation_profit_factor=float(scalping.min_validation_profit_factor),
         min_validation_trade_count=int(scalping.min_validation_trade_count),
+        max_validation_drawdown_amount=scalping.max_validation_drawdown_amount,
+        max_validation_daily_loss_amount=scalping.max_validation_daily_loss_amount,
+        max_validation_drawdown_pips=scalping.max_validation_drawdown_pips,
         fail_closed_on_bad_validation=bool(scalping.fail_closed_on_bad_validation),
         threshold_selection_method=str(scalping.threshold_selection_method),
+        threshold_grid=tuple(float(value) for value in scalping.threshold_grid),
     )
 
 
@@ -523,6 +527,8 @@ def select_decision_threshold_by_replay(
         "selected_net_pips": 0.0,
         "selected_mean_pips": 0.0,
         "selected_profit_factor": 0.0,
+        "selected_max_drawdown_amount": 0.0,
+        "selected_daily_max_loss": 0.0,
         "selected_max_drawdown_pips": 0.0,
         "objective": float("-inf"),
     }
@@ -547,6 +553,8 @@ def select_decision_threshold_by_replay(
         )
         threshold_candidates.append(dict(metrics))
         if metrics["selected_count"] < int(training_config.min_threshold_trades):
+            continue
+        if not bool(metrics["validation_gate_passed"]):
             continue
         if float(metrics["objective"]) > float(best_metrics["objective"]):
             best_threshold = float(threshold)
@@ -821,6 +829,11 @@ def _apply_validation_threshold_selection(
         selected_metrics,
         config=training_config,
     )
+    (
+        validation_drawdown_gate_passed,
+        validation_daily_loss_gate_passed,
+        validation_drawdown_warning_ja,
+    ) = _validation_risk_gate_detail(selected_metrics, config=training_config)
     if not validation_gate_passed and training_config.fail_closed_on_bad_validation:
         threshold = 1.01
     combined_warning = gate_warning or warning
@@ -835,6 +848,9 @@ def _apply_validation_threshold_selection(
             "selected_threshold_validation_metrics": dict(selected_metrics),
             "threshold_candidates": threshold_candidates,
             "validation_gate_passed": bool(validation_gate_passed),
+            "validation_drawdown_gate_passed": bool(validation_drawdown_gate_passed),
+            "validation_daily_loss_gate_passed": bool(validation_daily_loss_gate_passed),
+            "validation_drawdown_warning_ja": validation_drawdown_warning_ja,
             "validation_sample_count": int(len(validation_features.index)),
             "validation_selected_count": int(selected_metrics.get("selected_count", 0)),
             "validation_net_pips": float(selected_metrics.get("selected_net_pips", 0.0)),
@@ -858,6 +874,9 @@ def _apply_validation_threshold_selection(
             "selected_threshold_validation_metrics": dict(selected_metrics),
             "threshold_candidates": threshold_candidates,
             "validation_gate_passed": bool(validation_gate_passed),
+            "validation_drawdown_gate_passed": bool(validation_drawdown_gate_passed),
+            "validation_daily_loss_gate_passed": bool(validation_daily_loss_gate_passed),
+            "validation_drawdown_warning_ja": validation_drawdown_warning_ja,
         }
     )
     if combined_warning:
@@ -894,6 +913,8 @@ def _select_decision_threshold_by_labels(
             "selected_net_pips": 0.0,
             "selected_mean_pips": 0.0,
             "selected_profit_factor": 0.0,
+            "selected_max_drawdown_amount": 0.0,
+            "selected_daily_max_loss": 0.0,
             "selected_max_drawdown_pips": 0.0,
             "objective": 0.0,
             "label_threshold_source": threshold_source,
@@ -931,6 +952,9 @@ def _validation_gate_status(
             "validation profit factor が基準未満です"
             f"({selected_profit_factor:.3f} < {float(config.min_validation_profit_factor):.3f})"
         )
+    _, _, risk_warning = _validation_risk_gate_detail(selected_metrics, config=config)
+    if risk_warning:
+        failures.append(risk_warning)
     if not failures:
         return True, ""
     warning = "validation gate未達: " + " / ".join(failures)
@@ -939,6 +963,48 @@ def _validation_gate_status(
     else:
         warning += "。fail_closed_on_bad_validation=false のため閾値は維持します。"
     return False, warning
+
+
+def _validation_risk_gate_detail(
+    selected_metrics: dict[str, object],
+    *,
+    config: ScalpingTrainingConfig,
+) -> tuple[bool, bool, str]:
+    drawdown_failures: list[str] = []
+    daily_loss_failures: list[str] = []
+    max_drawdown_amount = config.max_validation_drawdown_amount
+    if max_drawdown_amount is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_max_drawdown_amount", 0.0))
+        limit = float(max_drawdown_amount)
+        if selected > limit:
+            drawdown_failures.append(
+                "validation max drawdown amount が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    max_drawdown_pips = config.max_validation_drawdown_pips
+    if max_drawdown_pips is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_max_drawdown_pips", 0.0))
+        limit = float(max_drawdown_pips)
+        if selected > limit:
+            drawdown_failures.append(
+                "validation max drawdown pips が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    max_daily_loss = config.max_validation_daily_loss_amount
+    if max_daily_loss is not None:
+        selected = _loss_magnitude(selected_metrics.get("selected_daily_max_loss", 0.0))
+        limit = float(max_daily_loss)
+        if selected > limit:
+            daily_loss_failures.append(
+                "validation daily max loss が上限超過です" f"({selected:.3f} > {limit:.3f})"
+            )
+    failures = drawdown_failures + daily_loss_failures
+    return not drawdown_failures, not daily_loss_failures, " / ".join(failures)
+
+
+def _loss_magnitude(value: object) -> float:
+    try:
+        return abs(float(value))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _threshold_metrics_from_replay(
@@ -963,12 +1029,17 @@ def _threshold_metrics_from_replay(
     total = float(net_pips.sum()) if count else 0.0
     mean = float(net_pips.mean()) if count else 0.0
     objective = total + mean * count * 0.25 + min(profit_factor, 5.0) * 2.0 + max_drawdown * 0.5
+    metrics = replay.metrics if isinstance(replay.metrics, dict) else {}
+    max_drawdown_amount = _loss_magnitude(metrics.get("max_drawdown_amount", 0.0))
+    daily_max_loss = _loss_magnitude(metrics.get("daily_max_loss", 0.0))
     return {
         "candidate_count": int(len(validation_features.index)),
         "selected_count": count,
         "selected_net_pips": total,
         "selected_mean_pips": mean,
         "selected_profit_factor": float(profit_factor),
+        "selected_max_drawdown_amount": max_drawdown_amount,
+        "selected_daily_max_loss": daily_max_loss,
         "selected_max_drawdown_pips": max_drawdown,
         "objective": float(objective),
     }

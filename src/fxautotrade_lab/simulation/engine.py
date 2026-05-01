@@ -9,7 +9,7 @@ import pandas as pd
 
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.core.enums import BrokerMode, OrderSide, OrderStatus
-from fxautotrade_lab.core.models import FillRecord, OrderRecord, Position, TradeRecord
+from fxautotrade_lab.core.models import Position
 from fxautotrade_lab.execution.risk import RiskManager
 from fxautotrade_lab.execution.safety import DuplicateOrderGuard
 from fxautotrade_lab.simulation.fills import apply_fill_model
@@ -122,7 +122,9 @@ class PortfolioSimulator:
                         "bars_held": position.bars_held,
                     }
                 )
-        equity_curve = pd.DataFrame(equity_rows).set_index("timestamp") if equity_rows else pd.DataFrame()
+        equity_curve = (
+            pd.DataFrame(equity_rows).set_index("timestamp") if equity_rows else pd.DataFrame()
+        )
         orders = pd.DataFrame(order_records)
         fills = pd.DataFrame(fill_records)
         trades = pd.DataFrame(trade_records)
@@ -156,7 +158,9 @@ class PortfolioSimulator:
             if timestamp not in frame.index:
                 continue
             row = frame.loc[timestamp]
-            fill = apply_fill_model(float(row["open"]), pending.side, pending.quantity, self.config.risk)
+            fill = apply_fill_model(
+                float(row["open"]), pending.side, pending.quantity, self.config.risk
+            )
             order_id = str(uuid4())
             order_records.append(
                 {
@@ -195,7 +199,8 @@ class PortfolioSimulator:
                         entry_time=timestamp,
                         highest_price=fill.price,
                         stop_price=fill.price - atr_value * self.config.risk.atr_stop_multiple,
-                        trailing_stop_price=fill.price - atr_value * self.config.risk.trailing_stop_multiple,
+                        trailing_stop_price=fill.price
+                        - atr_value * self.config.risk.trailing_stop_multiple,
                         max_hold_bars=self.config.risk.max_hold_bars,
                         entry_reason=pending.reason,
                         entry_score=pending.score,
@@ -215,7 +220,8 @@ class PortfolioSimulator:
                             "entry_price": position.entry_price,
                             "exit_price": fill.price,
                             "gross_pnl": (fill.price - position.entry_price) * pending.quantity,
-                            "net_pnl": (fill.price - position.entry_price) * pending.quantity - fill.fee,
+                            "net_pnl": (fill.price - position.entry_price) * pending.quantity
+                            - fill.fee,
                             "hold_bars": position.bars_held,
                             "entry_reason": position.entry_reason,
                             "exit_reason": pending.reason,
@@ -255,7 +261,9 @@ class PortfolioSimulator:
             atr_value = float(row.get("entry_atr_14", position.metadata.get("atr", 1.0)) or 1.0)
             trailing = position.highest_price - atr_value * self.config.risk.trailing_stop_multiple
             position.trailing_stop_price = max(position.trailing_stop_price or trailing, trailing)
-            stop_level = max(position.stop_price or trailing, position.trailing_stop_price or trailing)
+            stop_level = max(
+                position.stop_price or trailing, position.trailing_stop_price or trailing
+            )
             if float(row["low"]) <= stop_level and guard.add(symbol):
                 pending_orders.append(
                     PendingOrder(
@@ -272,7 +280,8 @@ class PortfolioSimulator:
             if (
                 self.config.risk.allow_partial_profit
                 and not position.metadata.get("partial_taken", False)
-                and float(row["high"]) >= position.entry_price + atr_value * self.config.risk.partial_take_profit_r
+                and float(row["high"])
+                >= position.entry_price + atr_value * self.config.risk.partial_take_profit_r
                 and position.quantity >= 2
                 and guard.add(symbol)
             ):
@@ -288,7 +297,11 @@ class PortfolioSimulator:
                     )
                 )
                 continue
-            if position.max_hold_bars and position.bars_held >= position.max_hold_bars and guard.add(symbol):
+            if (
+                position.max_hold_bars
+                and position.bars_held >= position.max_hold_bars
+                and guard.add(symbol)
+            ):
                 pending_orders.append(
                     PendingOrder(
                         symbol=symbol,
@@ -325,8 +338,14 @@ class PortfolioSimulator:
                 for current_symbol, position in portfolio.positions.items()
             }
             equity = portfolio.equity(current_prices)
-            exposure_ratio = 0.0 if equity <= 0 else portfolio.exposure_value(current_prices) / equity
-            if symbol not in portfolio.positions and bool(row["entry_signal"]) and guard.add(symbol):
+            exposure_ratio = (
+                0.0 if equity <= 0 else portfolio.exposure_value(current_prices) / equity
+            )
+            if (
+                symbol not in portfolio.positions
+                and bool(row["entry_signal"])
+                and guard.add(symbol)
+            ):
                 sizing = self.risk_manager.size_position(
                     cash=portfolio.cash,
                     equity=equity,

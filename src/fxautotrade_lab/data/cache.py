@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -10,7 +11,6 @@ import pyarrow.parquet as pq
 
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.data.quality import validate_bar_frame
-
 
 TIMEFRAME_COVERAGE_DELTAS: dict[TimeFrame, pd.Timedelta] = {
     TimeFrame.MIN_1: pd.Timedelta(minutes=1),
@@ -81,10 +81,8 @@ class ParquetBarCache:
         frame = self.load(symbol, timeframe)
         if frame is None:
             return None
-        try:
+        with contextlib.suppress(Exception):
             self.save(symbol, timeframe, frame)
-        except Exception:
-            pass
         selection = frame.loc[(frame.index >= start) & (frame.index < end)]
         return selection.copy()
 
@@ -143,7 +141,9 @@ class ParquetBarCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = self._load_coverage_payload(path)
         payload["version"] = 2
-        merged_union = self._merge_ranges([*self._deserialize_ranges(payload.get("ranges", [])), *ranges])
+        merged_union = self._merge_ranges(
+            [*self._deserialize_ranges(payload.get("ranges", [])), *ranges]
+        )
         payload["ranges"] = self._serialize_ranges(merged_union)
         if source_key:
             sources = payload.setdefault("sources", {})
@@ -221,7 +221,9 @@ class ParquetBarCache:
         normalized = {
             "version": int(payload.get("version", 1) or 1),
             "ranges": payload.get("ranges", []),
-            "sources": payload.get("sources", {}) if isinstance(payload.get("sources", {}), dict) else {},
+            "sources": (
+                payload.get("sources", {}) if isinstance(payload.get("sources", {}), dict) else {}
+            ),
         }
         return normalized
 
@@ -239,7 +241,9 @@ class ParquetBarCache:
             ranges.append((start, end))
         return self._merge_ranges(ranges)
 
-    def _serialize_ranges(self, ranges: list[tuple[pd.Timestamp, pd.Timestamp]]) -> list[dict[str, str]]:
+    def _serialize_ranges(
+        self, ranges: list[tuple[pd.Timestamp, pd.Timestamp]]
+    ) -> list[dict[str, str]]:
         return [
             {"start": start.isoformat(), "end": end.isoformat()}
             for start, end in self._merge_ranges(ranges)

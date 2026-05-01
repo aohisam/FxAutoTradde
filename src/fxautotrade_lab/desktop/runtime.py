@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import json
 import os
 import signal
@@ -14,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-
 PROCESS_SIGNATURES = (
     "fxautotrade_lab.cli launch-desktop",
     "scripts/desktop_entry.py",
@@ -25,7 +25,14 @@ PROCESS_SIGNATURES = (
 
 
 def _default_state_path() -> Path:
-    return Path.home() / "Library" / "Application Support" / "FXAutoTradeLab" / "runtime" / "desktop_app_state.json"
+    return (
+        Path.home()
+        / "Library"
+        / "Application Support"
+        / "FXAutoTradeLab"
+        / "runtime"
+        / "desktop_app_state.json"
+    )
 
 
 def runtime_dir() -> Path:
@@ -159,10 +166,8 @@ class DesktopProcessManager:
 
     def _remove_state_file(self) -> None:
         if self.state_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 self.state_path.unlink()
-            except OSError:
-                pass
 
     def _handle_signal(self, signum, _frame) -> None:  # noqa: ANN001
         self.cleanup()

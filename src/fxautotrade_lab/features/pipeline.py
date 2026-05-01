@@ -22,7 +22,11 @@ from fxautotrade_lab.features.candles import (
     inside_bar_breakout,
 )
 from fxautotrade_lab.features.indicators import atr, ema, rolling_return, rolling_zscore, rsi
-from fxautotrade_lab.features.structure import compression_score, higher_high_higher_low_score, slope
+from fxautotrade_lab.features.structure import (
+    compression_score,
+    higher_high_higher_low_score,
+    slope,
+)
 
 
 @dataclass(slots=True)
@@ -67,7 +71,9 @@ def build_multi_timeframe_feature_set(
     config: AppConfig,
 ) -> MultiTimeframeFeatureSet:
     daily = _prepare_common(bars_by_timeframe[TimeFrame.DAY_1], "daily")
-    weekly = _prepare_common(resample_ohlcv(daily[["open", "high", "low", "close", "volume"]], "W-FRI"), "weekly")
+    weekly = _prepare_common(
+        resample_ohlcv(daily[["open", "high", "low", "close", "volume"]], "W-FRI"), "weekly"
+    )
     monthly = _prepare_common(
         resample_ohlcv(daily[["open", "high", "low", "close", "volume"]], "ME"),
         "monthly",
@@ -79,9 +85,7 @@ def build_multi_timeframe_feature_set(
     entry["pullback_depth_atr"] = (
         (entry["entry_ema_20"] - entry["close"]) / entry["entry_atr_14"].replace(0, pd.NA)
     ).fillna(0.0)
-    entry["breakout_20"] = (
-        entry["close"] > entry["high"].rolling(20).max().shift(1)
-    ).astype(float)
+    entry["breakout_20"] = (entry["close"] > entry["high"].rolling(20).max().shift(1)).astype(float)
     entry["continuation_ready"] = (
         (entry["close"] > entry["entry_ema_20"])
         & (entry["entry_rsi_14"] > 50)

@@ -59,9 +59,7 @@ class Tokens:
     S8: Final = 32
 
     # Fonts
-    FONT_UI: Final = (
-        'Inter, "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif'
-    )
+    FONT_UI: Final = 'Inter, "Helvetica Neue", "Hiragino Sans", "Yu Gothic UI", sans-serif'
     FONT_MONO: Final = '"JetBrains Mono", "SF Mono", Menlo, monospace'
 
     # Font sizes
@@ -92,7 +90,9 @@ def repolish(widget) -> None:
     widget.update()
 
 
-def load_icon(name: str, color: str = Tokens.INVERSE_2, size: int = 18):  # pragma: no cover - UI helper
+def load_icon(
+    name: str, color: str = Tokens.INVERSE_2, size: int = 18
+):  # pragma: no cover - UI helper
     """Return a QIcon for the named SVG, tinted to ``color``.
 
     The SVG should use ``currentColor`` for its stroke/fill. Returns an empty

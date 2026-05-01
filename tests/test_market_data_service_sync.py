@@ -8,9 +8,12 @@ from fxautotrade_lab.config.models import EnvironmentConfig
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.data.cache import ParquetBarCache
-from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, summarize_quote_bar_quality, validate_quote_bar_frame
+from fxautotrade_lab.data.quote_bars import (
+    build_quote_bar_frame,
+    summarize_quote_bar_quality,
+    validate_quote_bar_frame,
+)
 from fxautotrade_lab.data.service import MarketDataFrameLoad, MarketDataService
-
 from tests.conftest import write_config
 
 
@@ -162,7 +165,11 @@ def test_sync_reuses_loaded_results_when_watchlist_and_benchmark_overlap(tmp_pat
     config = load_app_config(
         write_config(tmp_path, strategy_name="fx_breakout_pullback"),
         overrides={
-            "watchlist": {"symbols": ["USD_JPY"], "benchmark_symbols": ["USD_JPY"], "sector_symbols": []},
+            "watchlist": {
+                "symbols": ["USD_JPY"],
+                "benchmark_symbols": ["USD_JPY"],
+                "sector_symbols": [],
+            },
             "data": {
                 "source": "gmo",
                 "cache_dir": str(tmp_path / "cache"),
@@ -206,7 +213,11 @@ def test_sync_filters_symbols_and_emits_progress_updates(tmp_path, monkeypatch):
     config = load_app_config(
         write_config(tmp_path, strategy_name="fx_breakout_pullback"),
         overrides={
-            "watchlist": {"symbols": ["USD_JPY", "EUR_JPY"], "benchmark_symbols": ["USD_JPY"], "sector_symbols": []},
+            "watchlist": {
+                "symbols": ["USD_JPY", "EUR_JPY"],
+                "benchmark_symbols": ["USD_JPY"],
+                "sector_symbols": [],
+            },
             "data": {
                 "source": "gmo",
                 "cache_dir": str(tmp_path / "cache"),

@@ -1294,9 +1294,12 @@ class LabApplication:
             if observed_ticks < max_ticks and poll_seconds > 0:
                 sleep(float(poll_seconds))
         snapshot = engine.snapshot()
-        persistence_snapshot = (
-            engine.full_history() if hasattr(engine, "full_history") else snapshot
-        )
+        if hasattr(engine, "drain_new_records"):
+            persistence_snapshot = engine.drain_new_records()
+        else:
+            persistence_snapshot = (
+                engine.full_history() if hasattr(engine, "full_history") else snapshot
+            )
         paper_run_id = datetime.now(tz=ASIA_TOKYO).strftime("%Y%m%d_%H%M%S_scalping_paper")
         model_id = str(
             model_bundle.metadata.get("model_id")

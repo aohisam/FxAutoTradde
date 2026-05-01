@@ -79,6 +79,9 @@ class ScalpingRealtimePaperEngine:
     all_events: list[dict[str, object]] = field(default_factory=list, init=False)
     all_trades: list[dict[str, object]] = field(default_factory=list, init=False)
     all_signals: list[dict[str, object]] = field(default_factory=list, init=False)
+    _drained_event_index: int = field(default=0, init=False)
+    _drained_signal_index: int = field(default=0, init=False)
+    _drained_trade_index: int = field(default=0, init=False)
     risk_state: ScalpingRiskState = field(init=False)
     signal_policy: ScalpingSignalPolicy = field(init=False)
     execution_policy: ScalpingExecutionPolicy = field(init=False)
@@ -161,6 +164,17 @@ class ScalpingRealtimePaperEngine:
 
     def full_history(self) -> dict[str, object]:
         return self.snapshot(include_history=True)
+
+    def drain_new_records(self) -> dict[str, list[dict[str, object]]]:
+        """Return records created since the previous drain and advance cursors."""
+
+        events = list(self.all_events[self._drained_event_index :])
+        signals = list(self.all_signals[self._drained_signal_index :])
+        trades = list(self.all_trades[self._drained_trade_index :])
+        self._drained_event_index = len(self.all_events)
+        self._drained_signal_index = len(self.all_signals)
+        self._drained_trade_index = len(self.all_trades)
+        return {"events": events, "signals": signals, "trades": trades}
 
     def _maybe_create_pending_entry(self) -> dict[str, object] | None:
         ticks = pd.DataFrame(self.tick_buffer).set_index("timestamp")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 
 def test_desktop_modules_import():
@@ -13,6 +14,6 @@ def test_desktop_modules_import():
 
 
 def test_main_window_source_contains_desktop_shell_components():
-    text = open("src/fxautotrade_lab/desktop/main_window.py", encoding="utf-8").read()
+    text = Path("src/fxautotrade_lab/desktop/main_window.py").read_text(encoding="utf-8")
     for fragment in ["QMainWindow", "QSplitter", "QDockWidget", "QStatusBar", "QToolBar"]:
         assert fragment in text

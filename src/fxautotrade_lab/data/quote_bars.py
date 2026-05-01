@@ -9,7 +9,6 @@ import pandas as pd
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.data.quality import summarize_bar_frame_quality, validate_bar_frame
 
-
 QUOTE_SIDE_COLUMNS = ["open", "high", "low", "close", "volume"]
 QUOTE_PRICE_COLUMNS = ["open", "high", "low", "close"]
 
@@ -48,10 +47,7 @@ def _aligned_numeric_series(
 ) -> pd.Series:
     if isinstance(value, pd.Series):
         return pd.to_numeric(value, errors="coerce").reindex(index).fillna(default)
-    if value is None:
-        scalar = default
-    else:
-        scalar = float(value)
+    scalar = default if value is None else float(value)
     return pd.Series(scalar, index=index, dtype="float64")
 
 
@@ -66,12 +62,20 @@ def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
         base_volume = _aligned_numeric_series(working.get("volume"), working.index, default=0.0)
         for price_column in ("open", "high", "low", "close"):
             numeric = pd.to_numeric(working[price_column], errors="coerce")
-            working[f"bid_{price_column}"] = pd.to_numeric(working.get(f"bid_{price_column}", numeric), errors="coerce")
-            working[f"ask_{price_column}"] = pd.to_numeric(working.get(f"ask_{price_column}", numeric), errors="coerce")
+            working[f"bid_{price_column}"] = pd.to_numeric(
+                working.get(f"bid_{price_column}", numeric), errors="coerce"
+            )
+            working[f"ask_{price_column}"] = pd.to_numeric(
+                working.get(f"ask_{price_column}", numeric), errors="coerce"
+            )
             working[f"mid_{price_column}"] = numeric
             working[f"spread_{price_column}"] = 0.0
-        working["bid_volume"] = _aligned_numeric_series(working.get("bid_volume", base_volume), working.index, default=0.0)
-        working["ask_volume"] = _aligned_numeric_series(working.get("ask_volume"), working.index, default=0.0)
+        working["bid_volume"] = _aligned_numeric_series(
+            working.get("bid_volume", base_volume), working.index, default=0.0
+        )
+        working["ask_volume"] = _aligned_numeric_series(
+            working.get("ask_volume"), working.index, default=0.0
+        )
         missing = [column for column in required if column not in working.columns]
     if missing:
         raise ValueError(f"Missing quote columns: {missing}")
@@ -93,15 +97,13 @@ def validate_quote_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
             pd.to_numeric(working[f"bid_{price_column}"], errors="coerce")
             + pd.to_numeric(working[f"ask_{price_column}"], errors="coerce")
         ) / 2.0
-        working[f"spread_{price_column}"] = (
-            pd.to_numeric(working[f"ask_{price_column}"], errors="coerce")
-            - pd.to_numeric(working[f"bid_{price_column}"], errors="coerce")
-        )
+        working[f"spread_{price_column}"] = pd.to_numeric(
+            working[f"ask_{price_column}"], errors="coerce"
+        ) - pd.to_numeric(working[f"bid_{price_column}"], errors="coerce")
         working[price_column] = working[f"mid_{price_column}"]
-    working["volume"] = (
-        pd.to_numeric(working["bid_volume"], errors="coerce").fillna(0.0)
-        + pd.to_numeric(working["ask_volume"], errors="coerce").fillna(0.0)
-    )
+    working["volume"] = pd.to_numeric(working["bid_volume"], errors="coerce").fillna(
+        0.0
+    ) + pd.to_numeric(working["ask_volume"], errors="coerce").fillna(0.0)
     working = validate_bar_frame(working)
     for price_column in ("open", "high", "low", "close"):
         spread = pd.to_numeric(working.get(f"spread_{price_column}"), errors="coerce")
@@ -116,7 +118,8 @@ def read_jforex_quote_csv(file_path: str | Path, side: str) -> pd.DataFrame:
         raise ValueError(f"Unsupported quote side: {side}")
     frame = pd.read_csv(
         Path(file_path),
-        usecols=lambda column: str(column).strip() in {"Time (EET)", "Open", "High", "Low", "Close", "Volume"},
+        usecols=lambda column: str(column).strip()
+        in {"Time (EET)", "Open", "High", "Low", "Close", "Volume"},
         dtype={
             "Open": "float64",
             "High": "float64",
@@ -147,9 +150,15 @@ def read_jforex_quote_csv(file_path: str | Path, side: str) -> pd.DataFrame:
 
 def read_combined_quote_csv(file_path: str | Path) -> pd.DataFrame:
     raw = pd.read_csv(Path(file_path))
-    renamed = raw.rename(columns={column: _normalize_quote_column_name(column) for column in raw.columns})
+    renamed = raw.rename(
+        columns={column: _normalize_quote_column_name(column) for column in raw.columns}
+    )
     timestamp_column = next(
-        (column for column in ("timestamp", "time_eet", "time", "datetime", "date_time") if column in renamed.columns),
+        (
+            column
+            for column in ("timestamp", "time_eet", "time", "datetime", "date_time")
+            if column in renamed.columns
+        ),
         "",
     )
     if not timestamp_column:
@@ -176,19 +185,27 @@ def read_combined_quote_csv(file_path: str | Path) -> pd.DataFrame:
     for side in ("bid", "ask"):
         volume_column = f"{side}_volume"
         if volume_column in renamed.columns:
-            frame[volume_column] = pd.to_numeric(renamed[volume_column], errors="coerce").fillna(0.0).to_numpy()
+            frame[volume_column] = (
+                pd.to_numeric(renamed[volume_column], errors="coerce").fillna(0.0).to_numpy()
+            )
         else:
             frame[volume_column] = 0.0
     return frame.sort_index()
 
 
-def build_quote_bar_frame(bid_frame: pd.DataFrame, ask_frame: pd.DataFrame, symbol: str) -> pd.DataFrame:
+def build_quote_bar_frame(
+    bid_frame: pd.DataFrame, ask_frame: pd.DataFrame, symbol: str
+) -> pd.DataFrame:
     merged = bid_frame.join(ask_frame, how="inner")
     if merged.empty:
         raise ValueError("Bid/Ask の結合結果が空です。時刻軸が一致しているか確認してください。")
     for price_column in ("open", "high", "low", "close"):
-        merged[f"mid_{price_column}"] = (merged[f"bid_{price_column}"] + merged[f"ask_{price_column}"]) / 2.0
-        merged[f"spread_{price_column}"] = merged[f"ask_{price_column}"] - merged[f"bid_{price_column}"]
+        merged[f"mid_{price_column}"] = (
+            merged[f"bid_{price_column}"] + merged[f"ask_{price_column}"]
+        ) / 2.0
+        merged[f"spread_{price_column}"] = (
+            merged[f"ask_{price_column}"] - merged[f"bid_{price_column}"]
+        )
         merged[price_column] = merged[f"mid_{price_column}"]
     merged["bid_volume"] = pd.to_numeric(merged["bid_volume"], errors="coerce").fillna(0.0)
     merged["ask_volume"] = pd.to_numeric(merged["ask_volume"], errors="coerce").fillna(0.0)
@@ -218,8 +235,21 @@ def resample_quote_bars(frame: pd.DataFrame, rule: str) -> pd.DataFrame:
             "ask_volume": "sum",
         }
     )
-    aggregated = aggregated.dropna(subset=["bid_open", "bid_high", "bid_low", "bid_close", "ask_open", "ask_high", "ask_low", "ask_close"])
-    symbol = str(working["symbol"].iloc[0]) if "symbol" in working.columns and not working.empty else ""
+    aggregated = aggregated.dropna(
+        subset=[
+            "bid_open",
+            "bid_high",
+            "bid_low",
+            "bid_close",
+            "ask_open",
+            "ask_high",
+            "ask_low",
+            "ask_close",
+        ]
+    )
+    symbol = (
+        str(working["symbol"].iloc[0]) if "symbol" in working.columns and not working.empty else ""
+    )
     return build_quote_bar_frame(
         aggregated[["bid_open", "bid_high", "bid_low", "bid_close", "bid_volume"]],
         aggregated[["ask_open", "ask_high", "ask_low", "ask_close", "ask_volume"]],

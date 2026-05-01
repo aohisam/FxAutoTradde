@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 _PAIR_RE = re.compile(r"^[A-Z]{3}[_/]?[A-Z]{3}$")
 _FILENAME_PAIR_RE = re.compile(r"([A-Z]{6})(?:_|$)")
 

@@ -236,8 +236,26 @@ class FxScalpingConfig(BaseModel):
     min_validation_net_pips: float = 0.0
     min_validation_profit_factor: float = 1.0
     min_validation_trade_count: int = 1
+    max_validation_drawdown_amount: float | None = None
+    max_validation_daily_loss_amount: float | None = None
+    max_validation_drawdown_pips: float | None = None
     fail_closed_on_bad_validation: bool = True
     threshold_selection_method: str = "replay"
+    threshold_grid: list[float] = Field(
+        default_factory=lambda: [
+            0.52,
+            0.54,
+            0.56,
+            0.58,
+            0.60,
+            0.62,
+            0.64,
+            0.66,
+            0.68,
+            0.70,
+            0.72,
+        ]
+    )
     model_promotion_enabled: bool = True
     candidate_model_dir: Path = Path("models/fx_scalping/candidates")
     require_validation_gate_passed_for_promotion: bool = True
@@ -296,6 +314,35 @@ class FxScalpingConfig(BaseModel):
                 "'replay' または 'label' を指定してください。"
             )
         return normalized
+
+    @field_validator("threshold_grid", mode="before")
+    @classmethod
+    def validate_threshold_grid(cls, value: object) -> list[float]:
+        if value is None:
+            raise ValueError("スキャルピングMLの threshold_grid は空にできません。")
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("スキャルピングMLの threshold_grid は数値のリストで指定してください。")
+        normalized: list[float] = []
+        seen: set[float] = set()
+        for raw in value:
+            try:
+                threshold = float(raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "スキャルピングMLの threshold_grid は数値だけを指定してください。"
+                ) from exc
+            if threshold <= 0.0 or threshold >= 1.0:
+                raise ValueError(
+                    "スキャルピングMLの threshold_grid は 0.0 より大きく"
+                    f" 1.0 未満で指定してください: {threshold}"
+                )
+            key = round(threshold, 10)
+            if key not in seen:
+                normalized.append(threshold)
+                seen.add(key)
+        if not normalized:
+            raise ValueError("スキャルピングMLの threshold_grid は空にできません。")
+        return sorted(normalized)
 
     @field_validator("outcome_store_format")
     @classmethod

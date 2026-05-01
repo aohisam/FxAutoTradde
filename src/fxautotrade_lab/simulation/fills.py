@@ -15,7 +15,9 @@ class FillPriceResult:
     fee: float
 
 
-def apply_fill_model(price: float, side: OrderSide, quantity: int, config: RiskConfig) -> FillPriceResult:
+def apply_fill_model(
+    price: float, side: OrderSide, quantity: int, config: RiskConfig
+) -> FillPriceResult:
     slip = price * (config.slippage_bps / 10_000)
     adjusted = price + slip if side == OrderSide.BUY else price - slip
     fee = config.fee_per_order

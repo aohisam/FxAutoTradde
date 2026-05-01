@@ -10,7 +10,6 @@ import pandas as pd
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
 
-
 SYNC_TIMEFRAMES = [
     TimeFrame.MONTH_1,
     TimeFrame.WEEK_1,
@@ -58,16 +57,26 @@ SEG_TF_MAP = {
 }
 
 SOURCE_HINTS = {
-    "gmo":     "GMO は選択期間のうち既存キャッシュにない区間だけを補完します。1分〜1時間足は 2023-10-28 以降のみ。",
+    "gmo": "GMO は選択期間のうち既存キャッシュにない区間だけを補完します。1分〜1時間足は 2023-10-28 以降のみ。",
     "fixture": "fixture は疑似データを再生成します。CSV や GMO キャッシュは埋めません。",
-    "csv":     "CSV 履歴は右の CSV 履歴インポートから取り込みます。",
+    "csv": "CSV 履歴は右の CSV 履歴インポートから取り込みます。",
 }
 
 
 def _detail_frame(details: list[dict[str, object]]) -> pd.DataFrame:
     if not details:
         return pd.DataFrame(
-            columns=["区分", "通貨ペア", "時間足", "行数", "開始", "終了", "取得元", "更新", "キャッシュ保存先"]
+            columns=[
+                "区分",
+                "通貨ペア",
+                "時間足",
+                "行数",
+                "開始",
+                "終了",
+                "取得元",
+                "更新",
+                "キャッシュ保存先",
+            ]
         )
     frame = pd.DataFrame(details).copy()
     if "category" in frame.columns:
@@ -93,7 +102,17 @@ def _detail_frame(details: list[dict[str, object]]) -> pd.DataFrame:
             "cache_path": "キャッシュ保存先",
         }
     )
-    ordered = ["区分", "通貨ペア", "時間足", "行数", "開始", "終了", "取得元", "更新", "キャッシュ保存先"]
+    ordered = [
+        "区分",
+        "通貨ペア",
+        "時間足",
+        "行数",
+        "開始",
+        "終了",
+        "取得元",
+        "更新",
+        "キャッシュ保存先",
+    ]
     return frame[ordered].sort_values(["区分", "通貨ペア", "時間足"], ignore_index=True)
 
 
@@ -102,7 +121,6 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QCheckBox,
-        QDateEdit,
         QFileDialog,
         QFormLayout,
         QFrame,
@@ -121,8 +139,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         QWidget,
     )
 
-    from fxautotrade_lab.desktop.models import load_dataframe_model_class
+    from fxautotrade_lab.data.jforex import resolve_bid_ask_csv_selection
     from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit, default_popup_qdate
+    from fxautotrade_lab.desktop.models import load_dataframe_model_class
     from fxautotrade_lab.desktop.theme import Tokens
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.banner import Banner
@@ -130,7 +149,6 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     from fxautotrade_lab.desktop.widgets.chip import Chip
     from fxautotrade_lab.desktop.widgets.segmented import SegmentedControl
     from fxautotrade_lab.desktop.widgets.suffix_input import LabeledSuffixInput
-    from fxautotrade_lab.data.jforex import resolve_bid_ask_csv_selection
 
     DataFrameTableModel = load_dataframe_model_class()
 
@@ -152,9 +170,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
     header_text.setSpacing(2)
     title = QLabel("データ同期")
     title.setProperty("role", "h1")
-    subtitle = QLabel(
-        "GMO / fixture / JForex CSV から対象ペアの履歴を取得・キャッシュします。"
-    )
+    subtitle = QLabel("GMO / fixture / JForex CSV から対象ペアの履歴を取得・キャッシュします。")
     subtitle.setProperty("role", "muted")
     subtitle.setWordWrap(True)
     header_text.addWidget(title)
@@ -170,9 +186,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
 
     # ---- Banner ----
     layout.addWidget(
-        Banner(
-            "CSV は長期履歴の母体、GMO は空白期間の追加取得、fixture はテスト用疑似データです。"
-        )
+        Banner("CSV は長期履歴の母体、GMO は空白期間の追加取得、fixture はテスト用疑似データです。")
     )
 
     # ---- grid-2 cards ----
@@ -342,7 +356,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         return SEG_SOURCE_KEYS[0]
 
     def selected_timeframes() -> list[TimeFrame]:
-        label = SEG_TF_LABELS[tf_seg.current()] if 0 <= tf_seg.current() < len(SEG_TF_LABELS) else "15m"
+        label = (
+            SEG_TF_LABELS[tf_seg.current()] if 0 <= tf_seg.current() < len(SEG_TF_LABELS) else "15m"
+        )
         chosen = SEG_TF_MAP[label]
         required = [app_state.config.strategy.entry_timeframe, TimeFrame.DAY_1]
         ordered: list[TimeFrame] = [chosen]
@@ -364,7 +380,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         html = (
             f'<div><span style="color:{Tokens.MUTED_2};">{timestamp}</span> '
             f'<span style="color:{color};font-weight:600;">[{level}]</span> '
-            f'{message}</div>'
+            f"{message}</div>"
         )
         output.append(html)
 
@@ -428,10 +444,7 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
             return None
         unknown = [symbol for symbol in values if symbol not in configured]
         if unknown:
-            raise ValueError(
-                "同期対象に含まれていない通貨ペアがあります: "
-                + ", ".join(unknown)
-            )
+            raise ValueError("同期対象に含まれていない通貨ペアがあります: " + ", ".join(unknown))
         return values
 
     def on_sync_progress(payload) -> None:  # noqa: ANN001
@@ -489,7 +502,9 @@ def build_data_sync_page(app_state, submit_task, log_message):  # pragma: no cov
         append_log("INFO", f"作成時間足: {', '.join(result.get('timeframes', []))}")
         for message in result.get("messages", []) or []:
             append_log("WARN", str(message))
-        QMessageBox.information(page, "完了", f"{result['symbol']} の Bid / Ask CSV を取り込みました。")
+        QMessageBox.information(
+            page, "完了", f"{result['symbol']} の Bid / Ask CSV を取り込みました。"
+        )
         log_message(f"Bid / Ask CSV を取り込みました: {result['symbol']}")
 
     def on_finished(result) -> None:  # noqa: ANN001

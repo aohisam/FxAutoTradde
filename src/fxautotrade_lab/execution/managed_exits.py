@@ -87,7 +87,9 @@ def build_managed_position(
     risk: RiskConfig,
     swing_low: float | None = None,
 ) -> ManagedPositionState:
-    stop_price = initial_stop_price(entry_price=entry_price, atr_value=atr_value, risk=risk, swing_low=swing_low)
+    stop_price = initial_stop_price(
+        entry_price=entry_price, atr_value=atr_value, risk=risk, swing_low=swing_low
+    )
     trailing_stop = entry_price - atr_value * risk.trailing_stop_multiple
     initial_risk = max(float(entry_price) - float(stop_price), 0.01)
     partial_target = float(entry_price) + initial_risk * risk.partial_take_profit_r
@@ -150,8 +152,12 @@ def evaluate_managed_position(
     state.last_bar_at = current_timestamp
     state.bars_held += 1
 
-    high_price = _coerce_float(latest.get("high"), _coerce_float(latest.get("close"), state.entry_price))
-    low_price = _coerce_float(latest.get("low"), _coerce_float(latest.get("close"), state.entry_price))
+    high_price = _coerce_float(
+        latest.get("high"), _coerce_float(latest.get("close"), state.entry_price)
+    )
+    low_price = _coerce_float(
+        latest.get("low"), _coerce_float(latest.get("close"), state.entry_price)
+    )
     close_price = _coerce_float(latest.get("close"), state.entry_price)
     atr_value = max(_coerce_float(latest.get("entry_atr_14"), state.atr_at_entry), 0.01)
     state.last_reference_high_price = high_price
@@ -192,7 +198,9 @@ def evaluate_managed_position(
         if quantity > 0:
             state.partial_taken = True
             state.break_even_armed = True
-            state.stop_price = max(state.stop_price, state.entry_price + max(atr_value * 0.05, 0.01))
+            state.stop_price = max(
+                state.stop_price, state.entry_price + max(atr_value * 0.05, 0.01)
+            )
             return ExitDecision(
                 action="partial",
                 quantity=quantity,
@@ -205,7 +213,9 @@ def evaluate_managed_position(
         and state.bars_held >= risk.stagnation_bars
         and progress < state.initial_risk_per_share * risk.stagnation_min_r
     ):
-        return ExitDecision(action="full", quantity=state.quantity, reason_ja="時間切れ撤退（進展不足）")
+        return ExitDecision(
+            action="full", quantity=state.quantity, reason_ja="時間切れ撤退（進展不足）"
+        )
 
     if state.bars_held >= risk.max_hold_bars > 0:
         return ExitDecision(action="full", quantity=state.quantity, reason_ja="最大保有期間に到達")

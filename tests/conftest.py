@@ -5,7 +5,9 @@ from pathlib import Path
 import yaml
 
 
-def make_config_dict(tmp_path: Path, strategy_name: str = "multi_timeframe_pattern_scoring") -> dict:
+def make_config_dict(
+    tmp_path: Path, strategy_name: str = "multi_timeframe_pattern_scoring"
+) -> dict:
     return {
         "app_name": "FXAutoTrade Lab Test",
         "watchlist": {
@@ -36,5 +38,7 @@ def make_config_dict(tmp_path: Path, strategy_name: str = "multi_timeframe_patte
 
 def write_config(tmp_path: Path, strategy_name: str = "multi_timeframe_pattern_scoring") -> Path:
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump(make_config_dict(tmp_path, strategy_name), sort_keys=False), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump(make_config_dict(tmp_path, strategy_name), sort_keys=False), encoding="utf-8"
+    )
     return path

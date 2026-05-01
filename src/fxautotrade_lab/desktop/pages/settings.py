@@ -10,14 +10,13 @@ import yaml
 
 from fxautotrade_lab.core.enums import TimeFrame
 
-
 MODE_LABELS = ["GMO 実時間シミュレーション", "ローカルシミュレーション"]
 MODE_KEYS = ["gmo_sim", "local_sim"]
-MODE_LABEL_BY_KEY = dict(zip(MODE_KEYS, MODE_LABELS))
+MODE_LABEL_BY_KEY = dict(zip(MODE_KEYS, MODE_LABELS, strict=False))
 
 SOURCE_LABELS = ["GMO", "JForex CSV", "fixture"]
 SOURCE_KEYS = ["gmo", "csv", "fixture"]
-SOURCE_LABEL_BY_KEY = dict(zip(SOURCE_KEYS, SOURCE_LABELS))
+SOURCE_LABEL_BY_KEY = dict(zip(SOURCE_KEYS, SOURCE_LABELS, strict=False))
 
 ENTRY_TF_LABELS = ["5m", "15m", "1h", "4h"]
 ENTRY_TF_ENUMS = [
@@ -26,17 +25,19 @@ ENTRY_TF_ENUMS = [
     TimeFrame.HOUR_1,
     TimeFrame.HOUR_4,
 ]
-ENTRY_TF_LABEL_BY_VALUE = dict(zip([tf.value for tf in ENTRY_TF_ENUMS], ENTRY_TF_LABELS))
+ENTRY_TF_LABEL_BY_VALUE = dict(
+    zip([tf.value for tf in ENTRY_TF_ENUMS], ENTRY_TF_LABELS, strict=False)
+)
 
 PAGE_LABELS = ["概要", "バックテスト", "実時間シミュレーション", "チャート"]
 
 SIZE_MODE_LABELS = ["定額", "資産比率", "リスク率"]
 SIZE_MODE_KEYS = ["fixed_amount", "equity_fraction", "risk_based"]
-SIZE_MODE_LABEL_BY_KEY = dict(zip(SIZE_MODE_KEYS, SIZE_MODE_LABELS))
+SIZE_MODE_LABEL_BY_KEY = dict(zip(SIZE_MODE_KEYS, SIZE_MODE_LABELS, strict=False))
 
 LEVEL_LABELS = ["error のみ", "warn 以上", "info 以上"]
 LEVEL_KEYS = ["error", "warning", "info"]
-LEVEL_LABEL_BY_KEY = dict(zip(LEVEL_KEYS, LEVEL_LABELS))
+LEVEL_LABEL_BY_KEY = dict(zip(LEVEL_KEYS, LEVEL_LABELS, strict=False))
 
 
 def _config_to_dict(cfg) -> dict:
@@ -108,7 +109,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         hint.setProperty("role", "muted2")
         return hint
 
-    def make_detail_cell(label_text: str, value_text: str = "-", *, mono: bool = True) -> tuple[QWidget, QLabel]:
+    def make_detail_cell(
+        label_text: str, value_text: str = "-", *, mono: bool = True
+    ) -> tuple[QWidget, QLabel]:
         wrap = QWidget()
         vbox = QVBoxLayout(wrap)
         vbox.setContentsMargins(0, 0, 0, 0)
@@ -398,9 +401,13 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         risk = cfg.risk
         starting_cash.set_int(int(getattr(risk, "starting_cash", 0) or 0))
         size_mode_seg.setCurrentData(risk.order_size_mode.value)
-        eq_frac.set_float(float(getattr(risk, "equity_fraction_per_trade", 0.0) or 0.0) * 100, "{:.1f}")
+        eq_frac.set_float(
+            float(getattr(risk, "equity_fraction_per_trade", 0.0) or 0.0) * 100, "{:.1f}"
+        )
         daily_loss_jpy.set_int(int(getattr(risk, "max_daily_loss_amount", 0) or 0))
-        daily_loss_pct.set_float(float(getattr(risk, "max_daily_loss_pct", 0.0) or 0.0) * 100, "{:.1f}")
+        daily_loss_pct.set_float(
+            float(getattr(risk, "max_daily_loss_pct", 0.0) or 0.0) * 100, "{:.1f}"
+        )
         mp = getattr(risk, "max_positions", None)
         if mp is None:
             mp = qsettings.value("settings/max_positions")
@@ -490,7 +497,13 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         channels: list[str] = []
         if any(
             box.isChecked()
-            for box in (notify_new_order, notify_fill, notify_kill, notify_reconnect, notify_daily_pnl)
+            for box in (
+                notify_new_order,
+                notify_fill,
+                notify_kill,
+                notify_reconnect,
+                notify_daily_pnl,
+            )
         ):
             channels.append("log")
         webhook = slack_edit.text().strip()
@@ -500,7 +513,8 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             enabled=bool(channels),
             channels=channels,
             sound_name=str(getattr(cfg.automation.notification_channels, "sound_name", "") or ""),
-            webhook_url=webhook or str(getattr(cfg.automation.notification_channels, "webhook_url", "") or ""),
+            webhook_url=webhook
+            or str(getattr(cfg.automation.notification_channels, "webhook_url", "") or ""),
         )
         # Persist UI-only notification preferences
         qsettings.setValue("settings/notification_level", str(level_seg.currentData() or "info"))
@@ -546,9 +560,7 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
                 rate_value.setText(f"ティッカー {tickers}")
             else:
                 rate_value.setText("-")
-        account_value.setText(
-            "利用可能" if market_ok else str(result.get("error") or "要確認")
-        )
+        account_value.setText("利用可能" if market_ok else str(result.get("error") or "要確認"))
         log_message("GMO 接続テストが完了しました。")
 
     def _on_test_error(message: str) -> None:

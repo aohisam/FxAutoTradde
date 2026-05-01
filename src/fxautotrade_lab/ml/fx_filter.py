@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.ml.logistic import NumpyLogisticRegression
-
 
 FEATURE_COLUMNS = [
     "ema_fast_slope_1h",
@@ -71,7 +69,15 @@ def aggregate_trade_labels(trades: pd.DataFrame, config: AppConfig) -> pd.DataFr
                 "gross_pnl",
             ]
         )
-    required = {"position_id", "signal_time", "symbol", "entry_time", "exit_time", "net_pnl", "gross_pnl"}
+    required = {
+        "position_id",
+        "signal_time",
+        "symbol",
+        "entry_time",
+        "exit_time",
+        "net_pnl",
+        "gross_pnl",
+    }
     missing = required.difference(trades.columns)
     if missing:
         raise ValueError(f"トレードラベル集計に必要な列が不足しています: {sorted(missing)}")
@@ -112,7 +118,9 @@ def build_labeled_dataset(
     if entry_source is None:
         return pd.DataFrame()
     candidate_mask = entry_source.fillna(False).astype(bool)
-    candidate_columns = [column for column in ("symbol", *FEATURE_COLUMNS) if column in signal_frame.columns]
+    candidate_columns = [
+        column for column in ("symbol", *FEATURE_COLUMNS) if column in signal_frame.columns
+    ]
     if "symbol" not in candidate_columns:
         return pd.DataFrame()
     candidates = signal_frame.loc[candidate_mask, candidate_columns].copy()
@@ -125,13 +133,26 @@ def build_labeled_dataset(
     candidates = candidates.copy()
     candidates["signal_time"] = pd.to_datetime(candidates.index)
     candidates["symbol"] = candidates["symbol"].astype(str).str.upper()
-    joined = candidates.join(label_join, on=["signal_time", "symbol"], how="inner", rsuffix="_trade")
+    joined = candidates.join(
+        label_join, on=["signal_time", "symbol"], how="inner", rsuffix="_trade"
+    )
     if joined.empty:
         return pd.DataFrame()
     features = candidate_feature_frame(joined)
     dataset = pd.concat(
         [
-            joined[["symbol", "signal_time", "entry_time", "exit_time", "realized_r_net", "binary_label", "continuous_target", "net_pnl"]],
+            joined[
+                [
+                    "symbol",
+                    "signal_time",
+                    "entry_time",
+                    "exit_time",
+                    "realized_r_net",
+                    "binary_label",
+                    "continuous_target",
+                    "net_pnl",
+                ]
+            ],
             features,
         ],
         axis=1,
@@ -144,7 +165,9 @@ def fit_fx_filter_model(dataset: pd.DataFrame, config: AppConfig) -> NumpyLogist
     if dataset.empty:
         raise ValueError("学習用データセットが空です。")
     if len(dataset.index) < ml_cfg.min_samples:
-        raise ValueError(f"学習サンプル数が不足しています。必要={ml_cfg.min_samples}, 実際={len(dataset.index)}")
+        raise ValueError(
+            f"学習サンプル数が不足しています。必要={ml_cfg.min_samples}, 実際={len(dataset.index)}"
+        )
     x = dataset.loc[:, FEATURE_COLUMNS]
     y = dataset["binary_label"]
     positive_rate = float(y.mean()) if len(y.index) else 0.0
@@ -197,7 +220,9 @@ def _storage_ready_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
         if column in compact.columns:
             compact[column] = pd.to_numeric(compact[column], errors="coerce").astype("float32")
     if "binary_label" in compact.columns:
-        compact["binary_label"] = pd.to_numeric(compact["binary_label"], errors="coerce").fillna(0).astype("int8")
+        compact["binary_label"] = (
+            pd.to_numeric(compact["binary_label"], errors="coerce").fillna(0).astype("int8")
+        )
     return compact
 
 
@@ -230,7 +255,11 @@ def apply_fx_ml_filter(
     model_label: str = "",
 ) -> pd.DataFrame:
     working = signal_frame.copy()
-    rule_only_entries = working.get("entry_signal", pd.Series(False, index=working.index)).fillna(False).astype(bool)
+    rule_only_entries = (
+        working.get("entry_signal", pd.Series(False, index=working.index))
+        .fillna(False)
+        .astype(bool)
+    )
     working["entry_signal_rule_only"] = rule_only_entries
     working["ml_probability"] = np.nan
     working["ml_decision"] = True
@@ -250,12 +279,17 @@ def apply_fx_ml_filter(
     working["entry_signal"] = rule_only_entries & working["ml_decision"].fillna(True).astype(bool)
     working["signal_score"] = np.where(
         working["ml_probability"].notna(),
-        np.maximum(_as_float_series(working["signal_score"]).fillna(0.0), working["ml_probability"].fillna(0.0)),
+        np.maximum(
+            _as_float_series(working["signal_score"]).fillna(0.0),
+            working["ml_probability"].fillna(0.0),
+        ),
         _as_float_series(working["signal_score"]).fillna(0.0),
     )
     explanation_source = working.get("explanation_ja", pd.Series("", index=working.index))
     working["explanation_ja"] = explanation_source.fillna("").astype(str)
-    candidate_rows = working.loc[candidate_index, ["explanation_ja", "ml_probability", "ml_decision"]]
+    candidate_rows = working.loc[
+        candidate_index, ["explanation_ja", "ml_probability", "ml_decision"]
+    ]
     updated_explanations = []
     for explanation, probability, decision in candidate_rows.itertuples(index=False, name=None):
         probability_value = float(probability or 0.0)

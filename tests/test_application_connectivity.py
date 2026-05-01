@@ -11,7 +11,6 @@ from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import BrokerMode, TimeFrame
 from fxautotrade_lab.data.gmo import GmoForexPublicClient
 from fxautotrade_lab.security.keychain import GmoPrivateCredentialRecord
-
 from tests.conftest import write_config
 
 
@@ -173,7 +172,9 @@ def test_application_save_and_delete_gmo_credentials_use_keychain(monkeypatch, t
     app = LabApplication(write_config(tmp_path))
     store = {"api_key": "", "api_secret": ""}
 
-    def fake_resolve_private_gmo_credentials(*, env_api_key: str = "", env_api_secret: str = "") -> GmoPrivateCredentialRecord:
+    def fake_resolve_private_gmo_credentials(
+        *, env_api_key: str = "", env_api_secret: str = ""
+    ) -> GmoPrivateCredentialRecord:
         if store["api_key"] and store["api_secret"]:
             return GmoPrivateCredentialRecord(
                 api_key=store["api_key"],
@@ -190,7 +191,9 @@ def test_application_save_and_delete_gmo_credentials_use_keychain(monkeypatch, t
             configured=False,
         )
 
-    def fake_save_private_gmo_credentials(*, api_key: str, api_secret: str) -> GmoPrivateCredentialRecord:
+    def fake_save_private_gmo_credentials(
+        *, api_key: str, api_secret: str
+    ) -> GmoPrivateCredentialRecord:
         store["api_key"] = api_key
         store["api_secret"] = api_secret
         return GmoPrivateCredentialRecord(
@@ -310,7 +313,9 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
 
         load_symbol_frames = load_runtime_symbol_frames
 
-    def fake_build_features(symbol, bars_by_timeframe, benchmark_bars, sector_bars, config):  # noqa: ANN001
+    def fake_build_features(
+        symbol, bars_by_timeframe, benchmark_bars, sector_bars, config
+    ):  # noqa: ANN001
         calls["features"] += 1
         _ = symbol, bars_by_timeframe, benchmark_bars, sector_bars, config
         return SimpleNamespace(
@@ -321,7 +326,9 @@ def test_application_load_chart_dataset_reuses_cached_runtime_payload(monkeypatc
         )
 
     monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
-    monkeypatch.setattr("fxautotrade_lab.application.build_multi_timeframe_feature_set", fake_build_features)
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.build_multi_timeframe_feature_set", fake_build_features
+    )
     monkeypatch.setattr(
         LabApplication,
         "runtime_status_snapshot",
@@ -399,10 +406,16 @@ def test_application_sync_market_data_uses_temporary_sync_source(monkeypatch, tm
             captured["timeframes"] = [timeframe.value for timeframe in config.data.timeframes]
             _ = env
 
-        def sync(self, *, symbols=None, progress_callback=None) -> dict[str, object]:  # noqa: ANN001
+        def sync(
+            self, *, symbols=None, progress_callback=None
+        ) -> dict[str, object]:  # noqa: ANN001
             captured["symbols"] = list(symbols or [])
             captured["has_progress_callback"] = callable(progress_callback)
-            return {"source": captured["source"], "details": [], "selected_symbols": captured["symbols"]}
+            return {
+                "source": captured["source"],
+                "details": [],
+                "selected_symbols": captured["symbols"],
+            }
 
     monkeypatch.setattr("fxautotrade_lab.application.MarketDataService", FakeMarketDataService)
 
@@ -443,7 +456,9 @@ def test_application_training_and_research_forward_progress_callbacks(tmp_path, 
 
     def fake_research(self, *, progress_callback=None):  # noqa: ANN001
         if progress_callback is not None:
-            progress_callback({"task": "research", "current": 3, "total": 7, "message": "ベースライン実行中"})
+            progress_callback(
+                {"task": "research", "current": 3, "total": 7, "message": "ベースライン実行中"}
+            )
         return {"run_id": "r1", "output_dir": "x"}
 
     monkeypatch.setattr("fxautotrade_lab.application.train_fx_filter_model_run", fake_train)

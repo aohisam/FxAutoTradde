@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +45,7 @@ class NumpyLogisticRegression:
         feature_clip: float,
         seed: int,
         metadata: dict[str, Any] | None = None,
-    ) -> "NumpyLogisticRegression":
+    ) -> NumpyLogisticRegression:
         if features.empty:
             raise ValueError("学習対象の特徴量が空です。")
         if len(features.index) != len(labels.index):
@@ -86,8 +86,7 @@ class NumpyLogisticRegression:
             missing = [column for column in self.feature_names if column not in features.columns]
             extra = [column for column in features.columns if column not in self.feature_names]
             raise ValueError(
-                "推論時の特徴量定義が学習時と一致しません。"
-                f" 不足: {missing} / 余分: {extra}"
+                "推論時の特徴量定義が学習時と一致しません。" f" 不足: {missing} / 余分: {extra}"
             )
         x = features.astype("float64").to_numpy(copy=True)
         nan_mask = np.isnan(x)
@@ -115,7 +114,7 @@ class NumpyLogisticRegression:
         return target
 
     @classmethod
-    def load(cls, path: str | Path) -> "NumpyLogisticRegression":
+    def load(cls, path: str | Path) -> NumpyLogisticRegression:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(
             feature_names=list(payload["feature_names"]),

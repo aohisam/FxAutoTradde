@@ -8,7 +8,6 @@ from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
 from fxautotrade_lab.desktop.runtime import log_runtime_exception
 
-
 PAGE_KEYS = [
     "overview",
     "watchlist",
@@ -53,7 +52,7 @@ PAGE_SECTIONS = {
 
 
 def load_main_window_class():  # pragma: no cover - UI helper
-    from PySide6.QtCore import QSettings, QSize, QThreadPool, QTimer, Qt
+    from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer
     from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QShortcut
     from PySide6.QtWidgets import (
         QApplication,
@@ -87,12 +86,14 @@ def load_main_window_class():  # pragma: no cover - UI helper
     from fxautotrade_lab.desktop.workers import load_worker_classes
 
     # Imports retained for test_main_window_source_contains_desktop_shell_components
-    _LEGACY_SHELL_NAMES = (QSplitter, QStatusBar, QToolBar)
+    _LEGACY_SHELL_NAMES = (QDockWidget, QSplitter, QStatusBar, QToolBar)
 
     FunctionWorker = load_worker_classes()
 
     class TradingLabMainWindow(QMainWindow):
-        def __init__(self, config_path: Path | None = None, config_overrides: dict | None = None) -> None:
+        def __init__(
+            self, config_path: Path | None = None, config_overrides: dict | None = None
+        ) -> None:
             super().__init__()
             self.app_state = LabApplication(config_path, overrides=config_overrides)
             self.settings = QSettings("FXAutoTradeLab", "Desktop")
@@ -290,7 +291,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.submit_background_task(
                 self.app_state.load_saved_backtest_result,
                 self._after_restore_latest_saved_backtest,
-                lambda msg: self.log_message(f"保存済みバックテスト結果の読込に失敗しました: {msg}"),
+                lambda msg: self.log_message(
+                    f"保存済みバックテスト結果の読込に失敗しました: {msg}"
+                ),
             )
 
         def _after_restore_latest_saved_backtest(self, result) -> None:  # noqa: ANN001
@@ -362,7 +365,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
             self.statusbar_w.showMessage(message)
 
         # ---- Worker pool --------------------------------------------------
-        def submit_background_task(self, fn, on_finished, on_error, on_progress=None) -> None:  # noqa: ANN001
+        def submit_background_task(
+            self, fn, on_finished, on_error, on_progress=None
+        ) -> None:  # noqa: ANN001
             worker = self.worker_class(fn)
             self._active_workers.add(worker)
 
@@ -425,7 +430,9 @@ def load_main_window_class():  # pragma: no cover - UI helper
             minimum_height = 720
             invalid_size = self.width() < minimum_width or self.height() < minimum_height
             offscreen = frame.right() < available.left() or frame.left() > available.right()
-            offscreen = offscreen or frame.bottom() < available.top() or frame.top() > available.bottom()
+            offscreen = (
+                offscreen or frame.bottom() < available.top() or frame.top() > available.bottom()
+            )
             if invalid_size or offscreen:
                 self.resize(max(self.width(), minimum_width), max(self.height(), minimum_height))
                 center = available.center() - self.rect().center()

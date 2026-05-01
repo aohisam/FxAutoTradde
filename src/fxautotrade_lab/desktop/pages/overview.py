@@ -67,14 +67,14 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
     for column in range(4):
         grid.setColumnStretch(column, 1)
     kpi_specs = [
-        ("mode",       "現在のモード",           "mono"),
-        ("automation", "自動売買状態",           "mono"),
-        ("equity",     "総損益 (直近実行)",     "mono"),
-        ("drawdown",   "最大ドローダウン",       "mono"),
-        ("market",     "市場ステータス",         "mono"),
-        ("strategy",   "選択中の戦略",           "code-md"),
-        ("runs",       "保存済み実行数",         "mono"),
-        ("connection", "接続状態",               "mono"),
+        ("mode", "現在のモード", "mono"),
+        ("automation", "自動売買状態", "mono"),
+        ("equity", "総損益 (直近実行)", "mono"),
+        ("drawdown", "最大ドローダウン", "mono"),
+        ("market", "市場ステータス", "mono"),
+        ("strategy", "選択中の戦略", "code-md"),
+        ("runs", "保存済み実行数", "mono"),
+        ("connection", "接続状態", "mono"),
     ]
     for index, (key, label_text, variant) in enumerate(kpi_specs):
         tile = KpiTile(label=label_text, value="-", note="", value_variant=variant)
@@ -112,12 +112,12 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
     detail.setColumnStretch(1, 1)
     latest_summary_labels: dict[str, QLabel] = {}
     cells = [
-        ("run_id",  "実行ID"),
-        ("period",  "検証期間"),
+        ("run_id", "実行ID"),
+        ("period", "検証期間"),
         ("initial", "初期資産"),
-        ("final",   "最終評価"),
-        ("is",      "IS 総損益"),
-        ("oos",     "OOS 総損益"),
+        ("final", "最終評価"),
+        ("is", "IS 総損益"),
+        ("oos", "OOS 総損益"),
     ]
     for index, (key, eyebrow_text) in enumerate(cells):
         cell = QVBoxLayout()
@@ -198,17 +198,13 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
                 "up" if total >= 0 else "down",
                 f"{abs(total):.2%}",
             )
-            page.kpi_tiles["equity"].set_note(
-                f"年率換算 {annualized:+.1%} · シャープ {sharpe:.2f}"
-            )
+            page.kpi_tiles["equity"].set_note(f"年率換算 {annualized:+.1%} · シャープ {sharpe:.2f}")
             page.kpi_tiles["drawdown"].set_value(
                 f"{drawdown:.2%}",
                 tone="neg" if drawdown < 0 else None,
             )
             page.kpi_tiles["drawdown"].set_trend("flat", "-")
-            page.kpi_tiles["drawdown"].set_note(
-                f"取引回数 {trades} · 勝率 {win_rate:.1%}"
-            )
+            page.kpi_tiles["drawdown"].set_note(f"取引回数 {trades} · 勝率 {win_rate:.1%}")
 
         # market
         page.kpi_tiles["market"].set_value(
@@ -218,9 +214,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
                 "fixture": "fixture 検証データ",
             }.get(cfg.data.source, cfg.data.source)
         )
-        page.kpi_tiles["market"].set_note(
-            f"エントリー足: {cfg.strategy.entry_timeframe.value}"
-        )
+        page.kpi_tiles["market"].set_note(f"エントリー足: {cfg.strategy.entry_timeframe.value}")
 
         # strategy
         page.kpi_tiles["strategy"].set_value(cfg.strategy.name)
@@ -239,9 +233,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
         # connection
         has_credentials = getattr(app_state.env, "has_credentials", None)
         private_cfg = bool(has_credentials("private")) if callable(has_credentials) else False
-        page.kpi_tiles["connection"].set_value(
-            "接続済み" if private_cfg else "認証不要"
-        )
+        page.kpi_tiles["connection"].set_value("接続済み" if private_cfg else "認証不要")
         page.kpi_tiles["connection"].set_note_chip(Chip("stream healthy", tone="running"))
         page.kpi_tiles["connection"].set_note("")
 
@@ -262,9 +254,7 @@ def build_overview_page(app_state, on_run_demo=None):  # pragma: no cover - UI h
         is_return = getattr(result, "in_sample_metrics", {}).get(
             "total_return", metrics.get("total_return", 0.0)
         )
-        oos_return = getattr(result, "out_of_sample_metrics", {}).get(
-            "total_return", 0.0
-        )
+        oos_return = getattr(result, "out_of_sample_metrics", {}).get("total_return", 0.0)
         backtest_start = getattr(result, "backtest_start", cfg.data.start_date)
         backtest_end = getattr(result, "backtest_end", cfg.data.end_date)
         latest_summary_labels["run_id"].setText(result.run_id)

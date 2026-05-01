@@ -12,32 +12,54 @@ def _score_series(frame: pd.DataFrame) -> pd.Series:
     return pd.to_numeric(frame.get("signal_score"), errors="coerce")
 
 
-def enrich_signals_with_trade_context(signals: pd.DataFrame, trades: pd.DataFrame | None) -> pd.DataFrame:
+def enrich_signals_with_trade_context(
+    signals: pd.DataFrame, trades: pd.DataFrame | None
+) -> pd.DataFrame:
     """Attach compact trade sizing fields to signal rows when a signal became a trade."""
     if signals is None or signals.empty or trades is None or trades.empty:
         return signals
-    if "symbol" not in signals.columns or "symbol" not in trades.columns or "signal_time" not in trades.columns:
+    if (
+        "symbol" not in signals.columns
+        or "symbol" not in trades.columns
+        or "signal_time" not in trades.columns
+    ):
         return signals
     working = signals.copy()
-    signal_time_source = working["timestamp"] if "timestamp" in working.columns else pd.Series(working.index, index=working.index)
+    signal_time_source = (
+        working["timestamp"]
+        if "timestamp" in working.columns
+        else pd.Series(working.index, index=working.index)
+    )
     working["_signal_time_key"] = pd.to_datetime(signal_time_source, errors="coerce", utc=True)
     working["_symbol_key"] = working["symbol"].astype(str).str.upper()
 
     trade_working = trades.copy()
-    trade_working["_signal_time_key"] = pd.to_datetime(trade_working["signal_time"], errors="coerce", utc=True)
+    trade_working["_signal_time_key"] = pd.to_datetime(
+        trade_working["signal_time"], errors="coerce", utc=True
+    )
     trade_working["_symbol_key"] = trade_working["symbol"].astype(str).str.upper()
     for column in ("quantity", "initial_quantity", "entry_price", "initial_risk_price", "net_pnl"):
         if column in trade_working.columns:
             trade_working[column] = pd.to_numeric(trade_working[column], errors="coerce")
-    quantity = trade_working.get("initial_quantity", trade_working.get("quantity", pd.Series(0, index=trade_working.index)))
+    quantity = trade_working.get(
+        "initial_quantity", trade_working.get("quantity", pd.Series(0, index=trade_working.index))
+    )
     trade_working["trade_quantity"] = quantity.fillna(trade_working.get("quantity", 0)).fillna(0)
-    entry_price = trade_working.get("entry_price", pd.Series(0.0, index=trade_working.index)).fillna(0.0)
-    initial_risk = trade_working.get("initial_risk_price", pd.Series(0.0, index=trade_working.index)).fillna(0.0)
+    entry_price = trade_working.get(
+        "entry_price", pd.Series(0.0, index=trade_working.index)
+    ).fillna(0.0)
+    initial_risk = trade_working.get(
+        "initial_risk_price", pd.Series(0.0, index=trade_working.index)
+    ).fillna(0.0)
     trade_working["trade_entry_notional_jpy"] = trade_working["trade_quantity"] * entry_price
     trade_working["trade_initial_risk_jpy"] = trade_working["trade_quantity"] * initial_risk
-    trade_working["trade_net_pnl_jpy"] = trade_working.get("net_pnl", pd.Series(0.0, index=trade_working.index)).fillna(0.0)
+    trade_working["trade_net_pnl_jpy"] = trade_working.get(
+        "net_pnl", pd.Series(0.0, index=trade_working.index)
+    ).fillna(0.0)
     if "entry_order_side" in trade_working.columns:
-        trade_working["trade_entry_side"] = trade_working["entry_order_side"].astype(str).str.lower()
+        trade_working["trade_entry_side"] = (
+            trade_working["entry_order_side"].astype(str).str.lower()
+        )
     elif "position_side" in trade_working.columns:
         sides = trade_working["position_side"].astype(str).str.lower()
         trade_working["trade_entry_side"] = sides.map({"long": "buy", "short": "sell"}).fillna("")
@@ -88,15 +110,21 @@ def build_signal_snapshot_payload(
                 "mean_score": float("nan"),
             },
             "histogram": {"all": [0] * bins, "accepted": [0] * bins, "rejected": [0] * bins},
-            "symbol_frame": pd.DataFrame(columns=["通貨ペア", "総数", "採用", "採用率", "平均スコア"]),
+            "symbol_frame": pd.DataFrame(
+                columns=["通貨ペア", "総数", "採用", "採用率", "平均スコア"]
+            ),
         }
 
     score_series = _score_series(frame)
     accepted = score_series.fillna(0.0) >= threshold
-    actions = frame.get("signal_action", pd.Series([""] * len(frame), index=frame.index)).astype(str).str.lower()
+    actions = (
+        frame.get("signal_action", pd.Series([""] * len(frame), index=frame.index))
+        .astype(str)
+        .str.lower()
+    )
 
     histogram = {"all": [0] * bins, "accepted": [0] * bins, "rejected": [0] * bins}
-    for value, is_accepted in zip(score_series.tolist(), accepted.tolist()):
+    for value, is_accepted in zip(score_series.tolist(), accepted.tolist(), strict=False):
         if value != value:
             continue
         bounded = max(0.0, min(1.0, float(value)))
@@ -106,7 +134,9 @@ def build_signal_snapshot_payload(
 
     work = pd.DataFrame(
         {
-            "symbol": frame.get("symbol", pd.Series([""] * len(frame), index=frame.index)).astype(str),
+            "symbol": frame.get("symbol", pd.Series([""] * len(frame), index=frame.index)).astype(
+                str
+            ),
             "score": score_series,
             "accepted": accepted,
         }
@@ -118,9 +148,9 @@ def build_signal_snapshot_payload(
         .sort_values(["accepted", "total", "symbol"], ascending=[False, False, True])
         .head(max(1, int(symbol_limit)))
     )
-    grouped["採用率"] = (
-        grouped["accepted"] / grouped["total"].clip(lower=1) * 100
-    ).map(lambda value: f"{value:.1f}%")
+    grouped["採用率"] = (grouped["accepted"] / grouped["total"].clip(lower=1) * 100).map(
+        lambda value: f"{value:.1f}%"
+    )
     grouped["平均スコア"] = grouped["mean_score"].map(
         lambda value: "-" if pd.isna(value) else f"{value:.2f}"
     )
@@ -139,7 +169,9 @@ def build_signal_snapshot_payload(
             "accepted": int(accepted.sum()),
             "buy_accepted": int(((actions == "buy") & accepted).sum()),
             "sell_accepted": int(((actions == "sell") & accepted).sum()),
-            "mean_score": float(score_series.mean()) if score_series.notna().any() else float("nan"),
+            "mean_score": (
+                float(score_series.mean()) if score_series.notna().any() else float("nan")
+            ),
         },
         "histogram": histogram,
         "symbol_frame": symbol_frame,
@@ -178,7 +210,9 @@ def load_signal_snapshot_artifacts(output_dir: Path) -> dict[str, object] | None
         recent = pd.read_csv(recent_path) if recent_path.exists() else pd.DataFrame()
     except Exception:  # noqa: BLE001
         recent = pd.DataFrame()
-    if not recent.empty and not {"trade_quantity", "trade_entry_notional_jpy"}.issubset(recent.columns):
+    if not recent.empty and not {"trade_quantity", "trade_entry_notional_jpy"}.issubset(
+        recent.columns
+    ):
         try:
             trades = pd.read_csv(output_dir / "trades.csv")
         except Exception:  # noqa: BLE001

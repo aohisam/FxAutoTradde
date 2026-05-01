@@ -3,7 +3,6 @@ from __future__ import annotations
 from fxautotrade_lab.config.loader import load_app_config, load_environment
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
-
 from tests.conftest import write_config
 
 

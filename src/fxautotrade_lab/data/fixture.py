@@ -16,7 +16,6 @@ from fxautotrade_lab.data.quality import validate_bar_frame
 from fxautotrade_lab.data.resample import resample_ohlcv
 from fxautotrade_lab.data.session import trading_days
 
-
 TIMEFRAME_MINUTES = {
     TimeFrame.MIN_1: 1,
     TimeFrame.MIN_5: 5,
@@ -51,7 +50,9 @@ class FixtureDataLoader:
         end: str | None = None,
     ) -> pd.DataFrame:
         expected_metadata = self._cache_metadata(timeframe)
-        if not self._metadata_matches(self.cache.load_metadata(symbol, timeframe), expected_metadata):
+        if not self._metadata_matches(
+            self.cache.load_metadata(symbol, timeframe), expected_metadata
+        ):
             self.cache.clear(symbol, timeframe)
         cached = self.cache.load(symbol, timeframe)
         if cached is not None:
@@ -60,7 +61,9 @@ class FixtureDataLoader:
             selection = cached.loc[(cached.index >= start_ts) & (cached.index <= end_ts)]
             if not selection.empty:
                 return selection.copy()
-        frame = self._generate_bars(symbol, timeframe, start or self.config.start_date, end or self.config.end_date)
+        frame = self._generate_bars(
+            symbol, timeframe, start or self.config.start_date, end or self.config.end_date
+        )
         self.cache.upsert(symbol, timeframe, frame)
         self.cache.save_metadata(symbol, timeframe, expected_metadata)
         return frame
@@ -114,7 +117,9 @@ class FixtureDataLoader:
         low = np.minimum(open_, close) - spread
         volume_base = 180_000 if timeframe == TimeFrame.DAY_1 else 30_000
         volume = np.maximum(
-            (volume_base * (1 + rng.normal(0, 0.25, len(index))) * (1 + np.abs(returns) * 18)).astype(int),
+            (
+                volume_base * (1 + rng.normal(0, 0.25, len(index))) * (1 + np.abs(returns) * 18)
+            ).astype(int),
             100,
         )
         frame = pd.DataFrame(

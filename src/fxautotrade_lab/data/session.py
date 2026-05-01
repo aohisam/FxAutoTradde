@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from fxautotrade_lab.core.constants import ASIA_TOKYO, FX_WEEKDAY_OPEN_LABEL_JA, FX_WEEKEND_CLOSED_LABEL_JA
+from fxautotrade_lab.core.constants import (
+    ASIA_TOKYO,
+    FX_WEEKDAY_OPEN_LABEL_JA,
+    FX_WEEKEND_CLOSED_LABEL_JA,
+)
 
 
 @dataclass(slots=True)
@@ -20,10 +24,7 @@ class SessionState:
 
 def get_session_state(timestamp: pd.Timestamp) -> SessionState:
     tokyo = pd.Timestamp(timestamp)
-    if tokyo.tzinfo is None:
-        tokyo = tokyo.tz_localize(ASIA_TOKYO)
-    else:
-        tokyo = tokyo.tz_convert(ASIA_TOKYO)
+    tokyo = tokyo.tz_localize(ASIA_TOKYO) if tokyo.tzinfo is None else tokyo.tz_convert(ASIA_TOKYO)
     is_weekday = tokyo.weekday() < 5
     is_regular = is_weekday
     label = FX_WEEKDAY_OPEN_LABEL_JA if is_regular else FX_WEEKEND_CLOSED_LABEL_JA

@@ -4,7 +4,6 @@ from pathlib import Path
 
 from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.config.loader import load_app_config
-
 from tests.conftest import write_config
 
 

@@ -7,7 +7,9 @@ import pandas as pd
 from fxautotrade_lab.features.indicators import rolling_return
 
 
-def relative_strength(symbol_close: pd.Series, benchmark_close: pd.Series, periods: int = 20) -> pd.Series:
+def relative_strength(
+    symbol_close: pd.Series, benchmark_close: pd.Series, periods: int = 20
+) -> pd.Series:
     aligned = pd.concat(
         [
             rolling_return(symbol_close, periods).rename("symbol"),

@@ -8,7 +8,11 @@ import pandas as pd
 
 from fxautotrade_lab.application import LabApplication
 from fxautotrade_lab.automation.controller import AutomationController
-from fxautotrade_lab.backtest.fx_backtest import _apply_walk_forward_filter, _run_fx_simulation, run_fx_backtest
+from fxautotrade_lab.backtest.fx_backtest import (
+    _apply_walk_forward_filter,
+    _run_fx_simulation,
+    run_fx_backtest,
+)
 from fxautotrade_lab.backtest.runner import BacktestRunner
 from fxautotrade_lab.config.models import AppConfig, EnvironmentConfig
 from fxautotrade_lab.core.enums import BrokerMode, OrderSide, TimeFrame
@@ -70,7 +74,11 @@ def _make_fx_config(tmp_path: Path) -> AppConfig:
                 },
             },
             "broker": {"mode": "local_sim"},
-            "automation": {"enabled": True, "poll_interval_seconds": 0, "sync_broker_state_each_cycle": False},
+            "automation": {
+                "enabled": True,
+                "poll_interval_seconds": 0,
+                "sync_broker_state_each_cycle": False,
+            },
             "reporting": {"output_dir": str(tmp_path / "reports")},
             "research": {
                 "output_dir": str(tmp_path / "research"),
@@ -122,8 +130,14 @@ def test_fx_ml_train_save_load_and_apply(tmp_path: Path) -> None:
     assert "entry_signal_rule_only" in filtered.columns
     assert filtered["entry_signal_rule_only"].all()
     assert filtered["ml_probability"].between(0, 1).all()
-    assert loaded.metadata["hyperparameters"]["learning_rate"] == config.strategy.fx_breakout_pullback.ml_filter.learning_rate
-    assert loaded.metadata["hyperparameters"]["max_iter"] == config.strategy.fx_breakout_pullback.ml_filter.max_iter
+    assert (
+        loaded.metadata["hyperparameters"]["learning_rate"]
+        == config.strategy.fx_breakout_pullback.ml_filter.learning_rate
+    )
+    assert (
+        loaded.metadata["hyperparameters"]["max_iter"]
+        == config.strategy.fx_breakout_pullback.ml_filter.max_iter
+    )
 
 
 def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) -> None:
@@ -150,11 +164,19 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
             return pd.Series(0.9, index=features.index)
 
     def fake_build_symbol_signals(*args, **kwargs):
-        return {"USD_JPY": signal_frame}, {"USD_JPY": {"1Min": signal_frame.copy()}}, {"USD_JPY": signal_frame.copy()}
+        return (
+            {"USD_JPY": signal_frame},
+            {"USD_JPY": {"1Min": signal_frame.copy()}},
+            {"USD_JPY": signal_frame.copy()},
+        )
 
     def fake_train_model(*args, **kwargs):
         train_windows.append((kwargs["train_start"], kwargs["train_end"]))
-        return _DummyModel(), _synthetic_dataset(4), {"model_path": "", "latest_model_path": "", "dataset_path": ""}
+        return (
+            _DummyModel(),
+            _synthetic_dataset(4),
+            {"model_path": "", "latest_model_path": "", "dataset_path": ""},
+        )
 
     def fake_save_model_and_dataset(model, dataset, config):
         save_calls.append(len(dataset.index))
@@ -175,14 +197,31 @@ def test_fx_walk_forward_windows_do_not_look_ahead(tmp_path: Path, monkeypatch) 
             "equity_curve": equity,
             "orders": pd.DataFrame(),
             "fills": pd.DataFrame(columns=["timestamp", "price", "quantity"]),
-            "trades": pd.DataFrame(columns=["entry_time", "exit_time", "net_pnl", "realized_r_net", "symbol", "hold_bars"]),
+            "trades": pd.DataFrame(
+                columns=[
+                    "entry_time",
+                    "exit_time",
+                    "net_pnl",
+                    "realized_r_net",
+                    "symbol",
+                    "hold_bars",
+                ]
+            ),
             "positions": pd.DataFrame(),
         }
 
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._build_symbol_signals", fake_build_symbol_signals)
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model)
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._save_model_and_dataset", fake_save_model_and_dataset)
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run)
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._build_symbol_signals", fake_build_symbol_signals
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._save_model_and_dataset", fake_save_model_and_dataset
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run
+    )
 
     result = run_fx_backtest(
         config,
@@ -253,8 +292,12 @@ def test_fx_walk_forward_reuses_single_label_simulation(tmp_path: Path, monkeypa
             {"model_path": "", "latest_model_path": "", "dataset_path": ""},
         )
 
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._run_fx_simulation", fake_run_fx_simulation)
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model)
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._run_fx_simulation", fake_run_fx_simulation
+    )
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest._train_model_from_history", fake_train_model
+    )
     monkeypatch.setattr(
         "fxautotrade_lab.backtest.fx_backtest._save_model_and_dataset",
         lambda model, dataset, config: {
@@ -324,7 +367,9 @@ def test_fx_label_simulation_uses_compact_engine_columns(tmp_path: Path, monkeyp
             "positions": pd.DataFrame(),
         }
 
-    monkeypatch.setattr("fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run)
+    monkeypatch.setattr(
+        "fxautotrade_lab.backtest.fx_backtest.FxQuotePortfolioSimulator.run", fake_sim_run
+    )
 
     _run_fx_simulation(
         config,
@@ -354,18 +399,30 @@ def test_save_labeled_dataset_uses_compact_storage_schema(tmp_path: Path) -> Non
     saved = save_labeled_dataset(dataset, tmp_path / "labels.parquet")
     loaded = pd.read_parquet(saved)
 
-    assert list(loaded.columns) == [column for column in STORAGE_COLUMNS if column in dataset.columns]
+    assert list(loaded.columns) == [
+        column for column in STORAGE_COLUMNS if column in dataset.columns
+    ]
     assert "entry_time" not in loaded.columns
     assert "exit_time" not in loaded.columns
     assert str(loaded["binary_label"].dtype) in {"int8", "Int8"}
     assert str(loaded["realized_r_net"].dtype) == "float32"
 
 
-def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(tmp_path: Path, monkeypatch) -> None:
+def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = _make_fx_config(tmp_path)
     calls: list[bool] = []
 
-    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+    def fake_run_fx_backtest(
+        config,
+        env,
+        *,
+        backtest_start,
+        backtest_end,
+        persist_ml_artifacts=True,
+        progress_callback=None,
+    ):
         calls.append(persist_ml_artifacts)
         return SimpleNamespace(
             metrics={"total_return": 0.0},
@@ -388,7 +445,9 @@ def test_research_pipeline_backtest_variant_disables_ml_artifact_persistence(tmp
     assert calls == [False]
 
 
-def test_research_scenario_variants_skip_heavy_artifact_exports(tmp_path: Path, monkeypatch) -> None:
+def test_research_scenario_variants_skip_heavy_artifact_exports(
+    tmp_path: Path, monkeypatch
+) -> None:
     config = _make_fx_config(tmp_path)
     config.research.spread_stress_multipliers = [1.0]
     config.research.entry_delay_scenarios = [0]
@@ -397,7 +456,15 @@ def test_research_scenario_variants_skip_heavy_artifact_exports(tmp_path: Path, 
     captured_exports: list[tuple[bool, bool, bool]] = []
     captured_callbacks: list[object] = []
 
-    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+    def fake_run_fx_backtest(
+        config,
+        env,
+        *,
+        backtest_start,
+        backtest_end,
+        persist_ml_artifacts=True,
+        progress_callback=None,
+    ):
         _ = env, backtest_start, backtest_end, persist_ml_artifacts, progress_callback
         captured_exports.append(
             (
@@ -408,7 +475,12 @@ def test_research_scenario_variants_skip_heavy_artifact_exports(tmp_path: Path, 
         )
         captured_callbacks.append(progress_callback)
         return SimpleNamespace(
-            metrics={"total_return": 0.0, "profit_factor": 1.0, "average_r": 0.0, "max_drawdown": 0.0},
+            metrics={
+                "total_return": 0.0,
+                "profit_factor": 1.0,
+                "average_r": 0.0,
+                "max_drawdown": 0.0,
+            },
             output_dir=str(tmp_path / "variant"),
             trades=pd.DataFrame(),
             signals=pd.DataFrame(),
@@ -431,7 +503,15 @@ def test_backtest_runner_does_not_persist_ml_artifacts(tmp_path: Path, monkeypat
     config = _make_fx_config(tmp_path)
     calls: list[bool] = []
 
-    def fake_run_fx_backtest(config, env, *, backtest_start, backtest_end, persist_ml_artifacts=True, progress_callback=None):
+    def fake_run_fx_backtest(
+        config,
+        env,
+        *,
+        backtest_start,
+        backtest_end,
+        persist_ml_artifacts=True,
+        progress_callback=None,
+    ):
         calls.append(persist_ml_artifacts)
         return SimpleNamespace(
             metrics={"total_return": 0.0},
@@ -510,9 +590,15 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
 
     progress_events: list[dict[str, object]] = []
 
-    monkeypatch.setattr(ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "USD_JPY"}]})
-    monkeypatch.setattr(ResearchPipeline, "_train_summary", lambda self, progress_callback=None: {"trained_rows": 8})
-    monkeypatch.setattr(ResearchPipeline, "_run_backtest_variant", lambda self, **kwargs: fake_result)
+    monkeypatch.setattr(
+        ResearchPipeline, "_validate_data", lambda self: {"symbols": [{"symbol": "USD_JPY"}]}
+    )
+    monkeypatch.setattr(
+        ResearchPipeline, "_train_summary", lambda self, progress_callback=None: {"trained_rows": 8}
+    )
+    monkeypatch.setattr(
+        ResearchPipeline, "_run_backtest_variant", lambda self, **kwargs: fake_result
+    )
     monkeypatch.setattr(
         ResearchPipeline,
         "_robustness_runs",
@@ -524,7 +610,9 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
         lambda self, mode, progress_callback=None: {"rows": [{"breakout_lookback": 20}]},
     )
 
-    summary = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run(progress_callback=progress_events.append)
+    summary = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run(
+        progress_callback=progress_events.append
+    )
 
     assert summary["run_id"]
     assert Path(summary["output_dir"]).exists()
@@ -537,7 +625,9 @@ def test_research_pipeline_minimal_integration(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         ResearchPipeline,
         "_run_backtest_variant",
-        lambda self, **kwargs: (_ for _ in ()).throw(AssertionError("backtest cache should be reused")),
+        lambda self, **kwargs: (_ for _ in ()).throw(
+            AssertionError("backtest cache should be reused")
+        ),
     )
     summary_cached = ResearchPipeline(config, EnvironmentConfig(), mode="quick").run()
 
@@ -592,12 +682,17 @@ def test_fx_automation_controller_smoke(tmp_path: Path, monkeypatch) -> None:
     )
     monkeypatch.setattr(controller.strategy, "generate_signal_frame", lambda frame: frame)
 
-    snapshots = [{"USD_JPY": {TimeFrame.MIN_1: execution_frame}}, {"USD_JPY": {TimeFrame.MIN_1: execution_frame}}]
+    snapshots = [
+        {"USD_JPY": {TimeFrame.MIN_1: execution_frame}},
+        {"USD_JPY": {TimeFrame.MIN_1: execution_frame}},
+    ]
 
     def fake_load_cycle_market_data(self):
         return snapshots.pop(0), None, None
 
-    monkeypatch.setattr(AutomationController, "_load_cycle_market_data", fake_load_cycle_market_data)
+    monkeypatch.setattr(
+        AutomationController, "_load_cycle_market_data", fake_load_cycle_market_data
+    )
     controller.run(max_cycles=1)
 
     assert controller.recent_signals
@@ -627,7 +722,9 @@ def test_fx_automation_controller_respects_entry_delay_bars(tmp_path: Path, monk
     submitted: list[dict[str, object]] = []
 
     class _Broker:
-        def submit_market_order(self, symbol: str, qty: int, side: OrderSide, reason: str) -> dict[str, object]:
+        def submit_market_order(
+            self, symbol: str, qty: int, side: OrderSide, reason: str
+        ) -> dict[str, object]:
             order = {
                 "order_id": f"{symbol}-{side.value}-{len(submitted) + 1}",
                 "symbol": symbol,
@@ -663,12 +760,16 @@ def test_fx_automation_controller_respects_entry_delay_bars(tmp_path: Path, monk
         "score": 0.80,
     }
 
-    controller._execute_pending_fx_orders("USD_JPY", signal_frame.iloc[:2], signal_frame.iloc[1], index[1])
+    controller._execute_pending_fx_orders(
+        "USD_JPY", signal_frame.iloc[:2], signal_frame.iloc[1], index[1]
+    )
 
     assert not submitted
     assert "USD_JPY" in controller.fx_pending_entries
 
-    controller._execute_pending_fx_orders("USD_JPY", signal_frame.iloc[:3], signal_frame.iloc[2], index[2])
+    controller._execute_pending_fx_orders(
+        "USD_JPY", signal_frame.iloc[:3], signal_frame.iloc[2], index[2]
+    )
 
     assert len(submitted) == 1
     assert submitted[0]["side"] == "buy"
@@ -723,7 +824,8 @@ def test_fx_automation_controller_retrains_model_on_schedule(tmp_path: Path, mon
     monkeypatch.setattr(controller.strategy, "generate_signal_frame", lambda frame: frame)
     monkeypatch.setattr(
         "fxautotrade_lab.automation.controller.train_fx_filter_model_run",
-        lambda config, env, as_of=None: retrain_calls.append(str(as_of)) or {"trained_rows": 4, "model_path": "", "latest_model_path": ""},
+        lambda config, env, as_of=None: retrain_calls.append(str(as_of))
+        or {"trained_rows": 4, "model_path": "", "latest_model_path": ""},
     )
 
     snapshots = [{"USD_JPY": {TimeFrame.MIN_1: execution_frame}}]
@@ -731,7 +833,9 @@ def test_fx_automation_controller_retrains_model_on_schedule(tmp_path: Path, mon
     def fake_load_cycle_market_data(self):
         return snapshots.pop(0), None, None
 
-    monkeypatch.setattr(AutomationController, "_load_cycle_market_data", fake_load_cycle_market_data)
+    monkeypatch.setattr(
+        AutomationController, "_load_cycle_market_data", fake_load_cycle_market_data
+    )
     controller.run(max_cycles=1)
 
     assert retrain_calls
@@ -767,7 +871,9 @@ def test_fx_automation_controller_enforces_jpy_cross_limit(tmp_path: Path) -> No
         }
     )
 
-    quantity, message = controller._entry_quantity_fx("EUR_JPY", latest, entry_order_side=OrderSide.BUY)
+    quantity, message = controller._entry_quantity_fx(
+        "EUR_JPY", latest, entry_order_side=OrderSide.BUY
+    )
 
     assert quantity == 0
     assert "JPY クロス保有上限" in message
@@ -802,7 +908,10 @@ research:
         encoding="utf-8",
     )
     app = LabApplication(config_path)
-    monkeypatch.setattr("fxautotrade_lab.application.train_fx_filter_model_run", lambda *args, **kwargs: {"trained_rows": 1})
+    monkeypatch.setattr(
+        "fxautotrade_lab.application.train_fx_filter_model_run",
+        lambda *args, **kwargs: {"trained_rows": 1},
+    )
     monkeypatch.setattr(
         "fxautotrade_lab.application.ResearchPipeline.run",
         lambda self, *, progress_callback=None: {"run_id": "r1", "output_dir": "x"},

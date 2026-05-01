@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Iterable
+from collections.abc import Callable, Iterable
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtWidgets import (

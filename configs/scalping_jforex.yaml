@@ -49,8 +49,12 @@ strategy:
     min_validation_net_pips: 0.0
     min_validation_profit_factor: 1.05
     min_validation_trade_count: 50
+    max_validation_drawdown_amount: null
+    max_validation_daily_loss_amount: null
+    max_validation_drawdown_pips: null
     fail_closed_on_bad_validation: true
     threshold_selection_method: replay
+    threshold_grid: [0.52, 0.54, 0.56, 0.58, 0.60, 0.62, 0.64, 0.66, 0.68, 0.70, 0.72]
     model_promotion_enabled: true
     require_validation_gate_passed_for_promotion: true
     min_test_profit_factor: 1.05

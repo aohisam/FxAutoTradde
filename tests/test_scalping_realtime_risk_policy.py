@@ -5,6 +5,7 @@ import pytest
 
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.ml.scalping import ScalpingTrainingConfig
+from fxautotrade_lab.persistence.scalping_outcomes import ScalpingOutcomeStore
 from fxautotrade_lab.simulation import scalping_realtime as realtime_module
 from fxautotrade_lab.simulation.scalping_policy import BlackoutWindow, ScalpingExecutionConfig
 from fxautotrade_lab.simulation.scalping_realtime import ScalpingRealtimePaperEngine
@@ -234,6 +235,107 @@ def test_realtime_paper_signal_history_keeps_all_records_while_snapshot_is_recen
     assert len(engine.signals) == 1_000
     assert len(engine.snapshot()["signals"]) == 500
     assert len(engine.full_history()["signals"]) == 1_005
+
+
+def test_realtime_paper_drain_new_records_does_not_duplicate() -> None:
+    engine = _engine(
+        ScalpingExecutionConfig(
+            starting_cash=100000.0,
+            fixed_order_amount=150000.0,
+            minimum_order_quantity=1,
+            quantity_step=1,
+        )
+    )
+    timestamp = pd.Timestamp("2026-02-02T09:00:00+09:00")
+    snapshot = engine.risk_state.snapshot(timestamp)
+    for index in range(1_005):
+        engine._record_signal(
+            signal_id=f"s{index}",
+            timestamp=timestamp + pd.Timedelta(seconds=index),
+            side="long",
+            accepted=False,
+            reject_reason="threshold_not_met",
+            probability=0.4,
+            long_probability=0.4,
+            short_probability=0.3,
+            threshold=0.5,
+            spread=0.1,
+            spread_mean=0.1,
+            spread_z=0.0,
+            volatility=1.0,
+            risk_snapshot_before=snapshot,
+            risk_snapshot_after=snapshot,
+        )
+
+    first = engine.drain_new_records()
+    second = engine.drain_new_records()
+
+    assert len(first["signals"]) == 1_005
+    assert first["trades"] == []
+    assert second == {"events": [], "signals": [], "trades": []}
+    assert len(engine.full_history()["signals"]) == 1_005
+
+
+def test_realtime_paper_incremental_outcome_append_keeps_all_signals(tmp_path) -> None:
+    engine = _engine(
+        ScalpingExecutionConfig(
+            starting_cash=100000.0,
+            fixed_order_amount=150000.0,
+            minimum_order_quantity=1,
+            quantity_step=1,
+        )
+    )
+    timestamp = pd.Timestamp("2026-02-02T09:00:00+09:00")
+    snapshot = engine.risk_state.snapshot(timestamp)
+    store = ScalpingOutcomeStore(tmp_path / "outcomes", storage_format="csv")
+    for batch in range(2):
+        for index in range(600):
+            record_index = batch * 600 + index
+            engine._record_signal(
+                signal_id=f"s{record_index}",
+                timestamp=timestamp + pd.Timedelta(seconds=record_index),
+                side="long",
+                accepted=False,
+                reject_reason="threshold_not_met",
+                probability=0.4,
+                long_probability=0.4,
+                short_probability=0.3,
+                threshold=0.5,
+                spread=0.1,
+                spread_mean=0.1,
+                spread_z=0.0,
+                volatility=1.0,
+                risk_snapshot_before=snapshot,
+                risk_snapshot_after=snapshot,
+            )
+        drained = engine.drain_new_records()
+        store.append_paper(
+            run_id=f"paper-{batch}",
+            model_id="model-paper",
+            model_path="latest.json",
+            model_promoted=True,
+            symbol="USD_JPY",
+            signals=pd.DataFrame(drained["signals"]),
+            trades=pd.DataFrame(drained["trades"]),
+        )
+
+    empty = engine.drain_new_records()
+    if empty["signals"] or empty["trades"]:
+        store.append_paper(
+            run_id="paper-empty",
+            model_id="model-paper",
+            model_path="latest.json",
+            model_promoted=True,
+            symbol="USD_JPY",
+            signals=pd.DataFrame(empty["signals"]),
+            trades=pd.DataFrame(empty["trades"]),
+        )
+
+    stored = store.load_signals()
+
+    assert len(stored.index) == 1_200
+    assert stored["signal_id"].nunique() == 1_200
+    assert len(engine.full_history()["signals"]) == 1_200
 
 
 def test_realtime_paper_accepted_signal_after_state_updates_after_exit() -> None:

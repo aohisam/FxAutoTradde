@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 import pandas as pd
 import yaml
@@ -14,7 +14,10 @@ import yaml
 from fxautotrade_lab.config.models import AppConfig
 from fxautotrade_lab.core.enums import RunKind
 from fxautotrade_lab.core.models import AutomationEvent, BacktestResult
-from fxautotrade_lab.reporting.signal_snapshot import build_signal_snapshot_payload, enrich_signals_with_trade_context
+from fxautotrade_lab.reporting.signal_snapshot import (
+    build_signal_snapshot_payload,
+    enrich_signals_with_trade_context,
+)
 
 
 def _json_default(value):
@@ -57,8 +60,7 @@ class SQLiteStore:
 
     def _init_schema(self) -> None:
         with self.connection() as conn:
-            conn.executescript(
-                """
+            conn.executescript("""
                 CREATE TABLE IF NOT EXISTS runs (
                     run_id TEXT PRIMARY KEY,
                     run_kind TEXT NOT NULL,
@@ -113,8 +115,7 @@ class SQLiteStore:
                     message_ja TEXT NOT NULL,
                     metadata_json TEXT
                 );
-                """
-            )
+                """)
 
     def save_backtest_result(self, result: BacktestResult, config: AppConfig) -> None:
         config_snapshot_yaml = yaml.safe_dump(
@@ -145,7 +146,9 @@ class SQLiteStore:
                     json.dumps(result.symbols, ensure_ascii=False),
                     json.dumps(result.metrics, ensure_ascii=False, default=_json_default),
                     json.dumps(result.in_sample_metrics, ensure_ascii=False, default=_json_default),
-                    json.dumps(result.out_of_sample_metrics, ensure_ascii=False, default=_json_default),
+                    json.dumps(
+                        result.out_of_sample_metrics, ensure_ascii=False, default=_json_default
+                    ),
                     json.dumps(result.walk_forward, ensure_ascii=False, default=_json_default),
                     config_snapshot_yaml,
                 ),
@@ -192,7 +195,9 @@ class SQLiteStore:
                     json.dumps({}, ensure_ascii=False),
                     json.dumps({}, ensure_ascii=False),
                     json.dumps([], ensure_ascii=False),
-                    yaml.safe_dump(config.model_dump(mode="json"), allow_unicode=True, sort_keys=False),
+                    yaml.safe_dump(
+                        config.model_dump(mode="json"), allow_unicode=True, sort_keys=False
+                    ),
                 ),
             )
             conn.executemany(
@@ -388,7 +393,11 @@ class SQLiteStore:
         accepted = int(summary_row["accepted"] or 0) if summary_row is not None else 0
         buy_accepted = int(summary_row["buy_accepted"] or 0) if summary_row is not None else 0
         sell_accepted = int(summary_row["sell_accepted"] or 0) if summary_row is not None else 0
-        mean_score = float(summary_row["mean_score"]) if summary_row is not None and summary_row["mean_score"] is not None else float("nan")
+        mean_score = (
+            float(summary_row["mean_score"])
+            if summary_row is not None and summary_row["mean_score"] is not None
+            else float("nan")
+        )
         histogram = {
             "all": [0] * bins,
             "accepted": [0] * bins,
@@ -483,12 +492,19 @@ class SQLiteStore:
             ).fetchone()
         return None if row is None else row["config_snapshot_yaml"]
 
-    def _insert_frame(self, conn: sqlite3.Connection, table: str, run_id: str, frame: pd.DataFrame) -> None:
+    def _insert_frame(
+        self, conn: sqlite3.Connection, table: str, run_id: str, frame: pd.DataFrame
+    ) -> None:
         if frame is None:
             return
         normalized = frame.reset_index(drop=True) if "timestamp" in frame.columns else frame.copy()
         records = [
-            (run_id, json.dumps({key: _sanitize_value(value) for key, value in row.items()}, ensure_ascii=False))
+            (
+                run_id,
+                json.dumps(
+                    {key: _sanitize_value(value) for key, value in row.items()}, ensure_ascii=False
+                ),
+            )
             for row in normalized.to_dict(orient="records")
         ]
         if records:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 _START_HTML = """
 <ol style="margin:0 0 0 18px;padding:0;line-height:1.9;">
   <li><b>監視通貨ペア</b> で運用ペアを 3〜8 追加</li>
@@ -52,7 +51,9 @@ def _shortcuts_for_platform() -> list[tuple[str, str]]:
     return [(label, _to_ctrl(key)) for label, key in _SHORTCUTS_MAC]
 
 
-_DEFAULT_HELP_URL = "https://github.com/anthropics/fxautotrade_lab#readme"  # TODO: 本番 URL に差し替え
+_DEFAULT_HELP_URL = (
+    "https://github.com/anthropics/fxautotrade_lab#readme"  # TODO: 本番 URL に差し替え
+)
 _DEFAULT_SUPPORT_EMAIL = "support@example.com"  # TODO: 本番メールに差し替え
 
 
@@ -146,9 +147,7 @@ def build_help_page(app_state=None):  # pragma: no cover - UI helper
     terms_lay.setContentsMargins(0, 0, 0, 0)
     terms_lay.setSpacing(10)
     for label, desc in _TERMS:
-        terms_lay.addWidget(
-            Detail(label, desc, variant="text", variant_size="sm")
-        )
+        terms_lay.addWidget(Detail(label, desc, variant="text", variant_size="sm"))
     terms_card = Card(title="用語")
     terms_card.addBodyWidget(terms_body)
     grid3.addWidget(terms_card, 1)

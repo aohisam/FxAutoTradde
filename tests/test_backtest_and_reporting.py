@@ -5,8 +5,10 @@ from pathlib import Path
 import pandas as pd
 
 from fxautotrade_lab.application import LabApplication
-from fxautotrade_lab.reporting.signal_snapshot import build_signal_snapshot_payload, load_signal_snapshot_artifacts
-
+from fxautotrade_lab.reporting.signal_snapshot import (
+    build_signal_snapshot_payload,
+    load_signal_snapshot_artifacts,
+)
 from tests.conftest import write_config
 
 

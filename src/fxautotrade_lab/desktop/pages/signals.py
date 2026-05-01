@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-
-_ACTION_LABELS = {"buy": "買い", "sell": "売り", "hold": "様子見", "flat": "様子見", "watch": "様子見"}
+_ACTION_LABELS = {
+    "buy": "買い",
+    "sell": "売り",
+    "hold": "様子見",
+    "flat": "様子見",
+    "watch": "様子見",
+}
 _SCORE_THRESHOLD = 0.55
 _SIDE_SEG_LABELS = ["全て", "買い", "売り", "様子見"]
 _HIST_SEG_LABELS = ["全体", "採用", "非採用"]
 
 
-def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma: no cover - UI helper
+def build_signals_page(
+    app_state, submit_task=None, log_message=None
+):  # pragma: no cover - UI helper
     import pandas as pd
-
     from PySide6.QtCore import QSignalBlocker, QSortFilterProxyModel, Qt
     from PySide6.QtGui import QColor, QPainter, QPen
     from PySide6.QtWidgets import (
@@ -156,9 +162,7 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             side_value = str(model.data(side_idx) or "")
             if self._symbol_filter and self._symbol_filter not in symbol:
                 return False
-            if self._side_filter and self._side_filter != side_value:
-                return False
-            return True
+            return not (self._side_filter and self._side_filter != side_value)
 
     page = QScrollArea()
     page.setWidgetResizable(True)
@@ -242,10 +246,14 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
     kpi_grid.setVerticalSpacing(12)
     for column in range(4):
         kpi_grid.setColumnStretch(column, 1)
-    kpi_total = KpiTile(label="総シグナル数", value="-", value_variant="mono", note="直近バックテスト")
+    kpi_total = KpiTile(
+        label="総シグナル数", value="-", value_variant="mono", note="直近バックテスト"
+    )
     kpi_accepted = KpiTile(label="採用率", value="-", value_variant="mono")
     kpi_side = KpiTile(label="買い / 売り", value="-", value_variant="mono-md")
-    kpi_score = KpiTile(label="平均スコア", value="-", value_variant="mono", note=f"閾値 {_SCORE_THRESHOLD:.2f}")
+    kpi_score = KpiTile(
+        label="平均スコア", value="-", value_variant="mono", note=f"閾値 {_SCORE_THRESHOLD:.2f}"
+    )
     for index, tile in enumerate([kpi_total, kpi_accepted, kpi_side, kpi_score]):
         kpi_grid.addWidget(tile, 0, index)
     layout.addLayout(kpi_grid)
@@ -344,7 +352,7 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
     def _accepted_series(df, scores):
         if "accepted" in df.columns:
             return df["accepted"].astype(bool)
-        return (scores.fillna(0.0) >= _SCORE_THRESHOLD)
+        return scores.fillna(0.0) >= _SCORE_THRESHOLD
 
     def _sub_score_series(df, names):
         for name in names:
@@ -384,12 +392,12 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
         out["トレンド"] = _sub_score_series(df, ["sub_score_trend_regime", "trend"]).map(
             lambda v: "-" if pd.isna(v) else f"{v:.2f}"
         )
-        out["Pullback"] = _sub_score_series(df, ["sub_score_pullback_continuation", "pullback"]).map(
-            lambda v: "-" if pd.isna(v) else f"{v:.2f}"
-        )
-        out["Compression"] = _sub_score_series(df, ["sub_score_breakout_compression", "compression"]).map(
-            lambda v: "-" if pd.isna(v) else f"{v:.2f}"
-        )
+        out["Pullback"] = _sub_score_series(
+            df, ["sub_score_pullback_continuation", "pullback"]
+        ).map(lambda v: "-" if pd.isna(v) else f"{v:.2f}")
+        out["Compression"] = _sub_score_series(
+            df, ["sub_score_breakout_compression", "compression"]
+        ).map(lambda v: "-" if pd.isna(v) else f"{v:.2f}")
         accepted = _accepted_series(df, scores)
         out["採用"] = accepted.map({True: "はい", False: "いいえ"})
         if "trade_quantity" in df.columns:
@@ -414,7 +422,9 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             explanations = df["explanation"].astype(str)
         else:
             explanations = pd.Series([""] * len(df), index=df.index)
-        out["説明"] = explanations.map(lambda value: value if len(value) <= 54 else f"{value[:54]}…")
+        out["説明"] = explanations.map(
+            lambda value: value if len(value) <= 54 else f"{value[:54]}…"
+        )
         return out.tail(300).reset_index(drop=True)
 
     def _symbol_frame(df):
@@ -429,14 +439,20 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
                 "accepted": accepted,
             }
         )
-        grouped = work.groupby("symbol").agg(
-            total=("symbol", "size"),
-            accepted=("accepted", "sum"),
-            mean_score=("score", "mean"),
-        ).reset_index()
+        grouped = (
+            work.groupby("symbol")
+            .agg(
+                total=("symbol", "size"),
+                accepted=("accepted", "sum"),
+                mean_score=("score", "mean"),
+            )
+            .reset_index()
+        )
         if grouped.empty:
             return None
-        grouped["採用率"] = (grouped["accepted"] / grouped["total"] * 100).map(lambda v: f"{v:.1f}%")
+        grouped["採用率"] = (grouped["accepted"] / grouped["total"] * 100).map(
+            lambda v: f"{v:.1f}%"
+        )
         grouped["平均スコア"] = grouped["mean_score"].map(
             lambda v: "-" if pd.isna(v) else f"{v:.2f}"
         )
@@ -459,13 +475,15 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
                     "mean_score": float("nan"),
                 },
                 "histogram": {"all": [0] * 11, "accepted": [0] * 11, "rejected": [0] * 11},
-                "symbol_frame": pd.DataFrame(columns=["通貨ペア", "総数", "採用", "採用率", "平均スコア"]),
+                "symbol_frame": pd.DataFrame(
+                    columns=["通貨ペア", "総数", "採用", "採用率", "平均スコア"]
+                ),
             }
         scores = _score_series(df)
         accepted = _accepted_series(df, scores)
         actions = _action_series(df)
         histogram = {"all": [0] * 11, "accepted": [0] * 11, "rejected": [0] * 11}
-        for value, is_accepted in zip(scores.tolist(), accepted.tolist()):
+        for value, is_accepted in zip(scores.tolist(), accepted.tolist(), strict=False):
             if value != value:
                 continue
             bounded = max(0.0, min(1.0, float(value)))
@@ -491,7 +509,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
         accepted_count = int(summary.get("accepted") or 0)
         buy = int(summary.get("buy_accepted") or 0)
         sell = int(summary.get("sell_accepted") or 0)
-        mean_score = float(summary.get("mean_score")) if summary.get("mean_score") is not None else float("nan")
+        mean_score = (
+            float(summary.get("mean_score"))
+            if summary.get("mean_score") is not None
+            else float("nan")
+        )
         if total <= 0:
             for tile in (kpi_total, kpi_accepted, kpi_side, kpi_score):
                 tile.set_value("-")
@@ -595,7 +617,10 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
         blocker = QSignalBlocker(result_combo)
         result_combo.clear()
         for row in runs:
-            result_combo.addItem(str(row.get("display_label") or row.get("run_id") or "-"), str(row.get("run_id") or ""))
+            result_combo.addItem(
+                str(row.get("display_label") or row.get("run_id") or "-"),
+                str(row.get("run_id") or ""),
+            )
         if not runs:
             result_combo.setEnabled(False)
             page._selected_run_id = None
@@ -604,7 +629,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             return
         result_combo.setEnabled(True)
         target_index = next(
-            (index for index, row in enumerate(runs) if str(row.get("run_id") or "") == str(preferred_run_id or "")),
+            (
+                index
+                for index, row in enumerate(runs)
+                if str(row.get("run_id") or "") == str(preferred_run_id or "")
+            ),
             0,
         )
         result_combo.setCurrentIndex(target_index)
@@ -677,7 +706,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             def _on_loaded(snapshot) -> None:  # noqa: ANN001
                 page._signal_snapshot = snapshot
                 recent_signals = snapshot.get("recent_signals")
-                page._full_frame = recent_signals.copy() if recent_signals is not None and not recent_signals.empty else None
+                page._full_frame = (
+                    recent_signals.copy()
+                    if recent_signals is not None and not recent_signals.empty
+                    else None
+                )
                 _set_loading(False)
                 _update_run_meta(_selected_run())
                 _render_all()
@@ -687,7 +720,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
                 last_result = getattr(app_state, "last_result", None)
                 if last_result is not None and getattr(last_result, "run_id", None) == str(run_id):
                     fallback_frame = getattr(last_result, "signals", None)
-                    page._full_frame = fallback_frame.copy() if fallback_frame is not None and not fallback_frame.empty else None
+                    page._full_frame = (
+                        fallback_frame.copy()
+                        if fallback_frame is not None and not fallback_frame.empty
+                        else None
+                    )
                     page._signal_snapshot = _snapshot_from_frame(page._full_frame)
                     _update_run_meta(_selected_run())
                     _render_all()
@@ -710,7 +747,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             last_result = getattr(app_state, "last_result", None)
             if last_result is not None and getattr(last_result, "run_id", None) == str(run_id):
                 fallback_frame = getattr(last_result, "signals", None)
-                page._full_frame = fallback_frame.copy() if fallback_frame is not None and not fallback_frame.empty else None
+                page._full_frame = (
+                    fallback_frame.copy()
+                    if fallback_frame is not None and not fallback_frame.empty
+                    else None
+                )
                 page._signal_snapshot = _snapshot_from_frame(page._full_frame)
             else:
                 page._full_frame = None
@@ -721,7 +762,11 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             return
         page._signal_snapshot = snapshot
         recent_signals = snapshot.get("recent_signals")
-        page._full_frame = recent_signals.copy() if recent_signals is not None and not recent_signals.empty else None
+        page._full_frame = (
+            recent_signals.copy()
+            if recent_signals is not None and not recent_signals.empty
+            else None
+        )
         _update_run_meta(_selected_run())
         _render_all()
 
@@ -731,13 +776,8 @@ def build_signals_page(app_state, submit_task=None, log_message=None):  # pragma
             current_run_id = getattr(getattr(app_state, "last_result", None), "run_id", None)
         _sync_saved_run_choices(current_run_id)
         selected_run_id = getattr(page, "_selected_run_id", None)
-        last_result = getattr(app_state, "last_result", None)
-        if (
-            not allow_io
-            or (
-                not page.isVisible()
-            )
-        ):
+        getattr(app_state, "last_result", None)
+        if not allow_io or (not page.isVisible()):
             _update_run_meta(_selected_run())
             return
         if getattr(page, "_loading_run_id", None) == selected_run_id:

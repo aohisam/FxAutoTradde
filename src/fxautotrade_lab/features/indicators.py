@@ -44,8 +44,12 @@ def adx(frame: pd.DataFrame, period: int = 14) -> pd.Series:
     plus_dm = up_move.where((up_move > down_move) & (up_move > 0), 0.0)
     minus_dm = down_move.where((down_move > up_move) & (down_move > 0), 0.0)
     atr_value = atr(frame, period).replace(0, np.nan)
-    plus_di = 100 * plus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_value
-    minus_di = 100 * minus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_value
+    plus_di = (
+        100 * plus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_value
+    )
+    minus_di = (
+        100 * minus_dm.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_value
+    )
     dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).fillna(0.0)
     return dx.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
 

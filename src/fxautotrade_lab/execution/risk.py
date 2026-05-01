@@ -33,7 +33,9 @@ class RiskManager:
             ),
         )
 
-    def size_position(self, cash: float, equity: float, price: float, atr_value: float) -> SizingResult:
+    def size_position(
+        self, cash: float, equity: float, price: float, atr_value: float
+    ) -> SizingResult:
         risk_budget = equity * self.config.risk_per_trade
         stop_distance = self._stop_distance(price, atr_value)
         qty_by_risk = int(risk_budget / stop_distance)
@@ -46,7 +48,9 @@ class RiskManager:
             risk_amount=quantity * stop_distance,
         )
 
-    def size_automation_position(self, cash: float, equity: float, price: float, atr_value: float) -> SizingResult:
+    def size_automation_position(
+        self, cash: float, equity: float, price: float, atr_value: float
+    ) -> SizingResult:
         if price <= 0:
             return SizingResult(quantity=0, notional=0.0, risk_amount=0.0)
         max_notional = self._max_notional(cash, equity)
@@ -80,6 +84,4 @@ class RiskManager:
             return False
         if open_positions >= self.config.max_positions:
             return False
-        if current_exposure_ratio >= self.config.max_portfolio_exposure:
-            return False
-        return True
+        return not current_exposure_ratio >= self.config.max_portfolio_exposure

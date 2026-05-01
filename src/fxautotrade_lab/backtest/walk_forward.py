@@ -7,7 +7,9 @@ import pandas as pd
 from fxautotrade_lab.backtest.metrics import compute_metrics
 
 
-def split_in_out_sample(equity_curve: pd.DataFrame, ratio: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_in_out_sample(
+    equity_curve: pd.DataFrame, ratio: float
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     if equity_curve.empty:
         return equity_curve, equity_curve
     split_index = max(1, int(len(equity_curve) * ratio))
@@ -32,12 +34,16 @@ def rolling_walk_forward(
             continue
         start_ts = slice_equity.index[0]
         end_ts = slice_equity.index[-1]
-        slice_trades = trades.loc[
-            (trades["entry_time"] >= start_ts) & (trades["exit_time"] <= end_ts)
-        ] if not trades.empty else trades
-        slice_fills = fills.loc[
-            (fills["timestamp"] >= start_ts) & (fills["timestamp"] <= end_ts)
-        ] if not fills.empty else fills
+        slice_trades = (
+            trades.loc[(trades["entry_time"] >= start_ts) & (trades["exit_time"] <= end_ts)]
+            if not trades.empty
+            else trades
+        )
+        slice_fills = (
+            fills.loc[(fills["timestamp"] >= start_ts) & (fills["timestamp"] <= end_ts)]
+            if not fills.empty
+            else fills
+        )
         summaries.append(
             {
                 "window": idx + 1,

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-import re
 
 import pandas as pd
 
 from fxautotrade_lab.core.constants import ASIA_TOKYO
 from fxautotrade_lab.core.enums import TimeFrame
-from fxautotrade_lab.core.symbols import display_fx_symbol, infer_fx_symbol_from_filename, normalize_fx_symbol
+from fxautotrade_lab.core.symbols import (
+    display_fx_symbol,
+    infer_fx_symbol_from_filename,
+    normalize_fx_symbol,
+)
 from fxautotrade_lab.data.cache import ParquetBarCache, timeframe_coverage_delta
 from fxautotrade_lab.data.quality import repair_ohlc_relationships
 from fxautotrade_lab.data.quote_bars import (
@@ -22,7 +26,6 @@ from fxautotrade_lab.data.quote_bars import (
     resample_quote_bars,
     validate_quote_bar_frame,
 )
-
 
 TIMEFRAME_RULES: dict[TimeFrame, str] = {
     TimeFrame.MIN_1: "1min",
@@ -176,17 +179,23 @@ class JForexCsvImporter:
             dtype="string",
             memory_map=True,
         )
-        timestamp_column = next((column for column in raw.columns if str(column).strip() == "Time (EET)"), "")
+        timestamp_column = next(
+            (column for column in raw.columns if str(column).strip() == "Time (EET)"), ""
+        )
         if not timestamp_column:
             raise ValueError("JForex CSV に Time (EET) 列がありません。")
-        timestamps = pd.to_datetime(raw[timestamp_column], format="%Y.%m.%d %H:%M:%S", errors="raise")
+        timestamps = pd.to_datetime(
+            raw[timestamp_column], format="%Y.%m.%d %H:%M:%S", errors="raise"
+        )
         return (
             pd.DatetimeIndex(timestamps)
             .tz_localize("Europe/Helsinki", ambiguous="infer", nonexistent="shift_forward")
             .tz_convert(ASIA_TOKYO)
         )
 
-    def _repair_quote_side_source(self, frame: pd.DataFrame, side: str) -> tuple[pd.DataFrame, list[str]]:
+    def _repair_quote_side_source(
+        self, frame: pd.DataFrame, side: str
+    ) -> tuple[pd.DataFrame, list[str]]:
         repaired, stats = repair_ohlc_relationships(
             frame,
             open_column=f"{side}_open",
@@ -196,7 +205,9 @@ class JForexCsvImporter:
         )
         if int(stats["adjusted_rows"]) <= 0:
             return repaired, []
-        max_adjustment = max(float(stats["max_high_adjustment"]), float(stats["max_low_adjustment"]))
+        max_adjustment = max(
+            float(stats["max_high_adjustment"]), float(stats["max_low_adjustment"])
+        )
         message = (
             f"{side.upper()} CSV に OHLC の不整合が {int(stats['adjusted_rows']):,} 行あり、自動補正しました。"
             f" high 補正 {int(stats['adjusted_high_rows']):,} 行 / low 補正 {int(stats['adjusted_low_rows']):,} 行"
@@ -228,14 +239,20 @@ class JForexCsvImporter:
         if crossed_rows <= 0:
             return repaired_bid, repaired_ask, []
         labels = ", ".join(adjusted_columns)
-        return repaired_bid, repaired_ask, [
-            "Bid / Ask CSV に負のスプレッドがあり、自動補正しました。"
-            f" 対象列: {labels} / 補正行数: {crossed_rows:,} / 最大補正幅 {max_adjustment:.6f}"
-        ]
+        return (
+            repaired_bid,
+            repaired_ask,
+            [
+                "Bid / Ask CSV に負のスプレッドがあり、自動補正しました。"
+                f" 対象列: {labels} / 補正行数: {crossed_rows:,} / 最大補正幅 {max_adjustment:.6f}"
+            ],
+        )
 
     def import_file(self, file_path: str | Path, symbol: str | None = None) -> JForexImportResult:
         source_path = Path(file_path)
-        normalized_symbol = normalize_fx_symbol(symbol) if symbol else infer_fx_symbol_from_filename(source_path)
+        normalized_symbol = (
+            normalize_fx_symbol(symbol) if symbol else infer_fx_symbol_from_filename(source_path)
+        )
         if is_combined_quote_csv(source_path):
             quote_frame = read_combined_quote_csv(source_path)
             base = build_quote_bar_frame(
@@ -286,7 +303,9 @@ class JForexCsvImporter:
                 "volume": renamed["volume"].astype(float),
             }
         )
-        timestamps = pd.to_datetime(renamed["timestamp"], format="%Y.%m.%d %H:%M:%S", errors="raise")
+        timestamps = pd.to_datetime(
+            renamed["timestamp"], format="%Y.%m.%d %H:%M:%S", errors="raise"
+        )
         frame.index = (
             pd.DatetimeIndex(timestamps)
             .tz_localize("Europe/Helsinki", ambiguous="infer", nonexistent="shift_forward")
@@ -342,12 +361,19 @@ class JForexCsvImporter:
                 f"Ask: {ask_start.isoformat()} - {ask_end.isoformat()}"
             )
         preflight_messages: list[str] = []
-        if bid_start != overlap_start or bid_end != overlap_end or ask_start != overlap_start or ask_end != overlap_end:
+        if (
+            bid_start != overlap_start
+            or bid_end != overlap_end
+            or ask_start != overlap_start
+            or ask_end != overlap_end
+        ):
             preflight_messages.append(
                 "Bid / Ask の CSV 期間が一致しないため、共通期間のみを取り込みます。\n"
                 f"共通期間: {overlap_start.isoformat()} - {overlap_end.isoformat()}"
             )
-        common_index = bid_timestamps[(bid_timestamps >= overlap_start) & (bid_timestamps <= overlap_end)].intersection(
+        common_index = bid_timestamps[
+            (bid_timestamps >= overlap_start) & (bid_timestamps <= overlap_end)
+        ].intersection(
             ask_timestamps[(ask_timestamps >= overlap_start) & (ask_timestamps <= overlap_end)],
             sort=False,
         )
@@ -389,7 +415,9 @@ class JForexCsvImporter:
         ask_frame = read_jforex_quote_csv(ask_source_path, "ask")
         bid_frame, bid_messages = self._repair_quote_side_source(bid_frame, "bid")
         ask_frame, ask_messages = self._repair_quote_side_source(ask_frame, "ask")
-        bid_frame, ask_frame, spread_messages = self._repair_crossed_quote_prices(bid_frame, ask_frame)
+        bid_frame, ask_frame, spread_messages = self._repair_crossed_quote_prices(
+            bid_frame, ask_frame
+        )
         trimmed_bid, trimmed_ask, messages = self._align_bid_ask_frames(bid_frame, ask_frame)
         messages = [*bid_messages, *ask_messages, *spread_messages, *messages]
         trimmed_bid = self._slice_to_ranges(trimmed_bid, missing_ranges)
@@ -461,7 +489,11 @@ class JForexCsvImporter:
                 "applied_end": "",
             }
         min1_existing = self.cache.load(symbol, TimeFrame.MIN_1)
-        min1_existing = validate_quote_bar_frame(min1_existing) if min1_existing is not None and not min1_existing.empty else None
+        min1_existing = (
+            validate_quote_bar_frame(min1_existing)
+            if min1_existing is not None and not min1_existing.empty
+            else None
+        )
         if not current_coverage and min1_existing is not None and not min1_existing.empty:
             seed = self._frame_coverage_range(min1_existing, TimeFrame.MIN_1)
             current_coverage = [seed] if seed is not None else []
@@ -482,12 +514,18 @@ class JForexCsvImporter:
         if imported_rows > 0:
             for range_start, range_end in missing_ranges:
                 for source_key in source_keys:
-                    self.cache.record_coverage(symbol, TimeFrame.MIN_1, range_start, range_end, source_key=source_key)
+                    self.cache.record_coverage(
+                        symbol, TimeFrame.MIN_1, range_start, range_end, source_key=source_key
+                    )
         for timeframe, rule in TIMEFRAME_RULES.items():
             if timeframe == TimeFrame.MIN_1:
                 continue
             existing_tf = self.cache.load(symbol, timeframe)
-            existing_tf = validate_quote_bar_frame(existing_tf) if existing_tf is not None and not existing_tf.empty else None
+            existing_tf = (
+                validate_quote_bar_frame(existing_tf)
+                if existing_tf is not None and not existing_tf.empty
+                else None
+            )
             cache_path = self.cache.path_for(symbol, timeframe)
             if imported_rows <= 0:
                 if cache_path.exists():
@@ -529,7 +567,11 @@ class JForexCsvImporter:
             "skipped_rows": skipped_rows,
             "cache_paths": cache_paths,
             "applied_start": applied_window[0].isoformat() if applied_window is not None else "",
-            "applied_end": accepted_base.index.max().isoformat() if applied_window is not None and not accepted_base.empty else "",
+            "applied_end": (
+                accepted_base.index.max().isoformat()
+                if applied_window is not None and not accepted_base.empty
+                else ""
+            ),
         }
 
     def _merge_frames(
@@ -578,10 +620,19 @@ class JForexCsvImporter:
                 f"Bid: {bid_start.isoformat()} - {bid_end.isoformat()}\n"
                 f"Ask: {ask_start.isoformat()} - {ask_end.isoformat()}"
             )
-        trimmed_bid = bid_frame.loc[(bid_frame.index >= overlap_start) & (bid_frame.index <= overlap_end)].copy()
-        trimmed_ask = ask_frame.loc[(ask_frame.index >= overlap_start) & (ask_frame.index <= overlap_end)].copy()
+        trimmed_bid = bid_frame.loc[
+            (bid_frame.index >= overlap_start) & (bid_frame.index <= overlap_end)
+        ].copy()
+        trimmed_ask = ask_frame.loc[
+            (ask_frame.index >= overlap_start) & (ask_frame.index <= overlap_end)
+        ].copy()
         messages: list[str] = []
-        if bid_start != overlap_start or bid_end != overlap_end or ask_start != overlap_start or ask_end != overlap_end:
+        if (
+            bid_start != overlap_start
+            or bid_end != overlap_end
+            or ask_start != overlap_start
+            or ask_end != overlap_end
+        ):
             messages.append(
                 "Bid / Ask の CSV 期間が一致しないため、共通期間のみを取り込みます。\n"
                 f"共通期間: {overlap_start.isoformat()} - {overlap_end.isoformat()}"
@@ -621,10 +672,7 @@ class JForexCsvImporter:
     ) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
         delta = timeframe_coverage_delta(timeframe)
         return self._merge_ranges(
-            [
-                (range_start - delta, range_end + delta)
-                for range_start, range_end in missing_ranges
-            ]
+            [(range_start - delta, range_end + delta) for range_start, range_end in missing_ranges]
         )
 
     def _missing_ranges(
@@ -656,7 +704,11 @@ class JForexCsvImporter:
                 break
         if cursor < end:
             missing.append((cursor, end))
-        return [(range_start, range_end) for range_start, range_end in missing if range_start < range_end]
+        return [
+            (range_start, range_end)
+            for range_start, range_end in missing
+            if range_start < range_end
+        ]
 
     def _merge_ranges(
         self,
@@ -690,7 +742,11 @@ class JForexCsvImporter:
         source_keys: list[str],
     ) -> None:
         existing = self.cache.load_metadata(symbol, timeframe)
-        history = list(existing.get("import_history", [])) if isinstance(existing.get("import_history", []), list) else []
+        history = (
+            list(existing.get("import_history", []))
+            if isinstance(existing.get("import_history", []), list)
+            else []
+        )
         history.append(
             {
                 "recorded_at": pd.Timestamp.now(tz=ASIA_TOKYO).isoformat(),

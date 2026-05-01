@@ -7,7 +7,6 @@ import pytest
 from fxautotrade_lab.automation.controller import AutomationController
 from fxautotrade_lab.config.loader import load_app_config, load_environment
 from fxautotrade_lab.core.enums import OrderSide
-
 from tests.conftest import write_config
 
 
@@ -51,7 +50,9 @@ class FakeBroker:
             }
         )
         if side == OrderSide.BUY:
-            self.positions = [{"symbol": symbol, "qty": str(qty), "side": "long", "avg_entry_price": "150.00"}]
+            self.positions = [
+                {"symbol": symbol, "qty": str(qty), "side": "long", "avg_entry_price": "150.00"}
+            ]
         else:
             self.positions = []
         return payload
@@ -149,7 +150,9 @@ def test_automation_manual_close_position(monkeypatch, tmp_path):
     config = load_app_config(write_config(tmp_path))
     env = load_environment()
     fake = FakeBroker(
-        positions=[{"symbol": "USD_JPY", "qty": "10000", "side": "long", "avg_entry_price": "150.00"}]
+        positions=[
+            {"symbol": "USD_JPY", "qty": "10000", "side": "long", "avg_entry_price": "150.00"}
+        ]
     )
     monkeypatch.setattr(AutomationController, "_build_broker", lambda self: fake)
     controller = AutomationController(config, env)

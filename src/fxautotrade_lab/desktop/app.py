@@ -7,8 +7,12 @@ import sys
 import threading
 from pathlib import Path
 
-from fxautotrade_lab.desktop.runtime import DesktopProcessManager, append_runtime_log, log_runtime_exception
 from fxautotrade_lab.desktop.assets import resolve_app_icon_path, should_apply_runtime_window_icon
+from fxautotrade_lab.desktop.runtime import (
+    DesktopProcessManager,
+    append_runtime_log,
+    log_runtime_exception,
+)
 
 
 def _boot_log(message: str) -> None:
@@ -52,14 +56,46 @@ def _prepare_qt_runtime() -> dict[str, str]:
     if platforms_dir.exists():
         os.environ.setdefault("QT_QPA_PLATFORM_PLUGIN_PATH", str(platforms_dir))
     if libraries_dir.exists():
-        for env_name in ("DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH"):
+        for env_name in (
+            "DYLD_LIBRARY_PATH",
+            "DYLD_FRAMEWORK_PATH",
+            "DYLD_FALLBACK_FRAMEWORK_PATH",
+        ):
             existing = os.environ.get(env_name, "")
             paths = [str(libraries_dir), *([existing] if existing else [])]
             os.environ[env_name] = ":".join(path for path in paths if path)
     helper_candidates = [
-        package_dir / "Qt" / "lib" / "QtWebEngineCore.framework" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
-        package_dir / "Qt" / "lib" / "QtWebEngineCore.framework" / "Versions" / "A" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
-        package_dir / "Qt" / "lib" / "QtWebEngineCore.framework" / "Versions" / "Resources" / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess",
+        package_dir
+        / "Qt"
+        / "lib"
+        / "QtWebEngineCore.framework"
+        / "Helpers"
+        / "QtWebEngineProcess.app"
+        / "Contents"
+        / "MacOS"
+        / "QtWebEngineProcess",
+        package_dir
+        / "Qt"
+        / "lib"
+        / "QtWebEngineCore.framework"
+        / "Versions"
+        / "A"
+        / "Helpers"
+        / "QtWebEngineProcess.app"
+        / "Contents"
+        / "MacOS"
+        / "QtWebEngineProcess",
+        package_dir
+        / "Qt"
+        / "lib"
+        / "QtWebEngineCore.framework"
+        / "Versions"
+        / "Resources"
+        / "Helpers"
+        / "QtWebEngineProcess.app"
+        / "Contents"
+        / "MacOS"
+        / "QtWebEngineProcess",
         Path(sys.executable).resolve().parents[1]
         / "Frameworks"
         / "PySide6"
@@ -116,7 +152,9 @@ def _resolve_config_path(config_path: Path | None) -> Path | None:
     if config_path is not None:
         return config_path
     bundle_resources = Path(sys.executable).resolve().parents[1] / "Resources"
-    pyinstaller_meipass = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", None) else None
+    pyinstaller_meipass = (
+        Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", None) else None
+    )
     candidates: list[Path] = []
     if getattr(sys, "frozen", False):
         candidates.append(bundle_resources / "configs" / "mac_desktop_default.yaml")
@@ -173,7 +211,7 @@ def launch_desktop_app(config_path: Path | None = None) -> None:  # pragma: no c
     process_manager.prepare()
     _install_exception_hooks()
     try:
-        from PySide6.QtCore import QCoreApplication, QTimer, Qt
+        from PySide6.QtCore import QCoreApplication, Qt, QTimer
         from PySide6.QtGui import QIcon
         from PySide6.QtWidgets import QApplication
     except ImportError as exc:

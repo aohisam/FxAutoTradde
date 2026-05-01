@@ -18,7 +18,6 @@ from fxautotrade_lab.data.gmo import GmoForexPublicClient
 from fxautotrade_lab.data.quality import validate_bar_frame
 from fxautotrade_lab.data.quote_bars import build_quote_bar_frame, validate_quote_bar_frame
 
-
 SUPPORTED_DIRECT_TIMEFRAMES = set(TimeFrame)
 
 RUNTIME_REFRESH_LOOKBACK: dict[TimeFrame, pd.Timedelta] = {
@@ -89,15 +88,21 @@ class MarketDataService:
         end: str | None = None,
     ) -> MarketDataBundle:
         symbols = {
-            symbol: self.load_symbol_frames(symbol, start=start, end=end, force_refresh=force_refresh)
+            symbol: self.load_symbol_frames(
+                symbol, start=start, end=end, force_refresh=force_refresh
+            )
             for symbol in self.config.watchlist.symbols
         }
         benchmarks = {
-            symbol: self.load_symbol_frames(symbol, start=start, end=end, force_refresh=force_refresh)
+            symbol: self.load_symbol_frames(
+                symbol, start=start, end=end, force_refresh=force_refresh
+            )
             for symbol in self.config.watchlist.benchmark_symbols
         }
         sectors = {
-            symbol: self.load_symbol_frames(symbol, start=start, end=end, force_refresh=force_refresh)
+            symbol: self.load_symbol_frames(
+                symbol, start=start, end=end, force_refresh=force_refresh
+            )
             for symbol in self.config.watchlist.sector_symbols
         }
         return MarketDataBundle(symbols=symbols, benchmarks=benchmarks, sectors=sectors)
@@ -118,8 +123,7 @@ class MarketDataService:
             runtime_refresh=self._uses_gmo(),
         )
         return {
-            timeframe: self._trim_for_runtime(result.frame)
-            for timeframe, result in results.items()
+            timeframe: self._trim_for_runtime(result.frame) for timeframe, result in results.items()
         }
 
     def load_runtime_bundle(self, as_of: pd.Timestamp | None = None) -> MarketDataBundle:
@@ -149,8 +153,12 @@ class MarketDataService:
         sync_results_cache: dict[str, dict[TimeFrame, MarketDataFrameLoad]] = {}
         selected_symbols = self._normalized_symbol_filter(symbols)
         watchlist_symbols = self._filter_symbols(self.config.watchlist.symbols, selected_symbols)
-        benchmark_symbols = self._filter_symbols(self.config.watchlist.benchmark_symbols, selected_symbols)
-        sector_symbols = self._filter_symbols(self.config.watchlist.sector_symbols, selected_symbols)
+        benchmark_symbols = self._filter_symbols(
+            self.config.watchlist.benchmark_symbols, selected_symbols
+        )
+        sector_symbols = self._filter_symbols(
+            self.config.watchlist.sector_symbols, selected_symbols
+        )
         total_symbol_loads = len(
             {
                 normalize_fx_symbol(symbol)
@@ -238,7 +246,9 @@ class MarketDataService:
                     category=category,
                     message=f"{normalized_symbol} の同期を開始しています。",
                 )
-                results = self._load_symbol_frame_results(normalized_symbol, force_refresh=force_refresh)
+                results = self._load_symbol_frame_results(
+                    normalized_symbol, force_refresh=force_refresh
+                )
                 results_cache[normalized_symbol] = results
                 if progress_state is not None:
                     progress_state["completed"] = completed + 1
@@ -261,10 +271,16 @@ class MarketDataService:
             return set()
         return {normalize_fx_symbol(symbol) for symbol in symbols if str(symbol).strip()}
 
-    def _filter_symbols(self, configured_symbols: list[str], selected_symbols: set[str]) -> list[str]:
+    def _filter_symbols(
+        self, configured_symbols: list[str], selected_symbols: set[str]
+    ) -> list[str]:
         if not selected_symbols:
             return list(configured_symbols)
-        return [symbol for symbol in configured_symbols if normalize_fx_symbol(symbol) in selected_symbols]
+        return [
+            symbol
+            for symbol in configured_symbols
+            if normalize_fx_symbol(symbol) in selected_symbols
+        ]
 
     def _emit_sync_progress(
         self,
@@ -351,7 +367,12 @@ class MarketDataService:
                 TimeFrame.MONTH_1,
             ]
         else:
-            required = [self.config.strategy.entry_timeframe, TimeFrame.DAY_1, TimeFrame.WEEK_1, TimeFrame.MONTH_1]
+            required = [
+                self.config.strategy.entry_timeframe,
+                TimeFrame.DAY_1,
+                TimeFrame.WEEK_1,
+                TimeFrame.MONTH_1,
+            ]
         ordered: list[TimeFrame] = []
         for timeframe in [*selected, *required]:
             if timeframe not in ordered:
@@ -444,18 +465,27 @@ class MarketDataService:
         except ValueError:
             cached = None
             cached_invalid = True
-        merged = cached if cached is not None else (self._empty_quote_frame(start_ts) if quote_aware else self._empty_frame(start_ts))
+        merged = (
+            cached
+            if cached is not None
+            else (self._empty_quote_frame(start_ts) if quote_aware else self._empty_frame(start_ts))
+        )
         coverage = [] if cached_invalid else self.cache.load_coverage(normalized_symbol, timeframe)
         if not coverage and cached is not None and not cached.empty:
             coverage = [self._coverage_seed_from_cached(cached, timeframe)]
-        requested_start = max(start_ts, GMO_INTRADAY_START) if timeframe in {
-            TimeFrame.MIN_1,
-            TimeFrame.MIN_5,
-            TimeFrame.MIN_10,
-            TimeFrame.MIN_15,
-            TimeFrame.MIN_30,
-            TimeFrame.HOUR_1,
-        } else start_ts
+        requested_start = (
+            max(start_ts, GMO_INTRADAY_START)
+            if timeframe
+            in {
+                TimeFrame.MIN_1,
+                TimeFrame.MIN_5,
+                TimeFrame.MIN_10,
+                TimeFrame.MIN_15,
+                TimeFrame.MIN_30,
+                TimeFrame.HOUR_1,
+            }
+            else start_ts
+        )
         missing_ranges = (
             [(requested_start, end_ts)]
             if force_refresh
@@ -484,10 +514,16 @@ class MarketDataService:
             )
             frame = self._slice_frame(frame, range_start, range_end)
             if quote_aware:
-                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_bid")
-                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_ask")
+                self.cache.record_coverage(
+                    normalized_symbol, timeframe, range_start, range_end, source_key="gmo_bid"
+                )
+                self.cache.record_coverage(
+                    normalized_symbol, timeframe, range_start, range_end, source_key="gmo_ask"
+                )
             else:
-                self.cache.record_coverage(normalized_symbol, timeframe, range_start, range_end, source_key="gmo_close")
+                self.cache.record_coverage(
+                    normalized_symbol, timeframe, range_start, range_end, source_key="gmo_close"
+                )
             if not frame.empty:
                 fetched_frames.append(frame)
         if fetched_frames:
@@ -506,7 +542,9 @@ class MarketDataService:
                     "timeframe": timeframe.value,
                     "symbol": normalized_symbol,
                     "price_type": self.config.data.gmo_price_type,
-                    "price_types": ["BID", "ASK"] if quote_aware else [self.config.data.gmo_price_type],
+                    "price_types": (
+                        ["BID", "ASK"] if quote_aware else [self.config.data.gmo_price_type]
+                    ),
                     "quote_aware": quote_aware,
                     "source_keys": ["gmo_bid", "gmo_ask"] if quote_aware else ["gmo_close"],
                     "version": 2 if quote_aware else 1,
@@ -519,12 +557,16 @@ class MarketDataService:
             refreshed=bool(fetched_frames),
         )
 
-    def _requested_window(self, start: str | None, end: str | None) -> tuple[pd.Timestamp, pd.Timestamp]:
+    def _requested_window(
+        self, start: str | None, end: str | None
+    ) -> tuple[pd.Timestamp, pd.Timestamp]:
         start_ts = self._coerce_window_timestamp(start or self.config.data.start_date, is_end=False)
         end_ts = self._coerce_window_timestamp(end or self.config.data.end_date, is_end=True)
         return start_ts, end_ts
 
-    def _slice_frame(self, frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    def _slice_frame(
+        self, frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp
+    ) -> pd.DataFrame:
         selection = frame.loc[(frame.index >= start) & (frame.index < end)]
         return selection.copy()
 
@@ -584,7 +626,9 @@ class MarketDataService:
         cached: pd.DataFrame,
         timeframe: TimeFrame,
     ) -> tuple[pd.Timestamp, pd.Timestamp]:
-        return pd.Timestamp(cached.index.min()), pd.Timestamp(cached.index.max()) + timeframe_coverage_delta(timeframe)
+        return pd.Timestamp(cached.index.min()), pd.Timestamp(
+            cached.index.max()
+        ) + timeframe_coverage_delta(timeframe)
 
     def _coerce_window_timestamp(self, value: str | pd.Timestamp, *, is_end: bool) -> pd.Timestamp:
         timestamp = pd.Timestamp(value)
@@ -630,7 +674,11 @@ class MarketDataService:
                 break
         if cursor < end:
             missing.append((cursor, end))
-        return [(range_start, range_end) for range_start, range_end in missing if range_start < range_end]
+        return [
+            (range_start, range_end)
+            for range_start, range_end in missing
+            if range_start < range_end
+        ]
 
     def _gmo_result_source(
         self,
@@ -685,9 +733,16 @@ class MarketDataService:
         return frame.iloc[-max_rows:].copy()
 
     def _looks_like_quote_frame(self, frame: pd.DataFrame) -> bool:
-        return {"bid_open", "bid_high", "bid_low", "bid_close", "ask_open", "ask_high", "ask_low", "ask_close"}.issubset(
-            set(frame.columns)
-        )
+        return {
+            "bid_open",
+            "bid_high",
+            "bid_low",
+            "bid_close",
+            "ask_open",
+            "ask_high",
+            "ask_low",
+            "ask_close",
+        }.issubset(set(frame.columns))
 
     def _fetch_gmo_quote_bars(
         self,
@@ -696,16 +751,28 @@ class MarketDataService:
         start: pd.Timestamp,
         end: pd.Timestamp,
     ) -> pd.DataFrame:
-        bid = self.gmo.fetch_bars(symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="BID")
-        ask = self.gmo.fetch_bars(symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="ASK")
+        bid = self.gmo.fetch_bars(
+            symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="BID"
+        )
+        ask = self.gmo.fetch_bars(
+            symbol, timeframe, start.to_pydatetime(), end.to_pydatetime(), price_type="ASK"
+        )
         if self._looks_like_quote_frame(bid):
             return validate_quote_bar_frame(bid)
         if self._looks_like_quote_frame(ask):
             return validate_quote_bar_frame(ask)
         if bid.empty or ask.empty:
             return self._empty_quote_frame(start)
-        bid_frame = bid.rename(columns={column: f"bid_{column}" for column in ("open", "high", "low", "close", "volume")})
-        ask_frame = ask.rename(columns={column: f"ask_{column}" for column in ("open", "high", "low", "close", "volume")})
+        bid_frame = bid.rename(
+            columns={
+                column: f"bid_{column}" for column in ("open", "high", "low", "close", "volume")
+            }
+        )
+        ask_frame = ask.rename(
+            columns={
+                column: f"ask_{column}" for column in ("open", "high", "low", "close", "volume")
+            }
+        )
         return build_quote_bar_frame(
             bid_frame[["bid_open", "bid_high", "bid_low", "bid_close", "bid_volume"]],
             ask_frame[["ask_open", "ask_high", "ask_low", "ask_close", "ask_volume"]],

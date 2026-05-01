@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -57,12 +57,16 @@ def _contextual_quantile_threshold(
     result = pd.Series(index=series.index, dtype="float64")
     for _, bucket_series in series.groupby(bucket_keys):
         ordered = bucket_series.sort_index()
-        threshold = ordered.rolling(window=f"{lookback_days}D", min_periods=min_periods, closed="left").quantile(quantile)
+        threshold = ordered.rolling(
+            window=f"{lookback_days}D", min_periods=min_periods, closed="left"
+        ).quantile(quantile)
         result.loc[threshold.index] = threshold
     return result.sort_index()
 
 
-def _rollover_blackout(index: pd.DatetimeIndex, rollover_hour_utc: int, blackout_minutes: int) -> pd.Series:
+def _rollover_blackout(
+    index: pd.DatetimeIndex, rollover_hour_utc: int, blackout_minutes: int
+) -> pd.Series:
     utc_index = index.tz_convert(UTC)
     rollover = utc_index.normalize() + pd.to_timedelta(rollover_hour_utc, unit="h")
     delta_minutes = pd.Series((utc_index - rollover).total_seconds() / 60.0, index=index).abs()
@@ -93,8 +97,10 @@ def _event_blackout_series(
         events = provider.list_events(index.min(), index.max(), {base, quote})
     except Exception as exc:
         failure_mode = (
-            event_cfg.realtime_failure_mode if runtime_mode else event_cfg.backtest_failure_mode
-        ).strip().lower()
+            (event_cfg.realtime_failure_mode if runtime_mode else event_cfg.backtest_failure_mode)
+            .strip()
+            .lower()
+        )
         if failure_mode == "warn_and_disable":
             logger.warning(
                 "経済イベント取得に失敗したためイベントフィルタを無効化します: symbol=%s runtime_mode=%s error=%s",
@@ -107,7 +113,7 @@ def _event_blackout_series(
             return pd.Series(True, index=index)
         if failure_mode == "fail_open":
             return pd.Series(False, index=index)
-        raise ValueError(f"未対応の event failure mode です: {failure_mode}")
+        raise ValueError(f"未対応の event failure mode です: {failure_mode}") from exc
     before = pd.Timedelta(minutes=event_cfg.event_blackout_before_minutes)
     after = pd.Timedelta(minutes=event_cfg.event_blackout_after_minutes)
     mask = pd.Series(False, index=index)
@@ -141,7 +147,9 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
     working["trend_bar_timestamp"] = working.index
     working["ema_fast_1h"] = ema(working["close"], fx_cfg.ema_fast)
     working["ema_slow_1h"] = ema(working["close"], fx_cfg.ema_slow)
-    working["ema_fast_slope_1h"] = working["ema_fast_1h"] - working["ema_fast_1h"].shift(fx_cfg.ema_slope_lookback)
+    working["ema_fast_slope_1h"] = working["ema_fast_1h"] - working["ema_fast_1h"].shift(
+        fx_cfg.ema_slope_lookback
+    )
     working["atr_1h"] = atr(working[["open", "high", "low", "close"]], fx_cfg.atr_period)
     working["adx_1h"] = adx(working[["open", "high", "low", "close"]], fx_cfg.adx_period)
     working["atr_floor_1h"] = (
@@ -150,24 +158,18 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
         .quantile(fx_cfg.min_atr_percentile)
         .shift(1)
     )
-    working["atr_not_too_low_1h"] = (
-        working["atr_floor_1h"].isna() | (working["atr_1h"] >= working["atr_floor_1h"])
+    working["atr_not_too_low_1h"] = working["atr_floor_1h"].isna() | (
+        working["atr_1h"] >= working["atr_floor_1h"]
     )
     working["trend_long_allowed_1h"] = (
         (working["ema_fast_1h"] > working["ema_slow_1h"])
         & (working["ema_fast_slope_1h"] > 0)
-        & (
-            (working["adx_1h"] >= fx_cfg.adx_threshold)
-            | working["atr_not_too_low_1h"]
-        )
+        & ((working["adx_1h"] >= fx_cfg.adx_threshold) | working["atr_not_too_low_1h"])
     )
     working["trend_short_allowed_1h"] = (
         (working["ema_fast_1h"] < working["ema_slow_1h"])
         & (working["ema_fast_slope_1h"] < 0)
-        & (
-            (working["adx_1h"] >= fx_cfg.adx_threshold)
-            | working["atr_not_too_low_1h"]
-        )
+        & ((working["adx_1h"] >= fx_cfg.adx_threshold) | working["atr_not_too_low_1h"])
     )
     working["ema_cross_down_1h"] = working["ema_fast_1h"] <= working["ema_slow_1h"]
     working["ema_cross_up_1h"] = working["ema_fast_1h"] >= working["ema_slow_1h"]
@@ -179,20 +181,14 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
     working["slope_nonneg_count_1h"] = _consecutive_true_counts(working["slope_nonneg_1h"])
     working["close_below_fast_count_1h"] = _consecutive_true_counts(working["close_below_fast_1h"])
     working["close_above_fast_count_1h"] = _consecutive_true_counts(working["close_above_fast_1h"])
-    working["partial_exit_trend_break_1h"] = (
-        ~working["ema_cross_down_1h"]
-        & (
-            (working["slope_nonpos_count_1h"] >= fx_cfg.trend_break_confirm_bars)
-            | (working["close_below_fast_count_1h"] >= fx_cfg.trend_break_confirm_bars)
-        )
+    working["partial_exit_trend_break_1h"] = ~working["ema_cross_down_1h"] & (
+        (working["slope_nonpos_count_1h"] >= fx_cfg.trend_break_confirm_bars)
+        | (working["close_below_fast_count_1h"] >= fx_cfg.trend_break_confirm_bars)
     )
     working["full_exit_trend_break_1h"] = working["ema_cross_down_1h"]
-    working["partial_exit_short_trend_break_1h"] = (
-        ~working["ema_cross_up_1h"]
-        & (
-            (working["slope_nonneg_count_1h"] >= fx_cfg.trend_break_confirm_bars)
-            | (working["close_above_fast_count_1h"] >= fx_cfg.trend_break_confirm_bars)
-        )
+    working["partial_exit_short_trend_break_1h"] = ~working["ema_cross_up_1h"] & (
+        (working["slope_nonneg_count_1h"] >= fx_cfg.trend_break_confirm_bars)
+        | (working["close_above_fast_count_1h"] >= fx_cfg.trend_break_confirm_bars)
     )
     working["full_exit_short_trend_break_1h"] = working["ema_cross_up_1h"]
     working["trend_gap_ratio_1h"] = (
@@ -201,7 +197,9 @@ def _prepare_trend_frame(frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame
     return working
 
 
-def _prepare_signal_frame(frame: pd.DataFrame, trend_frame: pd.DataFrame, config: AppConfig) -> pd.DataFrame:
+def _prepare_signal_frame(
+    frame: pd.DataFrame, trend_frame: pd.DataFrame, config: AppConfig
+) -> pd.DataFrame:
     fx_cfg = config.strategy.fx_breakout_pullback
     working = validate_quote_bar_frame(frame.copy())
     working["signal_bar_timestamp"] = working.index
@@ -227,22 +225,29 @@ def _prepare_signal_frame(frame: pd.DataFrame, trend_frame: pd.DataFrame, config
     working["breakout_level_15m"] = working["high"].rolling(fx_cfg.breakout_lookback).max().shift(1)
     working["donchian_low_15m"] = working["low"].rolling(fx_cfg.breakout_lookback).min().shift(1)
     working["breakout_short_level_15m"] = working["donchian_low_15m"]
-    working["donchian_width_15m"] = (working["breakout_level_15m"] - working["donchian_low_15m"]).fillna(0.0)
+    working["donchian_width_15m"] = (
+        working["breakout_level_15m"] - working["donchian_low_15m"]
+    ).fillna(0.0)
     working["breakout_atr_15m"] = working["atr_15m"].shift(1)
     working["breakout_strength_15m"] = (
-        (working["close"] - working["breakout_level_15m"]) / working["breakout_atr_15m"].replace(0, pd.NA)
+        (working["close"] - working["breakout_level_15m"])
+        / working["breakout_atr_15m"].replace(0, pd.NA)
     ).fillna(0.0)
     working["breakout_strength_short_15m"] = (
-        (working["breakout_short_level_15m"] - working["close"]) / working["breakout_atr_15m"].replace(0, pd.NA)
+        (working["breakout_short_level_15m"] - working["close"])
+        / working["breakout_atr_15m"].replace(0, pd.NA)
     ).fillna(0.0)
     working["breakout_signal_15m"] = (
-        (working["close"] > (working["breakout_level_15m"] + fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"]))
-        & working["trend_long_allowed_1h"].fillna(False)
-    )
+        working["close"]
+        > (working["breakout_level_15m"] + fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"])
+    ) & working["trend_long_allowed_1h"].fillna(False)
     working["breakout_signal_short_15m"] = (
-        (working["close"] < (working["breakout_short_level_15m"] - fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"]))
-        & working["trend_short_allowed_1h"].fillna(False)
-    )
+        working["close"]
+        < (
+            working["breakout_short_level_15m"]
+            - fx_cfg.breakout_buffer_atr * working["breakout_atr_15m"]
+        )
+    ) & working["trend_short_allowed_1h"].fillna(False)
     return working
 
 
@@ -258,7 +263,9 @@ def build_fx_feature_set(
     execution_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.execution_timeframe].copy())
     signal_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.signal_timeframe].copy())
     trend_frame = validate_quote_bar_frame(bars_by_timeframe[fx_cfg.trend_timeframe].copy())
-    swing_base = bars_by_timeframe.get(fx_cfg.swing_timeframe, bars_by_timeframe[fx_cfg.execution_timeframe])
+    swing_base = bars_by_timeframe.get(
+        fx_cfg.swing_timeframe, bars_by_timeframe[fx_cfg.execution_timeframe]
+    )
     swing_frame = validate_quote_bar_frame(swing_base.copy())
     provider = event_provider or build_event_provider(fx_cfg.event_filter)
     daily_frame = (
@@ -325,9 +332,8 @@ def build_fx_feature_set(
         lookback_days=fx_cfg.spread_context_lookback_days,
         quantile=fx_cfg.spread_percentile_threshold,
     )
-    execution["spread_context_ok"] = (
-        execution["spread_context_limit"].isna()
-        | (execution["spread_close"] <= execution["spread_context_limit"])
+    execution["spread_context_ok"] = execution["spread_context_limit"].isna() | (
+        execution["spread_close"] <= execution["spread_context_limit"]
     )
     execution["spread_context_ratio"] = (
         execution["spread_close"] / execution["spread_context_limit"].replace(0, pd.NA)
@@ -363,10 +369,12 @@ def build_fx_feature_set(
         daily_enrich["prev_day_low"] = daily_enrich["low"].shift(1)
         execution = _asof_join(execution, daily_enrich, ["prev_day_high", "prev_day_low"])
         execution["breakout_distance_from_day_high"] = (
-            (execution["close"] - execution["prev_day_high"]) / execution["atr_15m"].replace(0, pd.NA)
+            (execution["close"] - execution["prev_day_high"])
+            / execution["atr_15m"].replace(0, pd.NA)
         ).fillna(0.0)
         execution["breakout_distance_from_day_low"] = (
-            (execution["close"] - execution["prev_day_low"]) / execution["atr_15m"].replace(0, pd.NA)
+            (execution["close"] - execution["prev_day_low"])
+            / execution["atr_15m"].replace(0, pd.NA)
         ).fillna(0.0)
     else:
         execution["prev_day_high"] = pd.NA

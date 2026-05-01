@@ -6,7 +6,6 @@ import html as html_mod
 
 import pandas as pd
 
-
 MODE_LABELS = {
     "local_sim": "ローカルシミュレーション",
     "gmo_sim": "GMO 実時間シミュレーション",
@@ -536,7 +535,16 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     kpi_daily = KpiTile(label="日次損益", value="-", value_variant="mono")
     kpi_positions = KpiTile(label="保有ポジション", value="-", value_variant="mono")
     kpi_heartbeat = KpiTile(label="更新状況", value="-", value_variant="mono-md")
-    tiles = [kpi_mode, kpi_conn, kpi_data, kpi_size, kpi_equity, kpi_daily, kpi_positions, kpi_heartbeat]
+    tiles = [
+        kpi_mode,
+        kpi_conn,
+        kpi_data,
+        kpi_size,
+        kpi_equity,
+        kpi_daily,
+        kpi_positions,
+        kpi_heartbeat,
+    ]
     for index, tile in enumerate(tiles):
         kpi_grid.addWidget(tile, index // 4, index % 4)
     layout.addLayout(kpi_grid)
@@ -655,7 +663,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
 
     # Column delegates
     # positions: 通貨ペア(0) 売買(1) 数量(2) 平均取得(3) 現在値(4) 時価評価(5) 含み損益(6) 有効ストップ(7) 次トレール(8) 保有バー(9)
-    positions_side_delegate = ChipDelegate(positions_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    positions_side_delegate = ChipDelegate(
+        positions_view, lambda t: "accent" if t in ("買い", "売り") else None
+    )
     page._delegates.append(positions_side_delegate)
     positions_view.setItemDelegateForColumn(1, positions_side_delegate)
 
@@ -665,7 +675,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     signals_view.setItemDelegateForColumn(2, signals_chip_delegate)
 
     # orders: 注文時刻(0) 通貨ペア(1) 売買(2) 数量(3) 約定数量(4) 平均価格(5) 状態(6) 理由(7)
-    orders_side_delegate = ChipDelegate(orders_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    orders_side_delegate = ChipDelegate(
+        orders_view, lambda t: "accent" if t in ("買い", "売り") else None
+    )
     page._delegates.append(orders_side_delegate)
     orders_view.setItemDelegateForColumn(2, orders_side_delegate)
     orders_status_delegate = ChipDelegate(orders_view, order_status_tone)
@@ -673,7 +685,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     orders_view.setItemDelegateForColumn(6, orders_status_delegate)
 
     # fills: 約定時刻 通貨ペア 売買 数量 価格 注文ID
-    fills_side_delegate = ChipDelegate(fills_view, lambda t: "accent" if t in ("買い", "売り") else None)
+    fills_side_delegate = ChipDelegate(
+        fills_view, lambda t: "accent" if t in ("買い", "売り") else None
+    )
     page._delegates.append(fills_side_delegate)
     fills_view.setItemDelegateForColumn(2, fills_side_delegate)
 
@@ -774,7 +788,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         )
         set_button_enabled(
             close_all_button,
-            bool(page._raw_positions_frame.to_dict("records")) and page._manual_supported and not is_busy,
+            bool(page._raw_positions_frame.to_dict("records"))
+            and page._manual_supported
+            and not is_busy,
             busy=is_busy,
         )
 
@@ -797,7 +813,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
 
     # ---- Snapshot apply ----
 
-    def _apply_status_chips(status_key: str, mode_key: str, connection_key: str, stream_health: bool) -> None:
+    def _apply_status_chips(
+        status_key: str, mode_key: str, connection_key: str, stream_health: bool
+    ) -> None:
         # running chip
         tone_map = {
             "running": "running",
@@ -897,10 +915,14 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
             snapshot = app_state.runtime_status_snapshot()
         except Exception as exc:  # noqa: BLE001 - UI feedback
             snapshot_error = str(exc)
-        current_mode = snapshot["mode"] if snapshot is not None else app_state.config.broker.mode.value
+        current_mode = (
+            snapshot["mode"] if snapshot is not None else app_state.config.broker.mode.value
+        )
         current_status = snapshot["status"] if snapshot is not None else "stopped"
         page._latest_status = current_status
-        connection_state = snapshot.get("connection_state", "idle") if snapshot is not None else "idle"
+        connection_state = (
+            snapshot.get("connection_state", "idle") if snapshot is not None else "idle"
+        )
         stream_state = snapshot.get("stream_state", {}) if snapshot is not None else {}
         stream_healthy = bool(stream_state.get("healthy", False))
         _apply_status_chips(current_status, current_mode, connection_state, stream_healthy)
@@ -948,7 +970,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
                 }.get(app_state.config.data.source, app_state.config.data.source)
             )
             kpi_data.set_note(f"エントリー足: {app_state.config.strategy.entry_timeframe.value}")
-            kpi_size.set_value(_label(ORDER_SIZE_LABELS, app_state.config.risk.order_size_mode.value))
+            kpi_size.set_value(
+                _label(ORDER_SIZE_LABELS, app_state.config.risk.order_size_mode.value)
+            )
             kpi_size.set_note("開始後に数量計算へ反映")
             kpi_equity.set_value("-")
             kpi_equity.set_note("口座情報は停止中")
@@ -1000,7 +1024,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         )
         kpi_data.set_note(f"エントリー足: {snapshot.get('entry_timeframe', '-')}")
 
-        order_size_mode = snapshot.get("order_size_mode", app_state.config.risk.order_size_mode.value)
+        order_size_mode = snapshot.get(
+            "order_size_mode", app_state.config.risk.order_size_mode.value
+        )
         kpi_size.set_value(_label(ORDER_SIZE_LABELS, order_size_mode))
         if order_size_mode == "fixed_amount":
             kpi_size.set_note(f"{app_state.config.risk.fixed_order_amount:,.0f} JPY 相当")
@@ -1149,16 +1175,26 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
         )
         refresh_snapshot()
 
-    def _apply_width(view: QTableView, model: DataFrameTableModel, width_map: dict[int, int]) -> None:
+    def _apply_width(
+        view: QTableView, model: DataFrameTableModel, width_map: dict[int, int]
+    ) -> None:
         header = view.horizontalHeader()
         for column, width in width_map.items():
             if column < model.columnCount():
                 header.resizeSection(column, width)
 
     def _apply_table_widths() -> None:
-        _apply_width(positions_view, positions_model, {0: 90, 1: 82, 2: 70, 3: 92, 4: 92, 5: 100, 6: 110, 7: 100, 8: 100, 9: 72})
-        _apply_width(signals_view, signals_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 64, 5: 110, 6: 300})
-        _apply_width(orders_view, orders_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 78, 5: 92, 6: 100, 7: 220})
+        _apply_width(
+            positions_view,
+            positions_model,
+            {0: 90, 1: 82, 2: 70, 3: 92, 4: 92, 5: 100, 6: 110, 7: 100, 8: 100, 9: 72},
+        )
+        _apply_width(
+            signals_view, signals_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 64, 5: 110, 6: 300}
+        )
+        _apply_width(
+            orders_view, orders_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 78, 5: 92, 6: 100, 7: 220}
+        )
         _apply_width(fills_view, fills_model, {0: 115, 1: 90, 2: 82, 3: 70, 4: 92, 5: 180})
         _apply_width(events_view, events_model, {0: 115, 1: 82, 2: 520})
 
@@ -1167,7 +1203,9 @@ def build_automation_page(app_state, submit_task, log_message):  # pragma: no co
     kill_button.clicked.connect(stop_loop)
     close_selected_button.clicked.connect(close_selected_position)
     close_all_button.clicked.connect(close_all_positions)
-    positions_view.selectionModel().selectionChanged.connect(lambda *_args: refresh_position_detail())
+    positions_view.selectionModel().selectionChanged.connect(
+        lambda *_args: refresh_position_detail()
+    )
     page._refresh_timer.timeout.connect(handle_periodic_refresh)
     page.refresh = refresh_snapshot
     refresh_snapshot()

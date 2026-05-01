@@ -34,7 +34,11 @@ class MultiChannelNotifier:
         return results
 
     def _notify_desktop(self, title: str, message: str, subtitle: str = "") -> bool:
-        if "desktop" not in self.config.channels or platform.system() != "Darwin" or os.getenv("PYTEST_CURRENT_TEST"):
+        if (
+            "desktop" not in self.config.channels
+            or platform.system() != "Darwin"
+            or os.getenv("PYTEST_CURRENT_TEST")
+        ):
             return False
         script = (
             'display notification "'
@@ -45,17 +49,27 @@ class MultiChannelNotifier:
         )
         if subtitle:
             script += ' subtitle "' + _escape_applescript(subtitle) + '"'
-        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["osascript", "-e", script], capture_output=True, text=True, check=False
+        )
         return result.returncode == 0
 
     def _notify_sound(self) -> bool:
-        if "sound" not in self.config.channels or platform.system() != "Darwin" or os.getenv("PYTEST_CURRENT_TEST"):
+        if (
+            "sound" not in self.config.channels
+            or platform.system() != "Darwin"
+            or os.getenv("PYTEST_CURRENT_TEST")
+        ):
             return False
         sound_path = Path("/System/Library/Sounds") / f"{self.config.sound_name}.aiff"
         if sound_path.exists():
-            result = subprocess.run(["afplay", str(sound_path)], capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                ["afplay", str(sound_path)], capture_output=True, text=True, check=False
+            )
             return result.returncode == 0
-        result = subprocess.run(["osascript", "-e", "beep 1"], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            ["osascript", "-e", "beep 1"], capture_output=True, text=True, check=False
+        )
         return result.returncode == 0
 
     def _notify_log(self, title: str, message: str, subtitle: str = "") -> bool:

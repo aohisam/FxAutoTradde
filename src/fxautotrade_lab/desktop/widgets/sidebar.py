@@ -5,7 +5,6 @@ from __future__ import annotations
 import platform
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -17,31 +16,42 @@ from PySide6.QtWidgets import (
 
 from ..theme import Tokens, load_icon, repolish
 
-
 APP_VERSION = "0.9.3"
 
 
 # (section_caption, [(page_key, label, icon_name), ...])
 NAV_SPEC: list[tuple[str, list[tuple[str, str, str]]]] = [
-    ("ダッシュボード", [
-        ("overview", "概要", "nav_overview"),
-        ("watchlist", "監視通貨ペア", "nav_watchlist"),
-    ]),
-    ("リサーチ", [
-        ("data_sync", "データ同期", "nav_data_sync"),
-        ("backtest", "バックテスト", "nav_backtest"),
-        ("signals", "シグナル分析", "nav_signals"),
-    ]),
-    ("実行", [
-        ("automation", "実時間シミュレーション", "nav_automation"),
-        ("chart", "チャート", "nav_chart"),
-        ("history", "取引履歴", "nav_history"),
-        ("reports", "レポート", "nav_reports"),
-    ]),
-    ("システム", [
-        ("settings", "設定", "nav_settings"),
-        ("help", "ヘルプ", "nav_help"),
-    ]),
+    (
+        "ダッシュボード",
+        [
+            ("overview", "概要", "nav_overview"),
+            ("watchlist", "監視通貨ペア", "nav_watchlist"),
+        ],
+    ),
+    (
+        "リサーチ",
+        [
+            ("data_sync", "データ同期", "nav_data_sync"),
+            ("backtest", "バックテスト", "nav_backtest"),
+            ("signals", "シグナル分析", "nav_signals"),
+        ],
+    ),
+    (
+        "実行",
+        [
+            ("automation", "実時間シミュレーション", "nav_automation"),
+            ("chart", "チャート", "nav_chart"),
+            ("history", "取引履歴", "nav_history"),
+            ("reports", "レポート", "nav_reports"),
+        ],
+    ),
+    (
+        "システム",
+        [
+            ("settings", "設定", "nav_settings"),
+            ("help", "ヘルプ", "nav_help"),
+        ],
+    ),
 ]
 
 

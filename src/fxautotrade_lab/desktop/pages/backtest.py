@@ -4,20 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 TF_SEG_LABELS = ["5m", "15m", "1h", "4h"]
 _LATEST_MODEL_TOKEN = "__LATEST__"
 
 
 def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cover - UI helper
     import pandas as pd
-
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QCheckBox,
         QComboBox,
-        QDateEdit,
         QFormLayout,
         QFrame,
         QGridLayout,
@@ -33,7 +30,6 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         QWidget,
     )
 
-    from fxautotrade_lab.desktop.models import load_dataframe_model_class
     from fxautotrade_lab.desktop.date_inputs import create_popup_date_edit, default_popup_qdate
     from fxautotrade_lab.desktop.ml_labels import (
         ML_MODE_CHOICES,
@@ -44,8 +40,8 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         research_mode_description,
         research_mode_label,
         strategy_description,
-        strategy_label,
     )
+    from fxautotrade_lab.desktop.models import load_dataframe_model_class
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.kpi import KpiTile
@@ -70,7 +66,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     header_text.setSpacing(2)
     title = QLabel("バックテスト")
     title.setProperty("role", "h1")
-    subtitle = QLabel("バックテスト設定で単発検証を行い、別カードから ML モデル学習と研究パイプラインを実行できます。")
+    subtitle = QLabel(
+        "バックテスト設定で単発検証を行い、別カードから ML モデル学習と研究パイプラインを実行できます。"
+    )
     subtitle.setProperty("role", "muted")
     subtitle.setWordWrap(True)
     header_text.addWidget(title)
@@ -210,7 +208,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     mt = QHBoxLayout(ml_tools)
     mt.setContentsMargins(0, 0, 0, 0)
     mt.setSpacing(8)
-    ml_hint = QLabel("ここでは保存モデルの更新と研究レポート生成を行います。バックテスト用の ML 設定とは独立しています。")
+    ml_hint = QLabel(
+        "ここでは保存モデルの更新と研究レポート生成を行います。バックテスト用の ML 設定とは独立しています。"
+    )
     ml_hint.setProperty("role", "muted2")
     ml_hint.setWordWrap(True)
     mt.addWidget(ml_hint)
@@ -273,14 +273,14 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
     summary_card = Card(title="結果サマリー", header_right=run_id_hint)
 
     kpi_specs = [
-        ("total_return",      "総損益"),
+        ("total_return", "総損益"),
         ("annualized_return", "年率換算"),
-        ("max_drawdown",      "最大ドローダウン"),
-        ("win_rate",          "勝率"),
-        ("sharpe",            "シャープレシオ"),
-        ("trades",            "取引回数"),
-        ("avg_hold",          "平均保有期間"),
-        ("sample_split",      "IS / OOS"),
+        ("max_drawdown", "最大ドローダウン"),
+        ("win_rate", "勝率"),
+        ("sharpe", "シャープレシオ"),
+        ("trades", "取引回数"),
+        ("avg_hold", "平均保有期間"),
+        ("sample_split", "IS / OOS"),
     ]
     kpi_grid = QGridLayout()
     kpi_grid.setHorizontalSpacing(12)
@@ -395,7 +395,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             out["時刻"] = ""
         out["通貨ペア"] = df["symbol"].astype(str) if "symbol" in df.columns else ""
         if "side" in df.columns:
-            out["売買"] = df["side"].astype(str).str.lower().map(_SIDE_LABELS).fillna(df["side"].astype(str))
+            out["売買"] = (
+                df["side"].astype(str).str.lower().map(_SIDE_LABELS).fillna(df["side"].astype(str))
+            )
         else:
             out["売買"] = ""
         if "quantity" in df.columns:
@@ -404,7 +406,11 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             out["数量"] = df["qty"]
         else:
             out["数量"] = 0
-        out["価格"] = df["price"] if "price" in df.columns else (df.get("entry_price", 0) if hasattr(df, "get") else 0)
+        out["価格"] = (
+            df["price"]
+            if "price" in df.columns
+            else (df.get("entry_price", 0) if hasattr(df, "get") else 0)
+        )
         if "pnl" in df.columns:
             out["損益"] = df["pnl"]
         elif "realized_pnl" in df.columns:
@@ -418,7 +424,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             explanations = df["explanation"].astype(str)
         else:
             explanations = pd.Series([""] * len(df), index=df.index)
-        out["説明"] = explanations.map(lambda value: value if len(value) <= 48 else f"{value[:48]}…")
+        out["説明"] = explanations.map(
+            lambda value: value if len(value) <= 48 else f"{value[:48]}…"
+        )
         return out.tail(300)
 
     def selected_strategy_name() -> str:
@@ -428,10 +436,17 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         return selected_strategy_name() == "fx_breakout_pullback"
 
     def selected_ml_mode() -> str:
-        return str(ml_mode_combo.currentData() or app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
+        return str(
+            ml_mode_combo.currentData()
+            or app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode
+        )
 
     def uses_saved_model_selection() -> bool:
-        return supports_fx_ml_research() and ml_enabled_box.isChecked() and selected_ml_mode() == "load_pretrained"
+        return (
+            supports_fx_ml_research()
+            and ml_enabled_box.isChecked()
+            and selected_ml_mode() == "load_pretrained"
+        )
 
     def refresh_model_choices() -> None:
         status = app_state.model_status()
@@ -468,7 +483,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         custom_window_box.setChecked(app_state.config.backtest.use_custom_window)
         starting_cash_input.edit.setText(format_number(app_state.config.risk.starting_cash, 2))
         ml_enabled_box.setChecked(app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled)
-        _set_combo_by_data(ml_mode_combo, app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode)
+        _set_combo_by_data(
+            ml_mode_combo, app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode
+        )
         current_mode = app_state.config.research.mode
         research_seg.setCurrentData(current_mode)
         start_date.setDate(default_popup_qdate("start"))
@@ -502,7 +519,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         selected_strategy = selected_strategy_name()
         lines = [strategy_description(selected_strategy)]
         if not supports_fx_ml_research():
-            lines.append("この戦略では ML モデル学習と研究パイプラインは使いません。利用するには「FX ブレイクアウト押し目」を選んでください。")
+            lines.append(
+                "この戦略では ML モデル学習と研究パイプラインは使いません。利用するには「FX ブレイクアウト押し目」を選んでください。"
+            )
         strategy_hint.setText("\n".join(line for line in lines if line))
 
     def update_model_status() -> None:
@@ -519,11 +538,15 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         applies_ml = selected_enabled and selected_mode != "rule_only"
         selected_model_line = ""
         if selected_mode == "load_pretrained":
-            selected_model_line = f"使用する保存済みモデル: {status.get('selected_model_label', '-')}"
+            selected_model_line = (
+                f"使用する保存済みモデル: {status.get('selected_model_label', '-')}"
+            )
         elif selected_mode == "rule_only":
             selected_model_line = "使用モデル: ルールのみのため保存済みモデルは使いません。"
         elif selected_mode == "train_from_scratch":
-            selected_model_line = "使用モデル: 今回のバックテスト専用に、その場で学習した一時モデルを使います。"
+            selected_model_line = (
+                "使用モデル: 今回のバックテスト専用に、その場で学習した一時モデルを使います。"
+            )
         elif selected_mode == "walk_forward_train":
             selected_model_line = "使用モデル: 各検証窓ごとに学習した一時モデルを順番に使います。"
         lines = [
@@ -552,7 +575,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             "研究パイプライン実行: データ検証、学習、ベースライン比較、頑健性チェック、感度分析、レポート出力をまとめて実行します。Research モードだけを見て処理を分け、研究内の学習ステップで latest モデルを更新します。",
         ]
         if not supports_fx_ml_research():
-            lines.append("現在の戦略では下2つは使えません。FX ブレイクアウト押し目戦略に切り替えると有効になります。")
+            lines.append(
+                "現在の戦略では下2つは使えません。FX ブレイクアウト押し目戦略に切り替えると有効になります。"
+            )
         action_help_label.setText("\n".join(lines))
 
     def update_action_availability() -> None:
@@ -577,7 +602,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         elif selected_ml_mode() == "rule_only":
             model_select_combo.setToolTip("ルールのみのため、保存済みモデルは使いません。")
         elif selected_ml_mode() != "load_pretrained":
-            model_select_combo.setToolTip("この ML モードでは保存済みモデルではなく、その場で学習したモデルを使います。")
+            model_select_combo.setToolTip(
+                "この ML モードでは保存済みモデルではなく、その場で学習したモデルを使います。"
+            )
         else:
             model_select_combo.setToolTip("load_pretrained で使う保存済みモデルを選びます。")
         research_seg.setToolTip(unsupported_tooltip)
@@ -657,7 +684,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
         metric_tiles["annualized_return"].set_value(f"{annualized:+.2%}", tone=tone_for(annualized))
         metric_tiles["annualized_return"].set_note("年率換算ベース")
         drawdown = result.metrics.get("max_drawdown", 0)
-        metric_tiles["max_drawdown"].set_value(f"{drawdown:.2%}", tone="neg" if drawdown < 0 else None)
+        metric_tiles["max_drawdown"].set_value(
+            f"{drawdown:.2%}", tone="neg" if drawdown < 0 else None
+        )
         metric_tiles["max_drawdown"].set_note("")
         metric_tiles["win_rate"].set_value(f"{result.metrics.get('win_rate', 0):.2%}")
         metric_tiles["win_rate"].set_note("")
@@ -804,7 +833,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
 
     def persist_backtest_controls() -> None:
         persist_shared_controls()
-        app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = ml_enabled_box.isChecked()
+        app_state.config.strategy.fx_breakout_pullback.ml_filter.enabled = (
+            ml_enabled_box.isChecked()
+        )
         app_state.config.strategy.fx_breakout_pullback.ml_filter.backtest_mode = str(
             ml_mode_combo.currentData() or "rule_only"
         )
@@ -826,7 +857,9 @@ def build_backtest_page(app_state, submit_task, log_message):  # pragma: no cove
             on_error("開始日は終了日以前にしてください。")
             return
         try:
-            app_state.config.risk.starting_cash = parse_number_input(starting_cash_input, label="初期資産")
+            app_state.config.risk.starting_cash = parse_number_input(
+                starting_cash_input, label="初期資産"
+            )
         except ValueError as exc:
             on_error(str(exc))
             return

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import shutil
 import subprocess
 import sys
-
+from dataclasses import dataclass
 
 KEYCHAIN_SERVICE = "jp.secon.fxautotradelab"
 GMO_PRIVATE_KEY_ACCOUNT = "gmo_private_api_key"
@@ -26,7 +25,9 @@ def keychain_available() -> bool:
     return sys.platform == "darwin" and shutil.which("security") is not None
 
 
-def resolve_private_gmo_credentials(*, env_api_key: str = "", env_api_secret: str = "") -> GmoPrivateCredentialRecord:
+def resolve_private_gmo_credentials(
+    *, env_api_key: str = "", env_api_secret: str = ""
+) -> GmoPrivateCredentialRecord:
     keychain_ready = keychain_available()
     if keychain_ready:
         api_key = _find_generic_password(GMO_PRIVATE_KEY_ACCOUNT)
@@ -64,8 +65,12 @@ def save_private_gmo_credentials(*, api_key: str, api_secret: str) -> GmoPrivate
     if not normalized_key or not normalized_secret:
         raise ValueError("GMO private API キーとシークレットは両方入力してください。")
     _ensure_keychain_available()
-    _add_generic_password(GMO_PRIVATE_KEY_ACCOUNT, normalized_key, "FXAutoTradeLab GMO Private API Key")
-    _add_generic_password(GMO_PRIVATE_SECRET_ACCOUNT, normalized_secret, "FXAutoTradeLab GMO Private API Secret")
+    _add_generic_password(
+        GMO_PRIVATE_KEY_ACCOUNT, normalized_key, "FXAutoTradeLab GMO Private API Key"
+    )
+    _add_generic_password(
+        GMO_PRIVATE_SECRET_ACCOUNT, normalized_secret, "FXAutoTradeLab GMO Private API Secret"
+    )
     return GmoPrivateCredentialRecord(
         api_key=normalized_key,
         api_secret=normalized_secret,
@@ -107,7 +112,18 @@ def _find_generic_password(account: str) -> str:
 
 def _add_generic_password(account: str, secret: str, label: str) -> None:
     result = _run_security(
-        ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", account, "-l", label, "-w", secret]
+        [
+            "add-generic-password",
+            "-U",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            account,
+            "-l",
+            label,
+            "-w",
+            secret,
+        ]
     )
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "security コマンドに失敗しました。").strip()
@@ -121,4 +137,6 @@ def _delete_generic_password(account: str) -> bool:
     detail = f"{result.stdout}\n{result.stderr}".lower()
     if "could not be found" in detail or "指定された項目が見つかりません" in detail:
         return False
-    raise RuntimeError(f"macOS キーチェーンからの削除に失敗しました: {(result.stderr or result.stdout).strip()}")
+    raise RuntimeError(
+        f"macOS キーチェーンからの削除に失敗しました: {(result.stderr or result.stdout).strip()}"
+    )

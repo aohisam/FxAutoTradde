@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
+from fxautotrade_lab.backtest.scalping_backtest import training_config_from_app
 from fxautotrade_lab.config.loader import load_app_config
 from fxautotrade_lab.config.models import FxScalpingConfig
 from tests.conftest import write_config
@@ -28,6 +32,20 @@ def test_load_scalping_strict_validation_config() -> None:
     assert scalping.min_test_profit_factor == 1.05
     assert scalping.min_walk_forward_pass_ratio == 0.6
     assert scalping.fail_closed_on_bad_validation is True
+    assert scalping.threshold_grid == [
+        0.52,
+        0.54,
+        0.56,
+        0.58,
+        0.60,
+        0.62,
+        0.64,
+        0.66,
+        0.68,
+        0.70,
+        0.72,
+    ]
+    assert training_config_from_app(config).threshold_grid == tuple(scalping.threshold_grid)
     assert scalping.record_rejected_signals is True
     assert scalping.blackout_windows_jst[0].start == "05:55"
     assert config.automation.enabled is False
@@ -61,3 +79,21 @@ def test_scalping_config_research_safety_warnings_are_japanese() -> None:
     )
     assert safer.research_safety_warnings_ja() == []
     assert FxScalpingConfig().candidate_model_dir.as_posix() == "models/fx_scalping/candidates"
+
+
+def test_scalping_threshold_grid_is_sorted_and_deduplicated() -> None:
+    config = FxScalpingConfig(threshold_grid=[0.7, 0.54, 0.7, 0.52])
+
+    assert config.threshold_grid == [0.52, 0.54, 0.7]
+
+
+@pytest.mark.parametrize("threshold_grid", [[], [0.5, 1.0], [-0.1, 0.5], ["bad"]])
+def test_scalping_threshold_grid_invalid_values_raise_japanese_error(
+    threshold_grid: list[object],
+) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        FxScalpingConfig(threshold_grid=threshold_grid)
+
+    message = str(exc_info.value)
+    assert "スキャルピングML" in message
+    assert "threshold_grid" in message

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def should_apply_runtime_window_icon() -> bool:

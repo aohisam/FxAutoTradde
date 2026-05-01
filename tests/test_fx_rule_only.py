@@ -223,8 +223,12 @@ def test_bid_ask_import_skips_overlapping_rows_and_only_appends_new_range(tmp_pa
     importer = JForexCsvImporter(cache)
     first_index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
     second_index = pd.date_range("2026-01-01 00:10:00", periods=20, freq="1min", tz="Asia/Tokyo")
-    first_frame = _make_quote_frame(first_index, np.linspace(100.0, 100.5, len(first_index)), np.full(len(first_index), 0.04))
-    second_frame = _make_quote_frame(second_index, np.linspace(100.3, 100.9, len(second_index)), np.full(len(second_index), 0.04))
+    first_frame = _make_quote_frame(
+        first_index, np.linspace(100.0, 100.5, len(first_index)), np.full(len(first_index), 0.04)
+    )
+    second_frame = _make_quote_frame(
+        second_index, np.linspace(100.3, 100.9, len(second_index)), np.full(len(second_index), 0.04)
+    )
     bid_first = tmp_path / "USDJPY_1 Min_Bid_first.csv"
     ask_first = tmp_path / "USDJPY_1 Min_Ask_first.csv"
     bid_second = tmp_path / "USDJPY_1 Min_Bid_second.csv"
@@ -254,19 +258,53 @@ def test_bid_ask_import_only_fills_gap_between_existing_csv_and_gmo_ranges(tmp_p
     leading_index = pd.date_range("2026-01-01 00:00:00", periods=10, freq="1min", tz="Asia/Tokyo")
     trailing_index = pd.date_range("2026-01-01 00:20:00", periods=10, freq="1min", tz="Asia/Tokyo")
     full_index = pd.date_range("2026-01-01 00:00:00", periods=30, freq="1min", tz="Asia/Tokyo")
-    leading_frame = _make_quote_frame(leading_index, np.linspace(100.0, 100.2, len(leading_index)), np.full(len(leading_index), 0.04))
-    trailing_frame = _make_quote_frame(trailing_index, np.linspace(101.0, 101.2, len(trailing_index)), np.full(len(trailing_index), 0.06))
-    full_frame = _make_quote_frame(full_index, np.linspace(100.0, 101.2, len(full_index)), np.full(len(full_index), 0.05))
+    leading_frame = _make_quote_frame(
+        leading_index,
+        np.linspace(100.0, 100.2, len(leading_index)),
+        np.full(len(leading_index), 0.04),
+    )
+    trailing_frame = _make_quote_frame(
+        trailing_index,
+        np.linspace(101.0, 101.2, len(trailing_index)),
+        np.full(len(trailing_index), 0.06),
+    )
+    full_frame = _make_quote_frame(
+        full_index, np.linspace(100.0, 101.2, len(full_index)), np.full(len(full_index), 0.05)
+    )
     bid_path = tmp_path / "USDJPY_1 Min_Bid_gapfill.csv"
     ask_path = tmp_path / "USDJPY_1 Min_Ask_gapfill.csv"
     _write_jforex_csv(bid_path, full_frame, "bid")
     _write_jforex_csv(ask_path, full_frame, "ask")
 
     cache.save("USD_JPY", TimeFrame.MIN_1, pd.concat([leading_frame, trailing_frame]).sort_index())
-    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, leading_index.min(), leading_index.max() + pd.Timedelta(minutes=1), source_key="csv_bid")
-    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, leading_index.min(), leading_index.max() + pd.Timedelta(minutes=1), source_key="csv_ask")
-    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, trailing_index.min(), trailing_index.max() + pd.Timedelta(minutes=1), source_key="gmo_bid")
-    cache.record_coverage("USD_JPY", TimeFrame.MIN_1, trailing_index.min(), trailing_index.max() + pd.Timedelta(minutes=1), source_key="gmo_ask")
+    cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        leading_index.min(),
+        leading_index.max() + pd.Timedelta(minutes=1),
+        source_key="csv_bid",
+    )
+    cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        leading_index.min(),
+        leading_index.max() + pd.Timedelta(minutes=1),
+        source_key="csv_ask",
+    )
+    cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        trailing_index.min(),
+        trailing_index.max() + pd.Timedelta(minutes=1),
+        source_key="gmo_bid",
+    )
+    cache.record_coverage(
+        "USD_JPY",
+        TimeFrame.MIN_1,
+        trailing_index.min(),
+        trailing_index.max() + pd.Timedelta(minutes=1),
+        source_key="gmo_ask",
+    )
 
     result = importer.import_bid_ask_files(bid_path, ask_path)
 
@@ -274,17 +312,26 @@ def test_bid_ask_import_only_fills_gap_between_existing_csv_and_gmo_ranges(tmp_p
     assert result.skipped_rows == 20
     min1 = pd.read_parquet(tmp_path / "cache" / "USD_JPY" / "1Min.parquet")
     assert len(min1.index) == 30
-    gap_slice = min1.loc[(min1.index >= pd.Timestamp("2026-01-01 00:10:00", tz="Asia/Tokyo")) & (min1.index < pd.Timestamp("2026-01-01 00:20:00", tz="Asia/Tokyo"))]
+    gap_slice = min1.loc[
+        (min1.index >= pd.Timestamp("2026-01-01 00:10:00", tz="Asia/Tokyo"))
+        & (min1.index < pd.Timestamp("2026-01-01 00:20:00", tz="Asia/Tokyo"))
+    ]
     assert len(gap_slice.index) == 10
     existing_gmo_row = min1.loc[trailing_index.min()]
-    assert float(existing_gmo_row["spread_close"]) == pytest.approx(float(trailing_frame.loc[trailing_index.min(), "spread_close"]))
+    assert float(existing_gmo_row["spread_close"]) == pytest.approx(
+        float(trailing_frame.loc[trailing_index.min(), "spread_close"])
+    )
 
 
-def test_bid_ask_reimport_skips_fully_covered_period_without_reloading_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bid_ask_reimport_skips_fully_covered_period_without_reloading_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = ParquetBarCache(tmp_path / "cache")
     importer = JForexCsvImporter(cache)
     index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
-    frame = _make_quote_frame(index, np.linspace(100.0, 100.5, len(index)), np.full(len(index), 0.04))
+    frame = _make_quote_frame(
+        index, np.linspace(100.0, 100.5, len(index)), np.full(len(index), 0.04)
+    )
     bid_path = tmp_path / "USDJPY_1 Min_Bid_reimport.csv"
     ask_path = tmp_path / "USDJPY_1 Min_Ask_reimport.csv"
     _write_jforex_csv(bid_path, frame, "bid")
@@ -293,7 +340,9 @@ def test_bid_ask_reimport_skips_fully_covered_period_without_reloading_cache(tmp
     first = importer.import_bid_ask_files(bid_path, ask_path)
 
     def fail_load(symbol: str, timeframe: TimeFrame):  # noqa: ANN001
-        raise AssertionError(f"cache.load should not be called for fully covered re-import: {symbol} {timeframe.value}")
+        raise AssertionError(
+            f"cache.load should not be called for fully covered re-import: {symbol} {timeframe.value}"
+        )
 
     monkeypatch.setattr(cache, "load", fail_load)
 
@@ -309,8 +358,12 @@ def test_bid_ask_import_trims_to_common_period_when_ranges_differ(tmp_path: Path
     importer = JForexCsvImporter(ParquetBarCache(tmp_path / "cache"))
     bid_index = pd.date_range("2026-01-01 00:00:00", periods=20, freq="1min", tz="Asia/Tokyo")
     ask_index = pd.date_range("2026-01-01 00:05:00", periods=10, freq="1min", tz="Asia/Tokyo")
-    bid_frame = _make_quote_frame(bid_index, np.linspace(100.0, 100.5, len(bid_index)), np.full(len(bid_index), 0.04))
-    ask_frame = _make_quote_frame(ask_index, np.linspace(100.1, 100.4, len(ask_index)), np.full(len(ask_index), 0.05))
+    bid_frame = _make_quote_frame(
+        bid_index, np.linspace(100.0, 100.5, len(bid_index)), np.full(len(bid_index), 0.04)
+    )
+    ask_frame = _make_quote_frame(
+        ask_index, np.linspace(100.1, 100.4, len(ask_index)), np.full(len(ask_index), 0.05)
+    )
     bid_path = tmp_path / "USDJPY_1 Min_Bid_trim.csv"
     ask_path = tmp_path / "USDJPY_1 Min_Ask_trim.csv"
     _write_jforex_csv(bid_path, bid_frame, "bid")
@@ -374,7 +427,9 @@ def test_fx_strategy_requires_pullback_before_entry(tmp_path: Path) -> None:
     assert not bool(signal_frame.loc[index[1], "entry_signal"])
     assert bool(signal_frame.loc[index[2], "entry_signal"])
     assert signal_frame.loc[index[2], "strategy_state"] == "ENTRY_ARMED"
-    assert float(signal_frame.loc[index[2], "initial_stop_price"]) < float(signal_frame.loc[index[2], "entry_trigger_price"])
+    assert float(signal_frame.loc[index[2], "initial_stop_price"]) < float(
+        signal_frame.loc[index[2], "entry_trigger_price"]
+    )
 
 
 def test_fx_strategy_uses_swing_reference_from_selected_timeframe(tmp_path: Path) -> None:
@@ -460,7 +515,9 @@ def test_fx_strategy_generates_short_entry_after_shallow_pullback(tmp_path: Path
     assert signal_frame.loc[index[2], "entry_order_side"] == "sell"
     assert signal_frame.loc[index[2], "exit_order_side"] == "buy"
     assert signal_frame.loc[index[2], "strategy_state"] == "ENTRY_ARMED"
-    assert float(signal_frame.loc[index[2], "initial_stop_price"]) > float(signal_frame.loc[index[2], "entry_trigger_price"])
+    assert float(signal_frame.loc[index[2], "initial_stop_price"]) > float(
+        signal_frame.loc[index[2], "entry_trigger_price"]
+    )
 
 
 def test_fx_engine_uses_ask_entry_and_bid_exit(tmp_path: Path) -> None:
@@ -671,9 +728,9 @@ def test_fx_engine_chunked_runs_preserve_position_and_pending_exit_state(tmp_pat
         "net_pnl",
         "exit_reason",
     ]
-    assert chunked_trades[comparable_columns].to_dict("records") == full_outputs["trades"].reset_index(drop=True)[
-        comparable_columns
-    ].to_dict("records")
+    assert chunked_trades[comparable_columns].to_dict("records") == full_outputs[
+        "trades"
+    ].reset_index(drop=True)[comparable_columns].to_dict("records")
     assert len(chunked_orders.index) == len(full_outputs["orders"].index)
     assert len(chunked_fills.index) == len(full_outputs["fills"].index)
 
@@ -725,14 +782,20 @@ def test_event_blackout_uses_runtime_failure_mode(tmp_path: Path) -> None:
         TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
     }
 
-    backtest_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False)
-    realtime_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True)
+    backtest_feature_set = build_fx_feature_set(
+        "USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False
+    )
+    realtime_feature_set = build_fx_feature_set(
+        "USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True
+    )
 
     assert not bool(backtest_feature_set.execution_frame["event_blackout"].iloc[-1])
     assert bool(realtime_feature_set.execution_frame["event_blackout"].iloc[-1])
 
 
-def test_event_blackout_warn_and_disable_logs_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_event_blackout_warn_and_disable_logs_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     class _RaisingProvider(BaseEconomicEventProvider):
         def list_events(self, start: pd.Timestamp, end: pd.Timestamp, currencies: set[str]):
             _ = start, end, currencies
@@ -755,7 +818,9 @@ def test_event_blackout_warn_and_disable_logs_warning(tmp_path: Path, caplog: py
     }
 
     caplog.set_level(logging.WARNING)
-    feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False)
+    feature_set = build_fx_feature_set(
+        "USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=False
+    )
 
     assert not bool(feature_set.execution_frame["event_blackout"].iloc[-1])
     assert "イベントフィルタを無効化します" in caplog.text
@@ -783,12 +848,16 @@ def test_event_blackout_fail_open_and_validation_are_explicit(tmp_path: Path) ->
         TimeFrame.MONTH_1: resample_quote_bars(frame_1m, "1ME"),
     }
 
-    realtime_feature_set = build_fx_feature_set("USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True)
+    realtime_feature_set = build_fx_feature_set(
+        "USD_JPY", frames, config, event_provider=_RaisingProvider(), runtime_mode=True
+    )
 
     assert not bool(realtime_feature_set.execution_frame["event_blackout"].iloc[-1])
 
     payload = config.model_dump(mode="python")
-    payload["strategy"]["fx_breakout_pullback"]["event_filter"]["realtime_failure_mode"] = "unexpected_mode"
+    payload["strategy"]["fx_breakout_pullback"]["event_filter"][
+        "realtime_failure_mode"
+    ] = "unexpected_mode"
     with pytest.raises(ValidationError):
         AppConfig.model_validate(payload)
 

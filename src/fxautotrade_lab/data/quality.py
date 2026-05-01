@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-
 REQUIRED_BAR_COLUMNS = ["open", "high", "low", "close", "volume"]
 
 
@@ -58,9 +57,17 @@ def validate_bar_frame(frame: pd.DataFrame) -> pd.DataFrame:
     missing_rows = int(working[REQUIRED_BAR_COLUMNS].isna().any(axis=1).sum())
     if missing_rows:
         raise ValueError(f"OHLCV columns contain {missing_rows} incomplete rows.")
-    if ((working["high"] < working["low"]) | (working["high"] < working["open"]) | (working["high"] < working["close"])).any():
+    if (
+        (working["high"] < working["low"])
+        | (working["high"] < working["open"])
+        | (working["high"] < working["close"])
+    ).any():
         raise ValueError("Invalid OHLC relationship detected: high is below open/close/low.")
-    if ((working["low"] > working["high"]) | (working["low"] > working["open"]) | (working["low"] > working["close"])).any():
+    if (
+        (working["low"] > working["high"])
+        | (working["low"] > working["open"])
+        | (working["low"] > working["close"])
+    ).any():
         raise ValueError("Invalid OHLC relationship detected: low is above open/close/high.")
     return working
 

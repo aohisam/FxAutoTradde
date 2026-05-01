@@ -30,7 +30,6 @@ from fxautotrade_lab.reporting.exporters import export_backtest_artifacts
 from fxautotrade_lab.simulation.fx_engine import FxQuotePortfolioSimulator, FxSimulationState
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 
-
 _SIMULATION_ENGINE_COLUMNS = (
     "bid_open",
     "bid_high",
@@ -115,7 +114,9 @@ def _emit_progress(
     )
 
 
-def _build_test_windows(start: pd.Timestamp, end: pd.Timestamp, config: AppConfig) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+def _build_test_windows(
+    start: pd.Timestamp, end: pd.Timestamp, config: AppConfig
+) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
     walk_cfg = config.strategy.fx_breakout_pullback.ml_filter.walk_forward
     windows: list[tuple[pd.Timestamp, pd.Timestamp]] = []
     cursor = start
@@ -130,10 +131,14 @@ def _build_test_windows(start: pd.Timestamp, end: pd.Timestamp, config: AppConfi
     return windows
 
 
-def _training_window_start(window_start: pd.Timestamp, history_start: pd.Timestamp, config: AppConfig) -> pd.Timestamp:
+def _training_window_start(
+    window_start: pd.Timestamp, history_start: pd.Timestamp, config: AppConfig
+) -> pd.Timestamp:
     walk_cfg = config.strategy.fx_breakout_pullback.ml_filter.walk_forward
     if walk_cfg.mode == "rolling":
-        return max(history_start, shift_timestamp(window_start, walk_cfg.train_window, backward=True))
+        return max(
+            history_start, shift_timestamp(window_start, walk_cfg.train_window, backward=True)
+        )
     initial_anchor = shift_timestamp(history_start, "0d", backward=True)
     return initial_anchor if history_start <= window_start else window_start
 
@@ -157,7 +162,9 @@ def _slice_window(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -
     return frame.loc[(frame.index >= start) & (frame.index < end)].copy()
 
 
-def _slice_window_with_lookahead(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+def _slice_window_with_lookahead(
+    frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp
+) -> pd.DataFrame:
     base = _slice_window(frame, start, end)
     lookahead = frame.loc[frame.index >= end].head(1)
     if lookahead.empty:
@@ -191,7 +198,9 @@ def _simulation_input_frame(frame: pd.DataFrame, *, include_explanations: bool) 
     if include_explanations and "explanation_ja" in frame.columns:
         columns.append("explanation_ja")
     selected = frame.loc[:, list(dict.fromkeys(columns))]
-    categorical_columns = [column for column in _SIMULATION_CATEGORY_COLUMNS if column in selected.columns]
+    categorical_columns = [
+        column for column in _SIMULATION_CATEGORY_COLUMNS if column in selected.columns
+    ]
     if not categorical_columns:
         return selected
     compact = selected.copy(deep=False)
@@ -200,7 +209,9 @@ def _simulation_input_frame(frame: pd.DataFrame, *, include_explanations: bool) 
     return compact
 
 
-def _feature_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestamp) -> list[TimeChunk]:
+def _feature_chunk_plan(
+    config: AppConfig, start: pd.Timestamp, end: pd.Timestamp
+) -> list[TimeChunk]:
     if not config.backtest.chunk_enabled:
         return [
             TimeChunk(
@@ -221,7 +232,9 @@ def _feature_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestam
     )
 
 
-def _simulation_chunk_plan(config: AppConfig, start: pd.Timestamp, end: pd.Timestamp) -> list[TimeChunk]:
+def _simulation_chunk_plan(
+    config: AppConfig, start: pd.Timestamp, end: pd.Timestamp
+) -> list[TimeChunk]:
     if not config.backtest.chunk_enabled:
         return [
             TimeChunk(
@@ -330,13 +343,21 @@ def _build_symbol_signals(
                 start=chunk.warmup_start.isoformat(),
                 end=chunk.end.isoformat(),
             )
-            feature_set = build_fx_feature_set(symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False)
-            signals = _drop_heavy_signal_columns(strategy.generate_signal_frame(feature_set.execution_frame))
+            feature_set = build_fx_feature_set(
+                symbol=symbol, bars_by_timeframe=frames, config=config, runtime_mode=False
+            )
+            signals = _drop_heavy_signal_columns(
+                strategy.generate_signal_frame(feature_set.execution_frame)
+            )
             signal_parts.append(_slice_window(signals, chunk.start, chunk.end))
             chart_slice_start = max(chunk.start, chart_window_start)
             if chart_slice_start < chunk.end:
-                signal_chart_parts.append(_slice_window(feature_set.signal_frame, chart_slice_start, chunk.end))
-                trend_chart_parts.append(_slice_window(feature_set.trend_frame, chart_slice_start, chunk.end))
+                signal_chart_parts.append(
+                    _slice_window(feature_set.signal_frame, chart_slice_start, chunk.end)
+                )
+                trend_chart_parts.append(
+                    _slice_window(feature_set.trend_frame, chart_slice_start, chunk.end)
+                )
         signal_frames[symbol] = _concat_dataframes(signal_parts, sort_index=True)
         raw_execution_frames[symbol] = pd.DataFrame()
         if chart_start is not None:
@@ -721,7 +742,9 @@ def run_fx_backtest(
                 _slice_window(frame, requested_start, requested_end),
                 model,
                 config,
-                model_label=Path(model_paths["latest_model_path"] or model_paths["model_path"]).name,
+                model_label=Path(
+                    model_paths["latest_model_path"] or model_paths["model_path"]
+                ).name,
             )
             for symbol, frame in signal_frames.items()
         }
@@ -774,7 +797,9 @@ def run_fx_backtest(
     equity_curve = sim_outputs["equity_curve"]
     if not equity_curve.empty:
         equity_curve["drawdown"] = compute_drawdown(equity_curve["equity"])
-    drawdown_curve = equity_curve[["drawdown"]].copy() if "drawdown" in equity_curve.columns else pd.DataFrame()
+    drawdown_curve = (
+        equity_curve[["drawdown"]].copy() if "drawdown" in equity_curve.columns else pd.DataFrame()
+    )
     benchmark_curve = _benchmark_curve(config, active_frames, equity_curve)
     signals_frame = _signal_log_frame(active_frames)
     metrics = compute_metrics(
@@ -784,14 +809,19 @@ def run_fx_backtest(
         benchmark_curve=benchmark_curve,
     )
     metrics["ml_filter"] = {
-        symbol: ml_filter_summary(frame)
-        for symbol, frame in active_frames.items()
+        symbol: ml_filter_summary(frame) for symbol, frame in active_frames.items()
     }
     if model_paths["latest_model_path"] or model_paths["model_path"]:
         metrics["model_artifacts"] = {key: value for key, value in model_paths.items() if value}
-    in_sample_equity, out_sample_equity = split_in_out_sample(equity_curve, config.validation.in_sample_ratio)
-    in_sample_metrics = compute_metrics(in_sample_equity, sim_outputs["trades"], sim_outputs["fills"])
-    out_of_sample_metrics = compute_metrics(out_sample_equity, sim_outputs["trades"], sim_outputs["fills"])
+    in_sample_equity, out_sample_equity = split_in_out_sample(
+        equity_curve, config.validation.in_sample_ratio
+    )
+    in_sample_metrics = compute_metrics(
+        in_sample_equity, sim_outputs["trades"], sim_outputs["fills"]
+    )
+    out_of_sample_metrics = compute_metrics(
+        out_sample_equity, sim_outputs["trades"], sim_outputs["fills"]
+    )
     walk_forward_summary = (
         walk_forward_rows
         if walk_forward_rows

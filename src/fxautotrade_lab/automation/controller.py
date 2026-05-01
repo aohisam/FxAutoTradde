@@ -20,21 +20,19 @@ from fxautotrade_lab.core.symbols import split_fx_symbol
 from fxautotrade_lab.core.windows import shift_timestamp
 from fxautotrade_lab.data.service import MarketDataService
 from fxautotrade_lab.data.session import get_session_state
-from fxautotrade_lab.execution.safety import DuplicateOrderGuard
 from fxautotrade_lab.execution.managed_exits import (
-    ExitDecision,
     ManagedPositionState,
     build_managed_position,
     evaluate_managed_position,
     recent_swing_low,
 )
 from fxautotrade_lab.execution.risk import RiskManager
+from fxautotrade_lab.execution.safety import DuplicateOrderGuard
 from fxautotrade_lab.features.fx_pipeline import build_fx_feature_set
 from fxautotrade_lab.features.pipeline import build_multi_timeframe_feature_set
 from fxautotrade_lab.ml.fx_filter import apply_fx_ml_filter, load_filter_model
 from fxautotrade_lab.strategies.fx_breakout_pullback import FxBreakoutPullbackStrategy
 from fxautotrade_lab.strategies.registry import create_strategy
-
 
 TERMINAL_ORDER_STATUSES = {"filled", "cancelled", "canceled", "rejected", "expired"}
 
@@ -89,9 +87,11 @@ class AutomationController:
         self.data_service = MarketDataService(self.config, self.env)
         self.strategy = create_strategy(self.config)
         self.logs = []
-        self.local_indices = {symbol: 120 for symbol in self.config.watchlist.symbols}
+        self.local_indices = dict.fromkeys(self.config.watchlist.symbols, 120)
         self.broker = self._build_broker()
-        self.run_id = pd.Timestamp.now(tz=ASIA_TOKYO).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
+        self.run_id = (
+            pd.Timestamp.now(tz=ASIA_TOKYO).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
+        )
         self.status = AutomationStatus.STOPPED
         self.cycle_count = 0
         self.last_heartbeat_at = None
@@ -141,7 +141,9 @@ class AutomationController:
             return None
         model_path = ml_cfg.pretrained_model_path or (ml_cfg.model_dir / ml_cfg.latest_model_alias)
         model = load_filter_model(model_path)
-        if model is None and (ml_cfg.require_pretrained_model or ml_cfg.missing_model_behavior == "error"):
+        if model is None and (
+            ml_cfg.require_pretrained_model or ml_cfg.missing_model_behavior == "error"
+        ):
             raise RuntimeError(f"学習済み FX ML モデルが見つかりません: {model_path}")
         return model
 
@@ -167,7 +169,11 @@ class AutomationController:
         if self.fx_loaded_model is not None and self.fx_last_retrain_at is None:
             self._schedule_next_fx_retrain(current_time)
             return
-        if self.fx_loaded_model is not None and self.fx_next_retrain_at is not None and current_time < self.fx_next_retrain_at:
+        if (
+            self.fx_loaded_model is not None
+            and self.fx_next_retrain_at is not None
+            and current_time < self.fx_next_retrain_at
+        ):
             return
         try:
             summary = train_fx_filter_model_run(
@@ -186,7 +192,9 @@ class AutomationController:
                 f"FX ML を再学習しました。trained_rows={summary.get('trained_rows', 0)} / 次回={self.fx_next_retrain_at.isoformat() if self.fx_next_retrain_at is not None else '-'}",
             )
         except Exception as exc:
-            failure_mode = self.config.strategy.fx_breakout_pullback.ml_filter.realtime_retrain_failure_mode.strip().lower()
+            failure_mode = (
+                self.config.strategy.fx_breakout_pullback.ml_filter.realtime_retrain_failure_mode.strip().lower()
+            )
             if failure_mode == "disable_ml":
                 self.fx_loaded_model = None
             self._schedule_next_fx_retrain(current_time)
@@ -233,14 +241,17 @@ class AutomationController:
                     self._log("info", "停止要求を受け付けました")
                     break
                 should_wait = not (
-                    self.config.broker.mode == BrokerMode.LOCAL_SIM and not self._uses_runtime_market_data()
+                    self.config.broker.mode == BrokerMode.LOCAL_SIM
+                    and not self._uses_runtime_market_data()
                 )
                 if (
                     should_wait
                     and (cycle_limit is None or cycle < cycle_limit)
                     and self.config.automation.poll_interval_seconds > 0
                 ):
-                    interrupted = self.stop_event.wait(timeout=self.config.automation.poll_interval_seconds)
+                    interrupted = self.stop_event.wait(
+                        timeout=self.config.automation.poll_interval_seconds
+                    )
                     if interrupted:
                         self._log("info", "停止要求を受け付けました")
                         break
@@ -291,7 +302,10 @@ class AutomationController:
                 if signal_frame.empty:
                     continue
                 for column in ("close", "entry_atr_14", "volume"):
-                    if column not in signal_frame.columns and column in feature_set.entry_frame.columns:
+                    if (
+                        column not in signal_frame.columns
+                        and column in feature_set.entry_frame.columns
+                    ):
                         signal_frame[column] = feature_set.entry_frame[column]
                 latest = signal_frame.iloc[-1]
                 latest_ts = pd.Timestamp(signal_frame.index[-1])
@@ -321,9 +335,17 @@ class AutomationController:
                     )
                     if protective_exit is not None:
                         if not session.is_regular_session:
-                            self._log("warning", f"{symbol}: {session.label_ja} のため {protective_exit.reason_ja} を保留しました")
+                            self._log(
+                                "warning",
+                                f"{symbol}: {session.label_ja} のため {protective_exit.reason_ja} を保留しました",
+                            )
                         else:
-                            self._handle_exit(symbol, latest, reason=protective_exit.reason_ja, quantity=protective_exit.quantity)
+                            self._handle_exit(
+                                symbol,
+                                latest,
+                                reason=protective_exit.reason_ja,
+                                quantity=protective_exit.quantity,
+                            )
                         continue
                 if not session.is_regular_session:
                     self._log("debug", f"{symbol}: {session.label_ja} のため新規注文を見送りました")
@@ -331,7 +353,9 @@ class AutomationController:
                 if latest["entry_signal"]:
                     self._handle_entry(symbol, latest, latest_ts, signal_frame)
                 elif latest["exit_signal"]:
-                    self._handle_exit(symbol, latest, reason="スコア低下または逆行シグナルで手仕舞い")
+                    self._handle_exit(
+                        symbol, latest, reason="スコア低下または逆行シグナルで手仕舞い"
+                    )
                 else:
                     self._log("debug", f"{symbol}: {latest['explanation_ja']}")
         except Exception as exc:  # pragma: no cover - protective path
@@ -357,7 +381,11 @@ class AutomationController:
             benchmark_frames = self._load_reference_frames(self.config.watchlist.benchmark_symbols)
             sector_frames = self._load_reference_frames(self.config.watchlist.sector_symbols)
             return snapshots, benchmark_frames, sector_frames
-        bundle = self.data_service.load_runtime_bundle() if self._uses_runtime_market_data() else self.data_service.load_bundle()
+        bundle = (
+            self.data_service.load_runtime_bundle()
+            if self._uses_runtime_market_data()
+            else self.data_service.load_bundle()
+        )
         benchmark_frames = None
         if self.config.watchlist.benchmark_symbols:
             benchmark_frames = bundle.benchmarks.get(self.config.watchlist.benchmark_symbols[0])
@@ -390,7 +418,10 @@ class AutomationController:
             latest_ts = pd.Timestamp(entry_frame.index[-1])
             latest_price = self._coerce_float(latest_row.get("close"))
             self.latest_market_bar_at[symbol.upper()] = latest_ts.isoformat()
-            if self.config.strategy.name == FxBreakoutPullbackStrategy.name and {"bid_close", "ask_close"}.issubset(entry_frame.columns):
+            if self.config.strategy.name == FxBreakoutPullbackStrategy.name and {
+                "bid_close",
+                "ask_close",
+            }.issubset(entry_frame.columns):
                 bid_price = self._coerce_float(latest_row.get("bid_close"))
                 ask_price = self._coerce_float(latest_row.get("ask_close"))
                 if bid_price > 0 and ask_price > 0:
@@ -434,7 +465,9 @@ class AutomationController:
         return snapshots
 
     def _fx_quote_price(self, row: pd.Series, side: str, field: str) -> float:
-        raw = self._coerce_float(row.get(f"{side}_{field}") or row.get(f"{side}_{field}".replace("__", "_")))
+        raw = self._coerce_float(
+            row.get(f"{side}_{field}") or row.get(f"{side}_{field}".replace("__", "_"))
+        )
         mid = self._coerce_float(row.get(f"mid_{field}") or row.get(field))
         spread = self._coerce_float(row.get(f"spread_{field}") or row.get("spread_close"))
         multiplier = max(self.config.strategy.fx_breakout_pullback.spread_stress_multiplier, 0.0)
@@ -446,7 +479,9 @@ class AutomationController:
         return raw
 
     @staticmethod
-    def _fx_delayed_execute_at(frame: pd.DataFrame, timestamp: pd.Timestamp, delay_bars: int) -> pd.Timestamp | None:
+    def _fx_delayed_execute_at(
+        frame: pd.DataFrame, timestamp: pd.Timestamp, delay_bars: int
+    ) -> pd.Timestamp | None:
         try:
             location = int(frame.index.get_loc(timestamp))
         except KeyError:
@@ -470,7 +505,9 @@ class AutomationController:
         return default
 
     def _fx_breakout_level(self, latest: pd.Series, position_side: str) -> float:
-        breakout_column = "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        breakout_column = (
+            "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        )
         return self._coerce_float(latest.get(breakout_column) or latest.get("close"))
 
     def _fx_jpy_cross_limit_reached(self, symbol: str) -> bool:
@@ -488,7 +525,9 @@ class AutomationController:
             for symbol_name, state in self.fx_position_state.items()
             if int(float(state.get("quantity", 0) or 0)) > 0
         )
-        open_jpy_crosses = sum(1 for current_symbol in active_symbols if split_fx_symbol(current_symbol)[1] == "JPY")
+        open_jpy_crosses = sum(
+            1 for current_symbol in active_symbols if split_fx_symbol(current_symbol)[1] == "JPY"
+        )
         return open_jpy_crosses >= self.config.strategy.fx_breakout_pullback.max_jpy_cross_positions
 
     def _record_fx_signal(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp) -> None:
@@ -509,7 +548,9 @@ class AutomationController:
     def _run_fx_cycle(self, snapshots: dict[str, dict]) -> None:
         cycle_as_of: pd.Timestamp | None = None
         for frames in snapshots.values():
-            execution_frame = frames.get(self.config.strategy.fx_breakout_pullback.execution_timeframe)
+            execution_frame = frames.get(
+                self.config.strategy.fx_breakout_pullback.execution_timeframe
+            )
             if execution_frame is None or execution_frame.empty:
                 continue
             latest_ts = pd.Timestamp(execution_frame.index[-1])
@@ -524,8 +565,13 @@ class AutomationController:
                 runtime_mode=True,
             )
             signal_frame = self.strategy.generate_signal_frame(feature_set.execution_frame)
-            if self.fx_loaded_model is not None and self.config.strategy.fx_breakout_pullback.ml_filter.enabled:
-                signal_frame = apply_fx_ml_filter(signal_frame, self.fx_loaded_model, self.config, model_label="realtime")
+            if (
+                self.fx_loaded_model is not None
+                and self.config.strategy.fx_breakout_pullback.ml_filter.enabled
+            ):
+                signal_frame = apply_fx_ml_filter(
+                    signal_frame, self.fx_loaded_model, self.config, model_label="realtime"
+                )
             if signal_frame.empty:
                 continue
             latest = signal_frame.iloc[-1]
@@ -555,8 +601,12 @@ class AutomationController:
                     "exit_order_side": exit_order_side.value,
                     "trigger_price": self._coerce_float(latest.get("entry_trigger_price")),
                     "initial_stop_price": self._coerce_float(latest.get("initial_stop_price")),
-                    "initial_risk_price": self._coerce_float(latest.get("initial_risk_price")) or 0.01,
-                    "atr_at_entry": max(self._coerce_float(latest.get("breakout_atr_15m") or latest.get("atr_15m")), 0.01),
+                    "initial_risk_price": self._coerce_float(latest.get("initial_risk_price"))
+                    or 0.01,
+                    "atr_at_entry": max(
+                        self._coerce_float(latest.get("breakout_atr_15m") or latest.get("atr_15m")),
+                        0.01,
+                    ),
                     "breakout_level": self._fx_breakout_level(latest, position_side),
                     "reason": str(latest.get("explanation_ja", "")),
                     "score": float(latest.get("signal_score", 0.0) or 0.0),
@@ -580,8 +630,12 @@ class AutomationController:
             if execute_at is None or latest_ts < execute_at:
                 pass
             else:
-                entry_order_side = self._fx_order_side(pending_entry.get("entry_order_side"), OrderSide.BUY)
-                exit_order_side = self._fx_order_side(pending_entry.get("exit_order_side"), OrderSide.SELL)
+                entry_order_side = self._fx_order_side(
+                    pending_entry.get("entry_order_side"), OrderSide.BUY
+                )
+                exit_order_side = self._fx_order_side(
+                    pending_entry.get("exit_order_side"), OrderSide.SELL
+                )
                 position_side = self._fx_position_side(pending_entry.get("position_side"))
                 trigger_price = float(pending_entry["trigger_price"])
                 if entry_order_side == OrderSide.BUY:
@@ -593,7 +647,9 @@ class AutomationController:
                     quote_extreme = self._fx_quote_price(latest, "bid", "low")
                     trigger_hit = quote_open <= trigger_price or quote_extreme <= trigger_price
                 if bool(latest.get("entry_context_ok", False)) and trigger_hit:
-                    quantity, sizing_message = self._entry_quantity_fx(symbol, latest, entry_order_side=entry_order_side)
+                    quantity, sizing_message = self._entry_quantity_fx(
+                        symbol, latest, entry_order_side=entry_order_side
+                    )
                     if quantity > 0 and not self._has_pending_order(upper):
                         order = self.broker.submit_market_order(
                             symbol=upper,
@@ -601,7 +657,9 @@ class AutomationController:
                             side=entry_order_side,
                             reason=str(pending_entry["reason"]),
                         )
-                        fill_price = self._coerce_float(order.get("filled_avg_price") or order.get("price"))
+                        fill_price = self._coerce_float(
+                            order.get("filled_avg_price") or order.get("price")
+                        )
                         self.recent_orders.append(order)
                         self.recent_orders = self.recent_orders[-100:]
                         self.open_symbols.add(upper)
@@ -624,7 +682,9 @@ class AutomationController:
                             "breakout_level": float(pending_entry["breakout_level"]),
                             "partial_exit_done": False,
                         }
-                        self._log("info", f"{upper}: FX エントリーを実行しました ({sizing_message})")
+                        self._log(
+                            "info", f"{upper}: FX エントリーを実行しました ({sizing_message})"
+                        )
                         if self.config.automation.sync_broker_state_each_cycle:
                             self._sync_broker_state()
                 self.fx_pending_entries.pop(upper, None)
@@ -632,7 +692,11 @@ class AutomationController:
         if pending_exit is not None and latest_ts > pd.Timestamp(pending_exit["signal_time"]):
             exit_quantity = int(pending_exit["quantity"])
             exit_order_side = self._fx_order_side(pending_exit.get("order_side"), OrderSide.SELL)
-            if exit_quantity > 0 and upper in self.open_symbols and not self._has_pending_order(upper):
+            if (
+                exit_quantity > 0
+                and upper in self.open_symbols
+                and not self._has_pending_order(upper)
+            ):
                 order = self.broker.submit_market_order(
                     symbol=upper,
                     qty=exit_quantity,
@@ -653,7 +717,9 @@ class AutomationController:
                     self._sync_broker_state()
             self.fx_pending_exits.pop(upper, None)
 
-    def _evaluate_fx_runtime_protection(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp) -> None:
+    def _evaluate_fx_runtime_protection(
+        self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp
+    ) -> None:
         upper = symbol.upper()
         state = self.fx_position_state.get(upper)
         if state is None or upper not in self.open_symbols:
@@ -665,18 +731,36 @@ class AutomationController:
             OrderSide.SELL if position_side == "long" else OrderSide.BUY,
         )
         if position_side == "long":
-            state["highest_bid"] = max(float(state["highest_bid"]), self._fx_quote_price(latest, "bid", "high"))
-            trailing_candidate = float(state["highest_bid"]) - self.config.strategy.fx_breakout_pullback.atr_trailing_mult * current_atr
-            state["trailing_stop_price"] = max(float(state["trailing_stop_price"]), trailing_candidate)
-            active_stop = max(float(state["initial_stop_price"]), float(state["trailing_stop_price"]))
+            state["highest_bid"] = max(
+                float(state["highest_bid"]), self._fx_quote_price(latest, "bid", "high")
+            )
+            trailing_candidate = (
+                float(state["highest_bid"])
+                - self.config.strategy.fx_breakout_pullback.atr_trailing_mult * current_atr
+            )
+            state["trailing_stop_price"] = max(
+                float(state["trailing_stop_price"]), trailing_candidate
+            )
+            active_stop = max(
+                float(state["initial_stop_price"]), float(state["trailing_stop_price"])
+            )
             protective_open = self._fx_quote_price(latest, "bid", "open")
             protective_extreme = self._fx_quote_price(latest, "bid", "low")
             stop_hit = protective_open <= active_stop or protective_extreme <= active_stop
         else:
-            state["lowest_ask"] = min(float(state["lowest_ask"]), self._fx_quote_price(latest, "ask", "low"))
-            trailing_candidate = float(state["lowest_ask"]) + self.config.strategy.fx_breakout_pullback.atr_trailing_mult * current_atr
-            state["trailing_stop_price"] = min(float(state["trailing_stop_price"]), trailing_candidate)
-            active_stop = min(float(state["initial_stop_price"]), float(state["trailing_stop_price"]))
+            state["lowest_ask"] = min(
+                float(state["lowest_ask"]), self._fx_quote_price(latest, "ask", "low")
+            )
+            trailing_candidate = (
+                float(state["lowest_ask"])
+                + self.config.strategy.fx_breakout_pullback.atr_trailing_mult * current_atr
+            )
+            state["trailing_stop_price"] = min(
+                float(state["trailing_stop_price"]), trailing_candidate
+            )
+            active_stop = min(
+                float(state["initial_stop_price"]), float(state["trailing_stop_price"])
+            )
             protective_open = self._fx_quote_price(latest, "ask", "open")
             protective_extreme = self._fx_quote_price(latest, "ask", "high")
             stop_hit = protective_open >= active_stop or protective_extreme >= active_stop
@@ -697,7 +781,9 @@ class AutomationController:
                 self._sync_broker_state()
             self._log("info", f"{upper}: FX 防御ストップで決済しました")
 
-    def _schedule_fx_exit_if_needed(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp) -> None:
+    def _schedule_fx_exit_if_needed(
+        self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp
+    ) -> None:
         upper = symbol.upper()
         state = self.fx_position_state.get(upper)
         if state is None or upper in self.fx_pending_exits:
@@ -710,10 +796,17 @@ class AutomationController:
                 "reason": "1時間足EMAクロスで全決済",
                 "kind": "full_exit",
             }
-        elif bool(latest.get("partial_exit_signal", False)) and not bool(state.get("partial_exit_done", False)):
+        elif bool(latest.get("partial_exit_signal", False)) and not bool(
+            state.get("partial_exit_done", False)
+        ):
             partial_quantity = max(
                 1,
-                int(round(int(state["initial_quantity"]) * self.config.strategy.fx_breakout_pullback.partial_exit_fraction)),
+                int(
+                    round(
+                        int(state["initial_quantity"])
+                        * self.config.strategy.fx_breakout_pullback.partial_exit_fraction
+                    )
+                ),
             )
             partial_quantity = min(partial_quantity, max(int(state["quantity"]) - 1, 0))
             if partial_quantity > 0:
@@ -725,11 +818,21 @@ class AutomationController:
                     "kind": "partial_exit",
                 }
 
-    def _entry_quantity_fx(self, symbol: str, latest: pd.Series, *, entry_order_side: OrderSide) -> tuple[int, str]:
-        equity = self._coerce_float(self.account_summary.get("equity") or self.account_summary.get("portfolio_value"))
-        cash = self._coerce_float(self.account_summary.get("cash") or self.account_summary.get("buying_power"))
-        price = self._fx_quote_price(latest, "ask" if entry_order_side == OrderSide.BUY else "bid", "close")
-        atr_value = max(self._coerce_float(latest.get("breakout_atr_15m") or latest.get("atr_15m")), 0.01)
+    def _entry_quantity_fx(
+        self, symbol: str, latest: pd.Series, *, entry_order_side: OrderSide
+    ) -> tuple[int, str]:
+        equity = self._coerce_float(
+            self.account_summary.get("equity") or self.account_summary.get("portfolio_value")
+        )
+        cash = self._coerce_float(
+            self.account_summary.get("cash") or self.account_summary.get("buying_power")
+        )
+        price = self._fx_quote_price(
+            latest, "ask" if entry_order_side == OrderSide.BUY else "bid", "close"
+        )
+        atr_value = max(
+            self._coerce_float(latest.get("breakout_atr_15m") or latest.get("atr_15m")), 0.01
+        )
         sizing = self.risk_manager.size_automation_position(
             cash=cash,
             equity=equity or cash,
@@ -757,22 +860,38 @@ class AutomationController:
                 fx_state = self.fx_position_state[symbol]
                 position_side = self._fx_position_side(fx_state.get("position_side"))
                 if position_side == "short":
-                    active_stop = min(float(fx_state["initial_stop_price"]), float(fx_state["trailing_stop_price"]))
+                    active_stop = min(
+                        float(fx_state["initial_stop_price"]),
+                        float(fx_state["trailing_stop_price"]),
+                    )
                     reference_price = float(fx_state.get("lowest_ask", fx_state["entry_price"]))
                 else:
-                    active_stop = max(float(fx_state["initial_stop_price"]), float(fx_state["trailing_stop_price"]))
+                    active_stop = max(
+                        float(fx_state["initial_stop_price"]),
+                        float(fx_state["trailing_stop_price"]),
+                    )
                     reference_price = float(fx_state.get("highest_bid", fx_state["entry_price"]))
-                record["managed_initial_stop_price"] = f"{float(fx_state['initial_stop_price']):.4f}"
+                record["managed_initial_stop_price"] = (
+                    f"{float(fx_state['initial_stop_price']):.4f}"
+                )
                 record["managed_stop_price"] = f"{float(fx_state['initial_stop_price']):.4f}"
-                record["managed_trailing_stop_price"] = f"{float(fx_state['trailing_stop_price']):.4f}"
+                record["managed_trailing_stop_price"] = (
+                    f"{float(fx_state['trailing_stop_price']):.4f}"
+                )
                 record["managed_active_stop_price"] = f"{active_stop:.4f}"
                 record["managed_partial_target_price"] = ""
                 record["managed_partial_reference_price"] = f"{reference_price:.4f}"
                 record["managed_reference_bar_at"] = str(self.latest_market_bar_at.get(symbol, ""))
-                record["managed_next_trailing_price"] = f"{float(fx_state['trailing_stop_price']):.4f}"
-                record["managed_trailing_multiple"] = f"{self.config.strategy.fx_breakout_pullback.atr_trailing_mult:.2f}"
-                record["managed_bars_held"] = (
-                    max((pd.Timestamp.now(tz=ASIA_TOKYO) - pd.Timestamp(fx_state["entry_time"])).seconds // 60, 0)
+                record["managed_next_trailing_price"] = (
+                    f"{float(fx_state['trailing_stop_price']):.4f}"
+                )
+                record["managed_trailing_multiple"] = (
+                    f"{self.config.strategy.fx_breakout_pullback.atr_trailing_mult:.2f}"
+                )
+                record["managed_bars_held"] = max(
+                    (pd.Timestamp.now(tz=ASIA_TOKYO) - pd.Timestamp(fx_state["entry_time"])).seconds
+                    // 60,
+                    0,
                 )
                 record["managed_partial_taken"] = bool(fx_state.get("partial_exit_done", False))
                 record["managed_break_even_armed"] = False
@@ -810,7 +929,9 @@ class AutomationController:
             "status": self.status.value,
             "mode": self.config.broker.mode.value,
             "cycle_count": self.cycle_count,
-            "heartbeat": self.last_heartbeat_at.isoformat() if self.last_heartbeat_at is not None else "",
+            "heartbeat": (
+                self.last_heartbeat_at.isoformat() if self.last_heartbeat_at is not None else ""
+            ),
             "open_symbols": sorted(self.open_symbols),
             "positions": self._positions_with_management(),
             "recent_orders": list(self.recent_orders[-50:]),
@@ -830,7 +951,9 @@ class AutomationController:
             "connection_state": self.connection_state,
             "stream_state": dict(self.stream_state),
             "reconnect_attempts": self.reconnect_attempts,
-            "last_reconnect_at": self.last_reconnect_at.isoformat() if self.last_reconnect_at is not None else "",
+            "last_reconnect_at": (
+                self.last_reconnect_at.isoformat() if self.last_reconnect_at is not None else ""
+            ),
             "data_source": self.config.data.source,
             "entry_timeframe": (
                 self.config.strategy.fx_breakout_pullback.execution_timeframe.value
@@ -842,13 +965,23 @@ class AutomationController:
             "fx_ml_status": {
                 "enabled": bool(self.config.strategy.fx_breakout_pullback.ml_filter.enabled),
                 "model_loaded": self.fx_loaded_model is not None,
-                "last_retrain_at": self.fx_last_retrain_at.isoformat() if self.fx_last_retrain_at is not None else "",
-                "next_retrain_at": self.fx_next_retrain_at.isoformat() if self.fx_next_retrain_at is not None else "",
+                "last_retrain_at": (
+                    self.fx_last_retrain_at.isoformat()
+                    if self.fx_last_retrain_at is not None
+                    else ""
+                ),
+                "next_retrain_at": (
+                    self.fx_next_retrain_at.isoformat()
+                    if self.fx_next_retrain_at is not None
+                    else ""
+                ),
                 "last_retrain_summary": dict(self.fx_last_retrain_summary),
             },
         }
 
-    def _handle_entry(self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp, signal_frame: pd.DataFrame) -> None:
+    def _handle_entry(
+        self, symbol: str, latest: pd.Series, latest_ts: pd.Timestamp, signal_frame: pd.DataFrame
+    ) -> None:
         if self.kill_switch_reason:
             self._log("warning", f"{symbol}: キルスイッチ中のため新規買いを停止しました")
             return
@@ -922,7 +1055,9 @@ class AutomationController:
         finally:
             self.duplicate_guard.remove(symbol)
 
-    def _handle_exit(self, symbol: str, latest: pd.Series, *, reason: str, quantity: int | None = None) -> None:
+    def _handle_exit(
+        self, symbol: str, latest: pd.Series, *, reason: str, quantity: int | None = None
+    ) -> None:
         if symbol not in self.open_symbols:
             self._log("debug", f"{symbol}: 保有がないため売りを送信しませんでした")
             return
@@ -951,7 +1086,9 @@ class AutomationController:
             self.recent_orders.append(order)
             self.recent_orders = self.recent_orders[-100:]
             managed = self.managed_positions.get(symbol.upper())
-            current_qty = self._position_quantity(symbol) or (managed.quantity if managed is not None else exit_quantity)
+            current_qty = self._position_quantity(symbol) or (
+                managed.quantity if managed is not None else exit_quantity
+            )
             if exit_quantity >= current_qty > 0:
                 self.open_symbols.discard(symbol)
             if managed is not None and exit_quantity < managed.quantity:
@@ -961,7 +1098,9 @@ class AutomationController:
             elif managed is not None and exit_quantity >= managed.quantity:
                 self.managed_positions.pop(symbol.upper(), None)
                 self.pending_entry_contexts.pop(symbol.upper(), None)
-            self._log("info", f"{symbol}: 自動売り判断を送信しました ({exit_quantity:,} 通貨 / {reason})")
+            self._log(
+                "info", f"{symbol}: 自動売り判断を送信しました ({exit_quantity:,} 通貨 / {reason})"
+            )
             self._notify(
                 enabled=self.config.automation.notify_on_orders,
                 title="FXAutoTrade Lab",
@@ -1022,7 +1161,9 @@ class AutomationController:
 
     def _sync_broker_state(self) -> bool:
         try:
-            state = self.broker.sync_runtime_state(order_limit=self.config.automation.reconcile_orders_limit)
+            state = self.broker.sync_runtime_state(
+                order_limit=self.config.automation.reconcile_orders_limit
+            )
         except Exception as exc:  # pragma: no cover - network/config path
             self._log("warning", f"ブローカー状態の再同期に失敗しました: {exc}")
             return False
@@ -1065,7 +1206,10 @@ class AutomationController:
             self.data_service = MarketDataService(self.config, self.env)
             account_ok = self._refresh_account_summary()
             sync_ok = True
-            if self.config.automation.sync_broker_state_on_start or self.config.automation.sync_broker_state_each_cycle:
+            if (
+                self.config.automation.sync_broker_state_on_start
+                or self.config.automation.sync_broker_state_each_cycle
+            ):
                 sync_ok = self._sync_broker_state()
             if account_ok and sync_ok:
                 self.connection_state = "connected"
@@ -1122,7 +1266,10 @@ class AutomationController:
             "filled_at": payload.get("filled_at", ""),
         }
         self._upsert_recent_order(order_record)
-        if event in {"fill", "partial_fill", "partial-fill"} or status in {"filled", "partially_filled"}:
+        if event in {"fill", "partial_fill", "partial-fill"} or status in {
+            "filled",
+            "partially_filled",
+        }:
             filled_qty = int(self._coerce_float(payload.get("filled_qty") or payload.get("qty")))
             fill_id = order_id or f"{symbol}-{event}-{len(self.recent_fills) + 1}"
             self.recent_fills.append(
@@ -1177,8 +1324,14 @@ class AutomationController:
         daily_loss = max(0.0, -daily_pl)
         reference_equity = last_equity or self.session_start_equity or current_equity or 0.0
         pct_loss = daily_loss / reference_equity if reference_equity else 0.0
-        amount_hit = self.config.risk.max_daily_loss_amount > 0 and daily_loss >= self.config.risk.max_daily_loss_amount
-        pct_hit = self.config.risk.max_daily_loss_pct > 0 and pct_loss >= self.config.risk.max_daily_loss_pct
+        amount_hit = (
+            self.config.risk.max_daily_loss_amount > 0
+            and daily_loss >= self.config.risk.max_daily_loss_amount
+        )
+        pct_hit = (
+            self.config.risk.max_daily_loss_pct > 0
+            and pct_loss >= self.config.risk.max_daily_loss_pct
+        )
         if amount_hit or pct_hit:
             reason = (
                 f"日次損失制限に到達しました。損失額={daily_loss:.2f}, "
@@ -1244,11 +1397,15 @@ class AutomationController:
         for position in self.synced_positions:
             if str(position.get("symbol", "")).upper() != upper:
                 continue
-            return self._coerce_float(position.get("avg_entry_price") or position.get("current_price"))
+            return self._coerce_float(
+                position.get("avg_entry_price") or position.get("current_price")
+            )
         return 0.0
 
     def _reconcile_managed_positions(self) -> None:
-        active_symbols = {str(position.get("symbol", "")).upper() for position in self.synced_positions}
+        active_symbols = {
+            str(position.get("symbol", "")).upper() for position in self.synced_positions
+        }
         for symbol in list(self.managed_positions):
             if symbol not in active_symbols:
                 self.managed_positions.pop(symbol, None)
@@ -1271,7 +1428,9 @@ class AutomationController:
                 state.entry_price = avg_entry
 
     def _reconcile_fx_positions(self) -> None:
-        active_symbols = {str(position.get("symbol", "")).upper() for position in self.synced_positions}
+        active_symbols = {
+            str(position.get("symbol", "")).upper() for position in self.synced_positions
+        }
         for symbol in list(self.fx_position_state):
             if symbol not in active_symbols:
                 self.fx_position_state.pop(symbol, None)
@@ -1285,7 +1444,9 @@ class AutomationController:
                 self.fx_position_state.pop(symbol, None)
                 continue
             self.fx_position_state[symbol]["quantity"] = qty
-            self.fx_position_state[symbol]["position_side"] = self._fx_position_side(position.get("side"))
+            self.fx_position_state[symbol]["position_side"] = self._fx_position_side(
+                position.get("side")
+            )
 
     def _ensure_managed_position(
         self,
@@ -1308,8 +1469,17 @@ class AutomationController:
             existing.initial_quantity = max(existing.initial_quantity, quantity)
             return existing
         context = self.pending_entry_contexts.get(upper, {})
-        entry_price = entry_price_hint or self._position_entry_price(upper) or self._coerce_float(context.get("entry_price")) or self._coerce_float(latest.get("close"))
-        atr_value = self._coerce_float(context.get("atr_value")) or self._coerce_float(latest.get("entry_atr_14")) or 1.0
+        entry_price = (
+            entry_price_hint
+            or self._position_entry_price(upper)
+            or self._coerce_float(context.get("entry_price"))
+            or self._coerce_float(latest.get("close"))
+        )
+        atr_value = (
+            self._coerce_float(context.get("atr_value"))
+            or self._coerce_float(latest.get("entry_atr_14"))
+            or 1.0
+        )
         swing_low = context.get("swing_low")
         if swing_low is None:
             swing_low = recent_swing_low(signal_frame, self.config.risk.swing_stop_lookback_bars)
@@ -1326,7 +1496,9 @@ class AutomationController:
         return state
 
     def _current_exposure_ratio(self) -> float:
-        equity = self._coerce_float(self.account_summary.get("equity") or self.account_summary.get("portfolio_value"))
+        equity = self._coerce_float(
+            self.account_summary.get("equity") or self.account_summary.get("portfolio_value")
+        )
         if equity <= 0:
             return 0.0
         exposure = 0.0
@@ -1334,15 +1506,21 @@ class AutomationController:
             market_value = self._coerce_float(position.get("market_value"))
             if abs(market_value) <= 0:
                 qty = self._coerce_float(position.get("qty"))
-                price = self._coerce_float(position.get("current_price") or position.get("avg_entry_price"))
+                price = self._coerce_float(
+                    position.get("current_price") or position.get("avg_entry_price")
+                )
                 side = str(position.get("side", "long")).lower()
                 market_value = qty * price * (-1.0 if side == "short" else 1.0)
             exposure += abs(market_value)
         return exposure / equity if equity else 0.0
 
     def _entry_quantity(self, latest: pd.Series) -> tuple[int, str]:
-        equity = self._coerce_float(self.account_summary.get("equity") or self.account_summary.get("portfolio_value"))
-        cash = self._coerce_float(self.account_summary.get("cash") or self.account_summary.get("buying_power"))
+        equity = self._coerce_float(
+            self.account_summary.get("equity") or self.account_summary.get("portfolio_value")
+        )
+        cash = self._coerce_float(
+            self.account_summary.get("cash") or self.account_summary.get("buying_power")
+        )
         price = self._coerce_float(latest.get("close"))
         atr_value = self._coerce_float(latest.get("entry_atr_14")) or 1.0
         sizing = self.risk_manager.size_automation_position(
@@ -1355,15 +1533,33 @@ class AutomationController:
         currency = self.config.risk.account_currency
         if sizing.quantity <= 0:
             if mode == "fixed_amount":
-                return 0, f"定額指定 {self.config.risk.fixed_order_amount:,.0f} {currency} では数量を確保できないため見送りました"
+                return (
+                    0,
+                    f"定額指定 {self.config.risk.fixed_order_amount:,.0f} {currency} では数量を確保できないため見送りました",
+                )
             if mode == "equity_fraction":
-                return 0, f"資産比率 {self.config.risk.equity_fraction_per_trade:.2%} では数量を確保できないため見送りました"
-            return 0, f"リスク率 {self.config.risk.risk_per_trade:.2%} と ATR 条件では数量を確保できないため見送りました"
+                return (
+                    0,
+                    f"資産比率 {self.config.risk.equity_fraction_per_trade:.2%} では数量を確保できないため見送りました",
+                )
+            return (
+                0,
+                f"リスク率 {self.config.risk.risk_per_trade:.2%} と ATR 条件では数量を確保できないため見送りました",
+            )
         if mode == "fixed_amount":
-            return sizing.quantity, f"定額 {self.config.risk.fixed_order_amount:,.0f} {currency} 相当"
+            return (
+                sizing.quantity,
+                f"定額 {self.config.risk.fixed_order_amount:,.0f} {currency} 相当",
+            )
         if mode == "equity_fraction":
-            return sizing.quantity, f"資産比率 {self.config.risk.equity_fraction_per_trade:.2%} 相当"
-        return sizing.quantity, f"リスク率 {self.config.risk.risk_per_trade:.2%} / 想定損失 {sizing.risk_amount:,.0f} {currency}"
+            return (
+                sizing.quantity,
+                f"資産比率 {self.config.risk.equity_fraction_per_trade:.2%} 相当",
+            )
+        return (
+            sizing.quantity,
+            f"リスク率 {self.config.risk.risk_per_trade:.2%} / 想定損失 {sizing.risk_amount:,.0f} {currency}",
+        )
 
     def _notify(self, enabled: bool, title: str, message: str, subtitle: str = "") -> None:
         if enabled:

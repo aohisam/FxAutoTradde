@@ -39,7 +39,10 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         QWidget,
     )
 
-    from fxautotrade_lab.desktop.charts import load_native_symbol_chart_widget_class, render_symbol_chart_html
+    from fxautotrade_lab.desktop.charts import (
+        load_native_symbol_chart_widget_class,
+        render_symbol_chart_html,
+    )
     from fxautotrade_lab.desktop.ui_controls import set_button_enabled
     from fxautotrade_lab.desktop.widgets.card import Card
     from fxautotrade_lab.desktop.widgets.chip import Chip
@@ -102,7 +105,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
     layout.addWidget(controls_card)
 
     live_chip = Chip("静的", "neutral")
-    chart_card = Card(title="価格チャート", subtitle="OHLC / 指標 / 約定マーカー", header_right=live_chip)
+    chart_card = Card(
+        title="価格チャート", subtitle="OHLC / 指標 / 約定マーカー", header_right=live_chip
+    )
     web = QWebEngineView() if QWebEngineView is not None else None
     native_chart = NativeSymbolChartWidget() if NativeSymbolChartWidget is not None else None
     fallback = QTextBrowser()
@@ -146,7 +151,14 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         else:
             fallback.setHtml(content)
 
-    def render_native(symbol: str, frame: pd.DataFrame, *, trades_frame: pd.DataFrame | None = None, fills_frame: pd.DataFrame | None = None, title_suffix: str = "") -> bool:
+    def render_native(
+        symbol: str,
+        frame: pd.DataFrame,
+        *,
+        trades_frame: pd.DataFrame | None = None,
+        fills_frame: pd.DataFrame | None = None,
+        title_suffix: str = "",
+    ) -> bool:
         if native_chart is None:
             return False
         native_chart.render(
@@ -158,7 +170,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         )
         return True
 
-    def on_chart_loaded(request_id: int, symbol: str, timeframe: str, dataset: dict[str, object]) -> None:
+    def on_chart_loaded(
+        request_id: int, symbol: str, timeframe: str, dataset: dict[str, object]
+    ) -> None:
         if request_id != page._chart_request_id:
             return
         page._chart_loading = False
@@ -169,7 +183,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         if frame is None or frame.empty:
             set_content(f"<h3>{symbol} / {timeframe} の runtime チャートデータがありません。</h3>")
             return
-        if not render_native(symbol, frame, fills_frame=fills, title_suffix="（実時間シミュレーション）"):
+        if not render_native(
+            symbol, frame, fills_frame=fills, title_suffix="（実時間シミュレーション）"
+        ):
             set_content(
                 render_symbol_chart_html(
                     symbol,
@@ -274,7 +290,9 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
             else:
                 if render_native(symbol, frame, trades_frame=app_state.last_result.trades):
                     return
-                content = render_symbol_chart_html(symbol, frame.tail(400), app_state.last_result.trades)
+                content = render_symbol_chart_html(
+                    symbol, frame.tail(400), app_state.last_result.trades
+                )
         set_content(content)
 
     symbol_combo.currentTextChanged.connect(lambda _: render_current())
@@ -283,9 +301,11 @@ def build_chart_page(app_state, submit_task, log_message):  # pragma: no cover -
         lambda: request_runtime_render(force_refresh=True) if is_runtime_chart() else refresh()
     )
     refresh_timer.timeout.connect(
-        lambda: request_runtime_render(force_refresh=False)
-        if auto_refresh.isChecked() and page.isVisible() and is_runtime_chart()
-        else None
+        lambda: (
+            request_runtime_render(force_refresh=False)
+            if auto_refresh.isChecked() and page.isVisible() and is_runtime_chart()
+            else None
+        )
     )
     refresh_timer.start()
     page.refresh = refresh
@@ -300,8 +320,8 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
         QHeaderView,
         QLabel,
         QLineEdit,
-        QTabWidget,
         QTableView,
+        QTabWidget,
         QVBoxLayout,
         QWidget,
     )
@@ -383,7 +403,9 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
             frame = raw_frames[key]
             filtered = frame.copy()
             if not filtered.empty and needle and "symbol" in filtered.columns:
-                filtered = filtered[filtered["symbol"].astype(str).str.upper().str.contains(needle, na=False)]
+                filtered = filtered[
+                    filtered["symbol"].astype(str).str.upper().str.contains(needle, na=False)
+                ]
             if not filtered.empty and selected_side != "すべて":
                 side_column = "side" if "side" in filtered.columns else None
                 if side_column is not None:
@@ -424,13 +446,11 @@ def build_history_page(app_state):  # pragma: no cover - UI helper
 
 
 def build_reports_page(app_state):  # pragma: no cover - UI helper
-    from PySide6.QtCore import QUrl, Qt
+    from PySide6.QtCore import Qt, QUrl
     from PySide6.QtWidgets import (
-        QFrame,
         QHBoxLayout,
         QHeaderView,
         QLabel,
-        QPushButton,
         QSplitter,
         QTableView,
         QTextBrowser,
@@ -953,7 +973,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
     def save_order_sizing() -> None:
         try:
             app_state.update_account_settings(
-                starting_cash=parse_number_input(starting_cash_input, app_state.config.risk.starting_cash)
+                starting_cash=parse_number_input(
+                    starting_cash_input, app_state.config.risk.starting_cash
+                )
             )
             app_state.update_order_sizing(
                 order_size_mode=str(sizing_combo.currentData() or "fixed_amount"),
@@ -971,7 +993,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
                 ),
             )
         except Exception as exc:  # pragma: no cover - UI validation
-            QMessageBox.critical(page, "エラー", f"資金 / 注文サイズ設定の保存に失敗しました。\n{exc}")
+            QMessageBox.critical(
+                page, "エラー", f"資金 / 注文サイズ設定の保存に失敗しました。\n{exc}"
+            )
             return
         QMessageBox.information(page, "完了", "資金 / 注文サイズ設定を保存しました。")
         log_message(
@@ -991,8 +1015,12 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         except Exception as exc:  # pragma: no cover - OS credential store
             QMessageBox.critical(page, "エラー", f"GMO private API の保存に失敗しました。\n{exc}")
             return
-        QMessageBox.information(page, "完了", "GMO private API を macOS キーチェーンへ保存しました。")
-        log_message(f"GMO private API を保存しました: {credential_source_text(str(values.get('source', 'keychain')))}")
+        QMessageBox.information(
+            page, "完了", "GMO private API を macOS キーチェーンへ保存しました。"
+        )
+        log_message(
+            f"GMO private API を保存しました: {credential_source_text(str(values.get('source', 'keychain')))}"
+        )
         refresh_all_pages()
 
     def clear_private_credentials() -> None:
@@ -1009,10 +1037,14 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             QMessageBox.critical(page, "エラー", f"GMO private API の削除に失敗しました。\n{exc}")
             return
         if deleted:
-            QMessageBox.information(page, "完了", "GMO private API を macOS キーチェーンから削除しました。")
+            QMessageBox.information(
+                page, "完了", "GMO private API を macOS キーチェーンから削除しました。"
+            )
             log_message("GMO private API を削除しました。")
         else:
-            QMessageBox.information(page, "情報", "削除対象の GMO private API は見つかりませんでした。")
+            QMessageBox.information(
+                page, "情報", "削除対象の GMO private API は見つかりませんでした。"
+            )
         refresh_all_pages()
 
     def save_notifications() -> None:
@@ -1089,7 +1121,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
             QMessageBox.information(
                 page,
                 "接続テスト完了",
-                "\n".join(["接続テストは完了しました。", *[str(item) for item in result["warnings_ja"]]]),
+                "\n".join(
+                    ["接続テストは完了しました。", *[str(item) for item in result["warnings_ja"]]]
+                ),
             )
 
     def on_test_error(message: str) -> None:
@@ -1127,7 +1161,8 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         private_configured = bool(private_status["configured"])
         warning.setText(
             "GMO 実時間シミュレーションでは実データを取得しますが、売買はまだすべてローカル約定です。"
-            if app_state.config.broker.mode.value == "gmo_sim" or app_state.config.data.source == "gmo"
+            if app_state.config.broker.mode.value == "gmo_sim"
+            or app_state.config.data.source == "gmo"
             else "JForex CSV / fixture を使うローカル検証構成です。必要に応じてデータ同期ページから CSV を追加インポートしてください。"
         )
         payload = app_state.config.model_dump(mode="json")
@@ -1163,7 +1198,9 @@ def build_settings_page(app_state, submit_task, log_message):  # pragma: no cove
         _set_combo_value(sizing_combo, app_state.config.risk.order_size_mode.value)
         starting_cash_input.setText(format_number(app_state.config.risk.starting_cash, 2))
         fixed_amount_input.setText(format_number(app_state.config.risk.fixed_order_amount, 2))
-        equity_fraction_input.setText(format_number(app_state.config.risk.equity_fraction_per_trade, 4))
+        equity_fraction_input.setText(
+            format_number(app_state.config.risk.equity_fraction_per_trade, 4)
+        )
         risk_fraction_input.setText(format_number(app_state.config.risk.risk_per_trade, 4))
         update_sizing_status()
         sound_name.setText(app_state.config.automation.notification_channels.sound_name)

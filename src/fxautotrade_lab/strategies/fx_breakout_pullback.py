@@ -89,20 +89,32 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
 
             breakout_bar = row.get("signal_bar_timestamp")
             long_breakout = self._as_bool(row.get("breakout_signal_15m", False))
-            short_breakout = fx_cfg.short_enabled and self._as_bool(row.get("breakout_signal_short_15m", False))
-            if pd.notna(breakout_bar) and breakout_bar != last_breakout_bar and (long_breakout or short_breakout):
+            short_breakout = fx_cfg.short_enabled and self._as_bool(
+                row.get("breakout_signal_short_15m", False)
+            )
+            if (
+                pd.notna(breakout_bar)
+                and breakout_bar != last_breakout_bar
+                and (long_breakout or short_breakout)
+            ):
                 last_breakout_bar = pd.Timestamp(breakout_bar)
                 if long_breakout and self._as_bool(row.get("trend_long_allowed_1h", False)):
                     breakout_episode_id += 1
                     active_episode_id = breakout_episode_id
                     pending_breakout_idx = position
                     pending_breakout_side = "long"
-                    breakout_level = self._as_float(row.get("breakout_level_15m"), self._as_float(row["close"], 0.0))
+                    breakout_level = self._as_float(
+                        row.get("breakout_level_15m"), self._as_float(row["close"], 0.0)
+                    )
                     breakout_atr = max(
-                        self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)),
+                        self._as_float(
+                            row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)
+                        ),
                         0.01,
                     )
-                    breakout_extreme = max(self._as_float(row.get("mid_high", row["high"])), breakout_level)
+                    breakout_extreme = max(
+                        self._as_float(row.get("mid_high", row["high"])), breakout_level
+                    )
                     reasons.append("15分足上方向終値ブレイクを検出")
                     state = "BREAKOUT_DETECTED"
                 elif short_breakout and self._as_bool(row.get("trend_short_allowed_1h", False)):
@@ -112,17 +124,27 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                     pending_breakout_side = "short"
                     breakout_level = self._as_float(
                         row.get("breakout_short_level_15m"),
-                        self._as_float(row.get("donchian_low_15m"), self._as_float(row["close"], 0.0)),
+                        self._as_float(
+                            row.get("donchian_low_15m"), self._as_float(row["close"], 0.0)
+                        ),
                     )
                     breakout_atr = max(
-                        self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)),
+                        self._as_float(
+                            row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)
+                        ),
                         0.01,
                     )
-                    breakout_extreme = min(self._as_float(row.get("mid_low", row["low"])), breakout_level)
+                    breakout_extreme = min(
+                        self._as_float(row.get("mid_low", row["low"])), breakout_level
+                    )
                     reasons.append("15分足下方向終値ブレイクを検出")
                     state = "BREAKOUT_DETECTED"
 
-            if pending_breakout_idx is not None and active_episode_id > 0 and pending_breakout_side is not None:
+            if (
+                pending_breakout_idx is not None
+                and active_episode_id > 0
+                and pending_breakout_side is not None
+            ):
                 state = "WAIT_PULLBACK"
                 bars_since_breakout = position - pending_breakout_idx
                 if bars_since_breakout > fx_cfg.pullback_window_bars:
@@ -139,10 +161,16 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                     current_mid_low = self._as_float(row.get("mid_low", row["low"]))
                     if pending_breakout_side == "long":
                         breakout_extreme = max(breakout_extreme, current_mid_high)
-                        pullback_depth = (breakout_extreme - current_mid_low) / max(breakout_atr, 0.01)
-                        break_floor = breakout_level - fx_cfg.pullback_break_below_buffer_atr * breakout_atr
+                        pullback_depth = (breakout_extreme - current_mid_low) / max(
+                            breakout_atr, 0.01
+                        )
+                        break_floor = (
+                            breakout_level - fx_cfg.pullback_break_below_buffer_atr * breakout_atr
+                        )
                         valid_pullback = (
-                            fx_cfg.min_pullback_atr_ratio <= pullback_depth <= fx_cfg.shallow_pullback_max_ratio
+                            fx_cfg.min_pullback_atr_ratio
+                            <= pullback_depth
+                            <= fx_cfg.shallow_pullback_max_ratio
                             and current_mid_low >= break_floor
                         )
                         invalid_pullback = (
@@ -151,10 +179,16 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                         )
                     else:
                         breakout_extreme = min(breakout_extreme, current_mid_low)
-                        pullback_depth = (current_mid_high - breakout_extreme) / max(breakout_atr, 0.01)
-                        break_ceiling = breakout_level + fx_cfg.pullback_break_below_buffer_atr * breakout_atr
+                        pullback_depth = (current_mid_high - breakout_extreme) / max(
+                            breakout_atr, 0.01
+                        )
+                        break_ceiling = (
+                            breakout_level + fx_cfg.pullback_break_below_buffer_atr * breakout_atr
+                        )
                         valid_pullback = (
-                            fx_cfg.min_pullback_atr_ratio <= pullback_depth <= fx_cfg.shallow_pullback_max_ratio
+                            fx_cfg.min_pullback_atr_ratio
+                            <= pullback_depth
+                            <= fx_cfg.shallow_pullback_max_ratio
                             and current_mid_high <= break_ceiling
                         )
                         invalid_pullback = (
@@ -178,17 +212,27 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                     elif valid_pullback:
                         if pending_breakout_side == "long":
                             trigger_price = max(
-                                self._as_float(row.get("ask_high", row.get("mid_high", row["high"]))),
-                                self._as_float(working.iloc[position - 1].get("ask_high", row.get("ask_high", row["high"])))
-                                if position > 0
-                                else self._as_float(row.get("ask_high", row["high"])),
+                                self._as_float(
+                                    row.get("ask_high", row.get("mid_high", row["high"]))
+                                ),
+                                (
+                                    self._as_float(
+                                        working.iloc[position - 1].get(
+                                            "ask_high", row.get("ask_high", row["high"])
+                                        )
+                                    )
+                                    if position > 0
+                                    else self._as_float(row.get("ask_high", row["high"]))
+                                ),
                             )
                             swing_reference = self._as_float(
                                 row.get("swing_low_reference"),
                                 self._as_float(
-                                    working.iloc[swing_start : position + 1]["mid_low"].min()
-                                    if "mid_low" in working.columns
-                                    else working.iloc[swing_start : position + 1]["low"].min(),
+                                    (
+                                        working.iloc[swing_start : position + 1]["mid_low"].min()
+                                        if "mid_low" in working.columns
+                                        else working.iloc[swing_start : position + 1]["low"].min()
+                                    ),
                                 ),
                             )
                             initial_stop = min(
@@ -196,7 +240,9 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                                 swing_reference - fx_cfg.swing_buffer_atr * breakout_atr,
                             )
                             initial_risk = max(trigger_price - initial_stop, 0.01)
-                            trigger_distance_atr = (trigger_price - breakout_level) / max(breakout_atr, 0.01)
+                            trigger_distance_atr = (trigger_price - breakout_level) / max(
+                                breakout_atr, 0.01
+                            )
                             entry_order_side = SignalAction.BUY.value
                             exit_order_side = SignalAction.SELL.value
                             position_side = "long"
@@ -204,16 +250,24 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                         else:
                             trigger_price = min(
                                 self._as_float(row.get("bid_low", row.get("mid_low", row["low"]))),
-                                self._as_float(working.iloc[position - 1].get("bid_low", row.get("bid_low", row["low"])))
-                                if position > 0
-                                else self._as_float(row.get("bid_low", row["low"])),
+                                (
+                                    self._as_float(
+                                        working.iloc[position - 1].get(
+                                            "bid_low", row.get("bid_low", row["low"])
+                                        )
+                                    )
+                                    if position > 0
+                                    else self._as_float(row.get("bid_low", row["low"]))
+                                ),
                             )
                             swing_reference = self._as_float(
                                 row.get("swing_high_reference"),
                                 self._as_float(
-                                    working.iloc[swing_start : position + 1]["mid_high"].max()
-                                    if "mid_high" in working.columns
-                                    else working.iloc[swing_start : position + 1]["high"].max(),
+                                    (
+                                        working.iloc[swing_start : position + 1]["mid_high"].max()
+                                        if "mid_high" in working.columns
+                                        else working.iloc[swing_start : position + 1]["high"].max()
+                                    ),
                                 ),
                             )
                             initial_stop = max(
@@ -221,7 +275,9 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                                 swing_reference + fx_cfg.swing_buffer_atr * breakout_atr,
                             )
                             initial_risk = max(initial_stop - trigger_price, 0.01)
-                            trigger_distance_atr = (breakout_level - trigger_price) / max(breakout_atr, 0.01)
+                            trigger_distance_atr = (breakout_level - trigger_price) / max(
+                                breakout_atr, 0.01
+                            )
                             entry_order_side = SignalAction.SELL.value
                             exit_order_side = SignalAction.BUY.value
                             position_side = "short"
@@ -234,11 +290,15 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
                             working.at[timestamp, "entry_trigger_price"] = trigger_price
                             working.at[timestamp, "initial_stop_price"] = initial_stop
                             working.at[timestamp, "initial_risk_price"] = initial_risk
-                            working.at[timestamp, "entry_trigger_distance_atr"] = trigger_distance_atr
+                            working.at[timestamp, "entry_trigger_distance_atr"] = (
+                                trigger_distance_atr
+                            )
                             reasons.append(entry_reason)
                             state = "ENTRY_ARMED"
                         else:
-                            working.at[timestamp, "entry_trigger_distance_atr"] = trigger_distance_atr
+                            working.at[timestamp, "entry_trigger_distance_atr"] = (
+                                trigger_distance_atr
+                            )
                             reasons.append(
                                 "押しは有効だがエントリー禁止条件で見送り"
                                 if pending_breakout_side == "long"
@@ -282,18 +342,26 @@ class FxBreakoutPullbackStrategy(BaseStrategy):
             if self._as_bool(working.at[timestamp, "entry_signal"]):
                 entry_side = working.at[timestamp, "entry_order_side"]
                 action = str(entry_side) if pd.notna(entry_side) else SignalAction.BUY.value
-            elif self._as_bool(working.at[timestamp, "exit_signal"]) or self._as_bool(working.at[timestamp, "partial_exit_signal"]):
+            elif self._as_bool(working.at[timestamp, "exit_signal"]) or self._as_bool(
+                working.at[timestamp, "partial_exit_signal"]
+            ):
                 exit_side = working.at[timestamp, "exit_order_side"]
                 action = str(exit_side) if pd.notna(exit_side) else SignalAction.SELL.value
             working.at[timestamp, "signal_action"] = action
             working.at[timestamp, "breakout_episode_id"] = active_episode_id or breakout_episode_id
 
             score = 0.0
-            score += 0.35 if (
-                self._as_bool(row.get("trend_long_allowed_1h", False))
-                or self._as_bool(row.get("trend_short_allowed_1h", False))
-            ) else 0.0
-            score += 0.20 if self._as_bool(row.get("spread_context_ok", True), default=True) else 0.0
+            score += (
+                0.35
+                if (
+                    self._as_bool(row.get("trend_long_allowed_1h", False))
+                    or self._as_bool(row.get("trend_short_allowed_1h", False))
+                )
+                else 0.0
+            )
+            score += (
+                0.20 if self._as_bool(row.get("spread_context_ok", True), default=True) else 0.0
+            )
             score += 0.20 if self._as_bool(row.get("spread_ratio_ok", True), default=True) else 0.0
             score += 0.25 if self._as_bool(working.at[timestamp, "entry_signal"]) else 0.0
             score = min(score, 1.0)

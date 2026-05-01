@@ -129,7 +129,9 @@ class FxQuotePortfolioSimulator:
         return default
 
     def _breakout_level_from_row(self, row: pd.Series, position_side: str) -> float:
-        breakout_column = "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        breakout_column = (
+            "breakout_level_15m" if position_side == "long" else "breakout_short_level_15m"
+        )
         return self._as_float(row.get(breakout_column), self._as_float(row.get("close"), 0.0))
 
     @staticmethod
@@ -166,7 +168,9 @@ class FxQuotePortfolioSimulator:
         )
         return mid + spread / 2.0 if side == "ask" else mid - spread / 2.0
 
-    def _delayed_execute_at(self, frame: pd.DataFrame, timestamp: pd.Timestamp, delay_bars: int) -> pd.Timestamp | None:
+    def _delayed_execute_at(
+        self, frame: pd.DataFrame, timestamp: pd.Timestamp, delay_bars: int
+    ) -> pd.Timestamp | None:
         try:
             location = int(frame.index.get_loc(timestamp))
         except KeyError:
@@ -222,19 +226,25 @@ class FxQuotePortfolioSimulator:
                     if timestamp in frame.index:
                         position = positions.get(symbol)
                         if position is None:
-                            prices[symbol] = self._quote_price(frame.loc[timestamp], "bid", "close", 0.0)
+                            prices[symbol] = self._quote_price(
+                                frame.loc[timestamp], "bid", "close", 0.0
+                            )
                         else:
-                            prices[symbol] = self._mark_to_market_price(frame.loc[timestamp], position)
+                            prices[symbol] = self._mark_to_market_price(
+                                frame.loc[timestamp], position
+                            )
             for symbol, frame in prepared.items():
                 if timestamp not in frame.index:
                     continue
                 row = frame.loc[timestamp]
                 if symbol in positions:
-                    cash_delta, trade_row, fill_row, order_row, closed = self._process_protective_exit(
-                        timestamp,
-                        row,
-                        positions[symbol],
-                        mode,
+                    cash_delta, trade_row, fill_row, order_row, closed = (
+                        self._process_protective_exit(
+                            timestamp,
+                            row,
+                            positions[symbol],
+                            mode,
+                        )
                     )
                     cash += cash_delta
                     if collect_orders and order_row is not None:
@@ -246,7 +256,11 @@ class FxQuotePortfolioSimulator:
                     if closed:
                         positions.pop(symbol, None)
                         pending_exits.pop(symbol, None)
-                if symbol in positions and symbol in pending_exits and pending_exits[symbol].execute_at == timestamp:
+                if (
+                    symbol in positions
+                    and symbol in pending_exits
+                    and pending_exits[symbol].execute_at == timestamp
+                ):
                     cash_delta, trade_row, fill_row, order_row = self._execute_scheduled_exit(
                         timestamp,
                         row,
@@ -263,13 +277,19 @@ class FxQuotePortfolioSimulator:
                         trade_records.append(trade_row)
                     if positions[symbol].quantity <= 0:
                         positions.pop(symbol, None)
-                if symbol not in positions and symbol in pending_entries and pending_entries[symbol].execute_at == timestamp:
-                    cash_delta, position, order_row, fill_row, trade_row = self._execute_pending_entry(
-                        timestamp,
-                        row,
-                        pending_entries.pop(symbol),
-                        cash,
-                        mode,
+                if (
+                    symbol not in positions
+                    and symbol in pending_entries
+                    and pending_entries[symbol].execute_at == timestamp
+                ):
+                    cash_delta, position, order_row, fill_row, trade_row = (
+                        self._execute_pending_entry(
+                            timestamp,
+                            row,
+                            pending_entries.pop(symbol),
+                            cash,
+                            mode,
+                        )
                     )
                     cash += cash_delta
                     if collect_orders and order_row is not None:
@@ -282,7 +302,11 @@ class FxQuotePortfolioSimulator:
                         positions[symbol] = position
                 next_timestamp = row.get("next_timestamp")
                 if pd.notna(next_timestamp):
-                    if symbol not in positions and symbol not in pending_entries and self._as_bool(row.get("entry_signal", False)):
+                    if (
+                        symbol not in positions
+                        and symbol not in pending_entries
+                        and self._as_bool(row.get("entry_signal", False))
+                    ):
                         position_side = self._normalize_position_side(row.get("position_side"))
                         entry_order_side = self._order_side_from_value(
                             row.get("entry_order_side"),
@@ -292,9 +316,13 @@ class FxQuotePortfolioSimulator:
                             row.get("exit_order_side"),
                             OrderSide.SELL if position_side == "long" else OrderSide.BUY,
                         )
-                        quantity = self._entry_quantity(symbol, row, cash, positions, prepared, timestamp, entry_order_side)
+                        quantity = self._entry_quantity(
+                            symbol, row, cash, positions, prepared, timestamp, entry_order_side
+                        )
                         if quantity > 0:
-                            execute_at = self._delayed_execute_at(frame, pd.Timestamp(timestamp), self.fx_cfg.entry_delay_bars)
+                            execute_at = self._delayed_execute_at(
+                                frame, pd.Timestamp(timestamp), self.fx_cfg.entry_delay_bars
+                            )
                             if execute_at is None:
                                 continue
                             pending_entries[symbol] = PendingEntry(
@@ -313,9 +341,19 @@ class FxQuotePortfolioSimulator:
                                         self._as_float(row.get("close"), 0.0),
                                     ),
                                 ),
-                                initial_stop_price=self._as_float(row.get("initial_stop_price"), 0.0),
-                                initial_risk_price=self._as_float(row.get("initial_risk_price"), 0.01),
-                                atr_at_entry=max(self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)), 0.01),
+                                initial_stop_price=self._as_float(
+                                    row.get("initial_stop_price"), 0.0
+                                ),
+                                initial_risk_price=self._as_float(
+                                    row.get("initial_risk_price"), 0.01
+                                ),
+                                atr_at_entry=max(
+                                    self._as_float(
+                                        row.get("breakout_atr_15m"),
+                                        self._as_float(row.get("atr_15m"), 0.01),
+                                    ),
+                                    0.01,
+                                ),
                                 breakout_level=self._breakout_level_from_row(row, position_side),
                                 reason=str(row.get("explanation_ja", "")),
                                 score=self._as_float(row.get("signal_score"), 0.0),
@@ -331,12 +369,22 @@ class FxQuotePortfolioSimulator:
                                 reason="1時間足EMAクロスで全決済",
                                 kind="favorable_exit",
                             )
-                        elif self._as_bool(row.get("partial_exit_signal", False)) and not positions[symbol].partial_exit_done:
+                        elif (
+                            self._as_bool(row.get("partial_exit_signal", False))
+                            and not positions[symbol].partial_exit_done
+                        ):
                             partial_quantity = max(
                                 1,
-                                int(round(positions[symbol].initial_quantity * self.fx_cfg.partial_exit_fraction)),
+                                int(
+                                    round(
+                                        positions[symbol].initial_quantity
+                                        * self.fx_cfg.partial_exit_fraction
+                                    )
+                                ),
                             )
-                            partial_quantity = min(partial_quantity, max(positions[symbol].quantity - 1, 0))
+                            partial_quantity = min(
+                                partial_quantity, max(positions[symbol].quantity - 1, 0)
+                            )
                             if partial_quantity > 0:
                                 pending_exits[symbol] = PendingExit(
                                     symbol=symbol,
@@ -380,7 +428,9 @@ class FxQuotePortfolioSimulator:
                     )
 
         return {
-            "equity_curve": pd.DataFrame(equity_rows).set_index("timestamp") if equity_rows else pd.DataFrame(),
+            "equity_curve": (
+                pd.DataFrame(equity_rows).set_index("timestamp") if equity_rows else pd.DataFrame()
+            ),
             "orders": pd.DataFrame(order_records),
             "fills": pd.DataFrame(fill_records),
             "trades": pd.DataFrame(trade_records),
@@ -424,15 +474,29 @@ class FxQuotePortfolioSimulator:
                 "close",
                 self._as_float(row.get("close"), 0.0),
             ),
-            atr_value=max(self._as_float(row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)), 0.01),
+            atr_value=max(
+                self._as_float(
+                    row.get("breakout_atr_15m"), self._as_float(row.get("atr_15m"), 0.01)
+                ),
+                0.01,
+            ),
         )
         if not self.risk_manager.can_open_position(
             open_positions=len(positions),
-            current_exposure_ratio=0.0
-            if equity <= 0
-            else (
-                sum(abs(self._position_market_value(position, prices.get(name, position.entry_price))) for name, position in positions.items())
-                / equity
+            current_exposure_ratio=(
+                0.0
+                if equity <= 0
+                else (
+                    sum(
+                        abs(
+                            self._position_market_value(
+                                position, prices.get(name, position.entry_price)
+                            )
+                        )
+                        for name, position in positions.items()
+                    )
+                    / equity
+                )
             ),
             quantity=sizing.quantity,
         ):
@@ -445,7 +509,9 @@ class FxQuotePortfolioSimulator:
         _, quote = split_fx_symbol(symbol)
         if quote != "JPY":
             return False
-        open_jpy_crosses = sum(1 for current_symbol in positions if split_fx_symbol(current_symbol)[1] == "JPY")
+        open_jpy_crosses = sum(
+            1 for current_symbol in positions if split_fx_symbol(current_symbol)[1] == "JPY"
+        )
         return open_jpy_crosses >= self.fx_cfg.max_jpy_cross_positions
 
     def _process_protective_exit(
@@ -454,10 +520,14 @@ class FxQuotePortfolioSimulator:
         row: pd.Series,
         position: FxOpenPosition,
         mode: BrokerMode,
-    ) -> tuple[float, dict[str, object] | None, dict[str, object] | None, dict[str, object] | None, bool]:
+    ) -> tuple[
+        float, dict[str, object] | None, dict[str, object] | None, dict[str, object] | None, bool
+    ]:
         current_atr = max(float(row.get("atr_15m") or position.atr_at_entry), 0.01)
         if self._is_long(position.position_side):
-            position.highest_bid = max(position.highest_bid, self._quote_price(row, "bid", "high", position.highest_bid))
+            position.highest_bid = max(
+                position.highest_bid, self._quote_price(row, "bid", "high", position.highest_bid)
+            )
             trailing_candidate = position.highest_bid - self.fx_cfg.atr_trailing_mult * current_atr
             position.trailing_stop_price = max(position.trailing_stop_price, trailing_candidate)
             active_stop = max(position.initial_stop_price, position.trailing_stop_price)
@@ -475,7 +545,9 @@ class FxQuotePortfolioSimulator:
             else:
                 return 0.0, None, None, None, False
         else:
-            position.lowest_ask = min(position.lowest_ask, self._quote_price(row, "ask", "low", position.lowest_ask))
+            position.lowest_ask = min(
+                position.lowest_ask, self._quote_price(row, "ask", "low", position.lowest_ask)
+            )
             trailing_candidate = position.lowest_ask + self.fx_cfg.atr_trailing_mult * current_atr
             position.trailing_stop_price = min(position.trailing_stop_price, trailing_candidate)
             active_stop = min(position.initial_stop_price, position.trailing_stop_price)
@@ -492,7 +564,9 @@ class FxQuotePortfolioSimulator:
                 reason = "trailing_stop"
             else:
                 return 0.0, None, None, None, False
-        fill = apply_fill_model(exit_price, position.exit_order_side, position.quantity, self.config.risk)
+        fill = apply_fill_model(
+            exit_price, position.exit_order_side, position.quantity, self.config.risk
+        )
         order_id = str(uuid4())
         trade_row = self._trade_row(
             position=position,
@@ -545,7 +619,9 @@ class FxQuotePortfolioSimulator:
             "open",
             position.entry_price,
         )
-        fill = apply_fill_model(exit_price, pending_exit.order_side, pending_exit.quantity, self.config.risk)
+        fill = apply_fill_model(
+            exit_price, pending_exit.order_side, pending_exit.quantity, self.config.risk
+        )
         order_id = str(uuid4())
         position.quantity -= pending_exit.quantity
         if pending_exit.kind == "partial_exit":
@@ -595,7 +671,13 @@ class FxQuotePortfolioSimulator:
         pending_entry: PendingEntry,
         cash: float,
         mode: BrokerMode,
-    ) -> tuple[float, FxOpenPosition | None, dict[str, object] | None, dict[str, object] | None, dict[str, object] | None]:
+    ) -> tuple[
+        float,
+        FxOpenPosition | None,
+        dict[str, object] | None,
+        dict[str, object] | None,
+        dict[str, object] | None,
+    ]:
         if not self._as_bool(row.get("entry_context_ok", False)):
             return 0.0, None, None, None, None
         if pending_entry.entry_order_side == OrderSide.BUY:
@@ -616,7 +698,12 @@ class FxQuotePortfolioSimulator:
                 entry_raw_price = pending_entry.trigger_price
             else:
                 return 0.0, None, None, None, None
-        fill = apply_fill_model(entry_raw_price, pending_entry.entry_order_side, pending_entry.quantity, self.config.risk)
+        fill = apply_fill_model(
+            entry_raw_price,
+            pending_entry.entry_order_side,
+            pending_entry.quantity,
+            self.config.risk,
+        )
         total_value = fill.price * pending_entry.quantity
         if pending_entry.entry_order_side == OrderSide.BUY and cash < (total_value + fill.fee):
             return 0.0, None, None, None, None
@@ -691,7 +778,9 @@ class FxQuotePortfolioSimulator:
             else:
                 entry_cash_delta = total_value - fill.fee
                 return entry_cash_delta, position, order_row, fill_row, None
-        exit_fill = apply_fill_model(exit_raw, pending_entry.exit_order_side, pending_entry.quantity, self.config.risk)
+        exit_fill = apply_fill_model(
+            exit_raw, pending_entry.exit_order_side, pending_entry.quantity, self.config.risk
+        )
         stop_order_id = str(uuid4())
         stop_trade = self._trade_row(
             position=position,

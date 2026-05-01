@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-import json
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -16,7 +16,6 @@ from fxautotrade_lab.core.constants import ASIA_TOKYO, UTC
 from fxautotrade_lab.core.enums import TimeFrame
 from fxautotrade_lab.core.symbols import normalize_fx_symbol
 from fxautotrade_lab.data.quality import validate_bar_frame
-
 
 INTRADAY_INTERVALS: dict[TimeFrame, str] = {
     TimeFrame.MIN_1: "1min",
@@ -161,7 +160,9 @@ class GmoForexPublicClient:
         invalid_rows = int(open_times.isna().sum())
         if invalid_rows:
             raise ValueError(f"GMO の kline openTime に不正な値が {invalid_rows} 件あります。")
-        timestamps = pd.to_datetime(open_times.astype("int64"), unit="ms", utc=True).dt.tz_convert(ASIA_TOKYO)
+        timestamps = pd.to_datetime(open_times.astype("int64"), unit="ms", utc=True).dt.tz_convert(
+            ASIA_TOKYO
+        )
         normalized = pd.DataFrame(
             {
                 "open": frame["open"].astype(float).to_numpy(),

@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
 
 from ..theme import Tokens
 
-
 _LEVEL_COLOR = {
     "OK": Tokens.POS,
     "INFO": Tokens.INFO,
@@ -81,12 +80,7 @@ class LogDock(QDockWidget):
         level_key = (level or "INFO").upper()
         color = _LEVEL_COLOR.get(level_key, Tokens.MUTED)
         timestamp = datetime.now().strftime("%H:%M:%S")
-        safe_text = (
-            (text or "")
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        safe_text = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         html = (
             f'<span style="color:{Tokens.MUTED_2}">{timestamp}</span> '
             f'<span style="color:{color};font-weight:600">[{level_key}]</span> '

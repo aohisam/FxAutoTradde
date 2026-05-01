@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import hashlib
 import json
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 import yaml
@@ -82,9 +83,22 @@ def _monthly_equity_summary(equity_curve: pd.DataFrame) -> pd.DataFrame:
 
 def _regime_summary(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
     if signals is None or signals.empty:
-        return pd.DataFrame(columns=["regime", "rule_candidates", "accepted_candidates", "trade_count", "net_pnl", "average_r"])
+        return pd.DataFrame(
+            columns=[
+                "regime",
+                "rule_candidates",
+                "accepted_candidates",
+                "trade_count",
+                "net_pnl",
+                "average_r",
+            ]
+        )
     signal_working = signals.copy()
-    regime_source = signal_working["regime_label"] if "regime_label" in signal_working.columns else pd.Series("unknown", index=signal_working.index)
+    regime_source = (
+        signal_working["regime_label"]
+        if "regime_label" in signal_working.columns
+        else pd.Series("unknown", index=signal_working.index)
+    )
     signal_working["regime"] = regime_source.fillna("unknown").astype(str)
     signal_summary = (
         signal_working.groupby("regime", as_index=False)
@@ -119,13 +133,10 @@ def _regime_summary(signals: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame
         how="left",
     )
     trade_with_regime["regime"] = trade_with_regime["regime"].fillna("unknown")
-    trade_summary = (
-        trade_with_regime.groupby("regime", as_index=False)
-        .agg(
-            trade_count=("symbol", "count"),
-            net_pnl=("net_pnl", "sum"),
-            average_r=("realized_r_net", "mean"),
-        )
+    trade_summary = trade_with_regime.groupby("regime", as_index=False).agg(
+        trade_count=("symbol", "count"),
+        net_pnl=("net_pnl", "sum"),
+        average_r=("realized_r_net", "mean"),
     )
     return signal_summary.merge(trade_summary, on="regime", how="left").fillna(
         {"trade_count": 0, "net_pnl": 0.0, "average_r": 0.0}
@@ -186,10 +197,7 @@ class ResearchPipeline:
         def nested(step_index: int, label: str):
             def _callback(payload: dict[str, object]) -> None:
                 message = str(payload.get("message", "")).strip()
-                if message:
-                    full_message = f"{label}: {message}"
-                else:
-                    full_message = f"{label}を実行しています。"
+                full_message = f"{label}: {message}" if message else f"{label}を実行しています。"
                 _emit_progress(
                     progress_callback,
                     task="research",
@@ -271,7 +279,9 @@ class ResearchPipeline:
         robustness = self._step(
             "robustness",
             cache_dir / f"robustness_{selected_mode}.json",
-            lambda: self._robustness_runs(selected_mode, progress_callback=nested(5, "頑健性チェック")),
+            lambda: self._robustness_runs(
+                selected_mode, progress_callback=nested(5, "頑健性チェック")
+            ),
         )
         _emit_progress(
             progress_callback,
@@ -283,7 +293,9 @@ class ResearchPipeline:
         sensitivity = self._step(
             "sensitivity",
             cache_dir / f"sensitivity_{selected_mode}.json",
-            lambda: self._parameter_sensitivity(selected_mode, progress_callback=nested(6, "感度分析")),
+            lambda: self._parameter_sensitivity(
+                selected_mode, progress_callback=nested(6, "感度分析")
+            ),
         )
 
         summary = {
@@ -338,7 +350,9 @@ class ResearchPipeline:
         digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
         return self.config.research.cache_dir / digest
 
-    def _step(self, name: str, cache_path: Path, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    def _step(
+        self, name: str, cache_path: Path, fn: Callable[[], dict[str, Any]]
+    ) -> dict[str, Any]:
         use_cache = self.config.research.reuse_cached_steps and cache_path.exists()
         if use_cache:
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
@@ -351,7 +365,10 @@ class ResearchPipeline:
         except Exception as exc:
             self.steps.append({"step": name, "status": "failed", "error": str(exc)})
             raise
-        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+        cache_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
         self.steps.append({"step": name, "status": "completed", "path": str(cache_path)})
         return payload
 
@@ -379,7 +396,10 @@ class ResearchPipeline:
             "output_dir": result.output_dir,
             "metrics": _sanitize_metrics(result.metrics),
         }
-        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+        cache_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default),
+            encoding="utf-8",
+        )
         self.steps.append({"step": name, "status": "completed", "path": str(cache_path)})
         return result
 
@@ -399,7 +419,9 @@ class ResearchPipeline:
                     "rows": int(len(one_min.index)),
                     "start": one_min.index.min().isoformat() if not one_min.empty else "",
                     "end": one_min.index.max().isoformat() if not one_min.empty else "",
-                    "has_bid_ask": bool({"bid_open", "ask_open", "spread_close"}.issubset(one_min.columns)),
+                    "has_bid_ask": bool(
+                        {"bid_open", "ask_open", "spread_close"}.issubset(one_min.columns)
+                    ),
                     **summarize_quote_bar_quality(one_min),
                 }
             )
@@ -408,7 +430,9 @@ class ResearchPipeline:
     def _train_summary(self, progress_callback=None) -> dict[str, Any]:
         train_config = self.config.model_copy(deep=True)
         train_config.strategy.fx_breakout_pullback.ml_filter.enabled = True
-        return train_fx_filter_model_run(train_config, self.env, progress_callback=progress_callback)
+        return train_fx_filter_model_run(
+            train_config, self.env, progress_callback=progress_callback
+        )
 
     def _run_backtest_variant(
         self,
@@ -535,7 +559,9 @@ class ResearchPipeline:
                 )
         return {"rows": rows}
 
-    def _write_reports(self, output_dir: Path, summary: dict[str, Any], baseline_result, selected_result) -> None:
+    def _write_reports(
+        self, output_dir: Path, summary: dict[str, Any], baseline_result, selected_result
+    ) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "research_summary.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2, default=_json_default),
@@ -545,12 +571,24 @@ class ResearchPipeline:
             yaml.safe_dump(summary, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
-        pd.DataFrame(summary["robustness"].get("rows", [])).to_csv(output_dir / "robustness.csv", index=False)
-        pd.DataFrame(summary["sensitivity"].get("rows", [])).to_csv(output_dir / "sensitivity.csv", index=False)
-        _yearly_summary(selected_result.trades).to_csv(output_dir / "yearly_summary.csv", index=False)
-        _monthly_equity_summary(selected_result.equity_curve).to_csv(output_dir / "monthly_summary.csv", index=False)
-        _hourly_summary(selected_result.signals).to_csv(output_dir / "hourly_signal_summary.csv", index=False)
-        _regime_summary(selected_result.signals, selected_result.trades).to_csv(output_dir / "regime_summary.csv", index=False)
+        pd.DataFrame(summary["robustness"].get("rows", [])).to_csv(
+            output_dir / "robustness.csv", index=False
+        )
+        pd.DataFrame(summary["sensitivity"].get("rows", [])).to_csv(
+            output_dir / "sensitivity.csv", index=False
+        )
+        _yearly_summary(selected_result.trades).to_csv(
+            output_dir / "yearly_summary.csv", index=False
+        )
+        _monthly_equity_summary(selected_result.equity_curve).to_csv(
+            output_dir / "monthly_summary.csv", index=False
+        )
+        _hourly_summary(selected_result.signals).to_csv(
+            output_dir / "hourly_signal_summary.csv", index=False
+        )
+        _regime_summary(selected_result.signals, selected_result.trades).to_csv(
+            output_dir / "regime_summary.csv", index=False
+        )
         (output_dir / "summary.md").write_text(
             "\n".join(
                 [

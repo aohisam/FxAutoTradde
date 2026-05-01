@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 
-
 _SIDE_LABELS = {"buy": "買い", "sell": "売り", "long": "買い", "short": "売り"}
 _WL_LABELS = ["全て", "勝ち", "負け"]
 
@@ -75,14 +74,15 @@ def _pnl_value(text: str) -> float:
         return 0.0
 
 
-def build_history_page(app_state, submit_task=None, log_message=None, on_go_to_reports=None):  # pragma: no cover - UI helper
+def build_history_page(
+    app_state, submit_task=None, log_message=None, on_go_to_reports=None
+):  # pragma: no cover - UI helper
     from PySide6.QtCore import QSortFilterProxyModel, Qt, QUrl
     from PySide6.QtGui import QColor, QDesktopServices
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QComboBox,
         QFileDialog,
-        QFrame,
         QGridLayout,
         QHBoxLayout,
         QHeaderView,
@@ -158,9 +158,7 @@ def build_history_page(app_state, submit_task=None, log_message=None, on_go_to_r
             pnl = _pnl_value(model.data(pnl_idx) or "0")
             if self._wl == 1 and pnl <= 0:
                 return False
-            if self._wl == 2 and pnl >= 0:
-                return False
-            return True
+            return not (self._wl == 2 and pnl >= 0)
 
     # ---- Page scaffold -----------------------------------------------------
 
@@ -200,7 +198,9 @@ def build_history_page(app_state, submit_task=None, log_message=None, on_go_to_r
     kpi_total = KpiTile(label="累計取引", value="-", value_variant="mono", note="全実行合計")
     kpi_pnl = KpiTile(label="累計損益", value="-", value_variant="mono", note="初期資産比")
     kpi_winrate = KpiTile(label="勝率", value="-", value_variant="mono")
-    kpi_pf = KpiTile(label="Profit Factor", value="-", value_variant="mono", note="平均利益 / 平均損失")
+    kpi_pf = KpiTile(
+        label="Profit Factor", value="-", value_variant="mono", note="平均利益 / 平均損失"
+    )
     tiles = [kpi_total, kpi_pnl, kpi_winrate, kpi_pf]
     for index, tile in enumerate(tiles):
         kpi_grid.addWidget(tile, 0, index)
@@ -311,7 +311,11 @@ def build_history_page(app_state, submit_task=None, log_message=None, on_go_to_r
         wl_seg.setEnabled(not is_loading)
         export_btn.setEnabled(not is_loading)
         report_btn.setEnabled(not is_loading)
-        subtitle.setText("保存済み実行から、確定した取引と損益を確認できます。" if not is_loading else "取引履歴を読み込んでいます...")
+        subtitle.setText(
+            "保存済み実行から、確定した取引と損益を確認できます。"
+            if not is_loading
+            else "取引履歴を読み込んでいます..."
+        )
 
     def _apply_log_table_widths() -> None:
         width_map = {

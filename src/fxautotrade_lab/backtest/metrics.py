@@ -24,14 +24,18 @@ def compute_metrics(
     equity = equity_curve["equity"]
     starting_equity = float(equity.iloc[0])
     ending_equity = float(equity.iloc[-1])
-    returns = equity.pct_change(fill_method=None).dropna()
+    equity.pct_change(fill_method=None).dropna()
     daily_returns = equity.resample("1D").last().pct_change(fill_method=None).dropna()
     total_return = float(ending_equity / starting_equity - 1)
     net_profit = ending_equity - starting_equity
     elapsed_days = max((equity.index[-1] - equity.index[0]).days, 1)
     annualized_return = float((1 + total_return) ** (365 / elapsed_days) - 1)
     daily_std = float(daily_returns.std()) if not daily_returns.empty else 0.0
-    sharpe = float(np.sqrt(252) * daily_returns.mean() / daily_std) if daily_std and math.isfinite(daily_std) else 0.0
+    sharpe = (
+        float(np.sqrt(252) * daily_returns.mean() / daily_std)
+        if daily_std and math.isfinite(daily_std)
+        else 0.0
+    )
     downside = daily_returns[daily_returns < 0]
     downside_std = float(downside.std()) if not downside.empty else 0.0
     sortino = (
@@ -41,14 +45,26 @@ def compute_metrics(
     )
     drawdown = compute_drawdown(equity)
     win_rate = float((trades["net_pnl"] > 0).mean()) if not trades.empty else 0.0
-    gross_profit = float(trades.loc[trades["net_pnl"] > 0, "net_pnl"].sum()) if not trades.empty else 0.0
-    gross_loss = float(-trades.loc[trades["net_pnl"] < 0, "net_pnl"].sum()) if not trades.empty else 0.0
+    gross_profit = (
+        float(trades.loc[trades["net_pnl"] > 0, "net_pnl"].sum()) if not trades.empty else 0.0
+    )
+    gross_loss = (
+        float(-trades.loc[trades["net_pnl"] < 0, "net_pnl"].sum()) if not trades.empty else 0.0
+    )
     profit_factor = gross_profit / gross_loss if gross_loss else math.inf
     expectancy = float(trades["net_pnl"].mean()) if not trades.empty else 0.0
-    average_r = float(trades["realized_r_net"].mean()) if not trades.empty and "realized_r_net" in trades.columns else 0.0
+    average_r = (
+        float(trades["realized_r_net"].mean())
+        if not trades.empty and "realized_r_net" in trades.columns
+        else 0.0
+    )
     avg_hold = float(trades["hold_bars"].mean()) if not trades.empty else 0.0
     exposure = float((equity_curve["exposure"] / equity_curve["equity"]).fillna(0.0).mean())
-    turnover = float(fills["price"].mul(fills["quantity"]).sum() / equity.mean()) if not fills.empty else 0.0
+    turnover = (
+        float(fills["price"].mul(fills["quantity"]).sum() / equity.mean())
+        if not fills.empty
+        else 0.0
+    )
     per_symbol = (
         trades.groupby("symbol")["net_pnl"].sum().sort_values(ascending=False).to_dict()
         if not trades.empty
@@ -57,7 +73,9 @@ def compute_metrics(
     benchmark_relative = 0.0
     if benchmark_curve is not None and not benchmark_curve.empty:
         benchmark_relative = total_return - float(
-            benchmark_curve["benchmark_equity"].iloc[-1] / benchmark_curve["benchmark_equity"].iloc[0] - 1
+            benchmark_curve["benchmark_equity"].iloc[-1]
+            / benchmark_curve["benchmark_equity"].iloc[0]
+            - 1
         )
     return {
         "total_return": total_return,

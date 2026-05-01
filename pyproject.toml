@@ -48,6 +48,11 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "B", "UP", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/desktop_entry.py" = ["E402"]
+"src/fxautotrade_lab/desktop/**/*.py" = ["B008", "E741", "N802", "N806", "N815", "SIM105"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

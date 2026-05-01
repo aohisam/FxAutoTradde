@@ -90,10 +90,11 @@ def _latest_entry_stop(app_state, symbol: str) -> tuple[float | None, float | No
     return entry, stop
 
 
-def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # pragma: no cover - UI helper
+def build_chart_page(
+    app_state, submit_task, log_message, on_add_pair=None
+):  # pragma: no cover - UI helper
     import pandas as pd
-
-    from PySide6.QtCore import Qt, QRectF
+    from PySide6.QtCore import QRectF, Qt
     from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
     from PySide6.QtWidgets import (
         QCheckBox,
@@ -192,9 +193,7 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
                 bot_y = y(min(candle.o, candle.c))
                 painter.setBrush(QBrush(color))
                 painter.setPen(Qt.NoPen)
-                painter.drawRect(
-                    QRectF(cx - body_w / 2, top_y, body_w, max(1.0, bot_y - top_y))
-                )
+                painter.drawRect(QRectF(cx - body_w / 2, top_y, body_w, max(1.0, bot_y - top_y)))
 
             if self.ema:
                 painter.setPen(QPen(QColor(Tokens.ACCENT), 1.5))
@@ -218,18 +217,14 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
                 painter.drawEllipse(int(marker_x) - 5, int(ey) - 5, 10, 10)
                 painter.setPen(QColor(Tokens.POS))
                 painter.setFont(mono_font)
-                painter.drawText(
-                    int(marker_x) + 10, int(ey) + 4, f"ENTRY {self.entry_price:.3f}"
-                )
+                painter.drawText(int(marker_x) + 10, int(ey) + 4, f"ENTRY {self.entry_price:.3f}")
             if self.stop_price is not None:
                 sy = y(self.stop_price)
                 painter.setPen(QPen(QColor(Tokens.NEG), 1, Qt.DashLine))
                 painter.drawLine(int(marker_x), int(sy), int(plot.right()), int(sy))
                 painter.setFont(mono_font)
                 painter.setPen(QColor(Tokens.NEG))
-                painter.drawText(
-                    int(plot.right()) - 92, int(sy) - 4, f"STOP {self.stop_price:.3f}"
-                )
+                painter.drawText(int(plot.right()) - 92, int(sy) - 4, f"STOP {self.stop_price:.3f}")
             painter.end()
 
     class VolumeCanvas(QWidget):
@@ -481,7 +476,9 @@ def build_chart_page(app_state, submit_task, log_message, on_add_pair=None):  # 
             return "running"
         return "info"
 
-    def _clear_canvases(message: str, chip_tone: str = "neutral", chip_text: str = "no data") -> None:
+    def _clear_canvases(
+        message: str, chip_tone: str = "neutral", chip_text: str = "no data"
+    ) -> None:
         price_canvas.set_data([], [])
         volume_canvas.set_data([])
         rsi_canvas.set_values([])

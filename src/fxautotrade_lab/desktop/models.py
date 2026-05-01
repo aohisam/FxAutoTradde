@@ -43,7 +43,9 @@ def load_dataframe_model_class():  # pragma: no cover - UI helper
                 return None
             return self._rows[row][column]
 
-        def headerData(self, section: int, orientation, role: int = Qt.DisplayRole):  # noqa: ANN001,N802
+        def headerData(
+            self, section: int, orientation, role: int = Qt.DisplayRole
+        ):  # noqa: ANN001,N802
             if role != Qt.DisplayRole:
                 return None
             if orientation == Qt.Horizontal:

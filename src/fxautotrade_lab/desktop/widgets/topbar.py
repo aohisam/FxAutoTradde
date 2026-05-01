@@ -54,9 +54,7 @@ class Topbar(QWidget):
         search_icon = QLabel()
         search_icon.setObjectName("TbSearchIcon")
         search_icon.setFixedSize(14, 14)
-        search_icon.setPixmap(
-            load_icon("search", Tokens.MUTED_2, 14).pixmap(QSize(14, 14))
-        )
+        search_icon.setPixmap(load_icon("search", Tokens.MUTED_2, 14).pixmap(QSize(14, 14)))
         placeholder = QLabel("通貨ペア・実行IDを検索")
         placeholder.setObjectName("TbSearchPlaceholder")
         kbd = QLabel("⌘K" if sys.platform == "darwin" else "Ctrl+K")

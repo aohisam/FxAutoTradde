@@ -4,7 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests.conftest import write_config
+import yaml
+
+from tests.conftest import make_config_dict, write_config
 
 
 def test_lab_application_exposes_scalping_cli_methods(tmp_path):
@@ -104,6 +106,37 @@ def test_cli_scalping_help_commands_smoke():
         )
         assert result.returncode == 0, result.stderr
         assert "Usage" in result.stdout or "usage" in result.stdout
+
+
+def test_cli_scalping_outcomes_summary_empty_store_smoke(tmp_path):
+    config = make_config_dict(tmp_path, strategy_name="fx_scalping")
+    config["strategy"]["fx_scalping"] = {
+        "enabled": True,
+        "outcome_store_enabled": False,
+        "outcome_store_dir": str(tmp_path / "missing_outcomes"),
+        "outcome_store_format": "csv",
+    }
+    config_path = tmp_path / "scalping_config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "fxautotrade_lab.cli",
+            "scalping-outcomes-summary",
+            "--config",
+            str(config_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "total_runs" in result.stdout
+    assert "total_trades" in result.stdout
+    assert "total_signals" in result.stdout
 
 
 def test_cli_scalping_argparse_dispatches_application_methods(monkeypatch, capsys, tmp_path):
