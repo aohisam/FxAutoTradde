@@ -29,7 +29,7 @@
 - ATR ストップごとの 1 取引リスク(代表的 ATR: 1 分 2 pips、15 分 7 pips、1 時間 18 pips): 1 分×1.5ATR = 60 JPY(口座比 0.0012%)、15 分×1.5ATR ≈ 210 JPY(0.0042%)、1 時間×1.5ATR ≈ 540 JPY(0.0108%)。日次上限に達するには 1 日 185〜1,667 回の連続全損が必要。
 - 固定 300k ノーショナルの口座年率ボラ ≈ 0.54%(USD/JPY 年率ボラ 9% 仮定)、日次 1σ P&L ≈ 1,700 JPY。
 - Carver 型ボラ目標に換算すると、目標 10% → ノーショナル 5,000,000〜6,250,000 JPY(300k 注文 17〜21 本分)、目標 15% → 7,500,000〜9,375,000 JPY(25〜31 本分)、目標 25% → 12,500,000〜15,625,000 JPY(42〜52 本分)。
-- 固定フラクショナル 0.5% / 1% / 2% = 25,000 / 50,000 / 100,000 JPY のリスク/取引。1 時間足 27 pips ストップなら 1% リスクは約 1,850 USD/pip… ではなく 50,000 JPY ÷ 27 pips = 1,852 JPY/pip = 約 185,000 USD(2,780 万円)のノーショナルに相当し、レバレッジ約 5.6 倍。
+- 固定フラクショナル 0.5% / 1% / 2% = 25,000 / 50,000 / 100,000 JPY のリスク/取引。1 時間足 27 pips ストップで 1% リスク(50,000 JPY)を取るには 50,000 ÷ 27 ≈ 1,852 JPY/pip、すなわち約 185,000 USD(約 2,780 万円)のノーショナルが必要で、レバレッジ約 5.6 倍。固定 300k(20 JPY/pip)はその 1/93 に相当する。
 - 半ケリー(f* = p − (1−p)/b): p=0.55,b=1.0 → フル 10%、半 5% = 250,000 JPY/取引。p=0.45,b=1.5 → 半 4.2% = 208,000 JPY/取引。推定誤差を考えると実務推奨(0.5〜2%)はさらにその 1/3〜1/10 である。
 
 期待最大ドローダウン(モンテカルロ、R 単位。5,000 試行):
@@ -115,7 +115,7 @@ N 取引中に k 連敗以上が起きる確率(マルコフ連鎖で厳密計�
 
 ### Cited Findings
 - Medallion は 1988〜2018 年に手数料控除後で年率 39.1% を達成し、同期間に「月次でマイナスになったのは全体の約 5 分の 1 の月のみ」。2000 年 3 月には 1 日 9,000 万ドル、翌日 8,000 万ドルの損失を出した。手数料は管理報酬 5%、成功報酬 20%(2002 年に 44% へ) — [The Daily Economy (AIER): Jim Simons and His Quants](https://thedailyeconomy.org/article/jim-simons-and-his-quants/) ; [AIER](https://www.aier.org/?p=48400) ; [Bloomberg: The Unsolved Mystery of the Medallion Fund's Success](https://brp-prod-bcc.bloomberg.com/news/articles/2019-11-12/the-unsolved-mystery-of-the-medallion-fund-s-success) ; [Marcellus](https://marcellus.in/story/why-the-medallion-fund-is-the-greatest-money-making-machine-of-all-time/)
-- Virtu Financial の IPO 届出書(S-1、2014 年)は「リアルタイムのリスク管理戦略と技術の結果、対象期間の合計 1,238 営業日のうち損失日は 1 日だけ」と記載。90% 超の日で 100 万ドル超の収益。2013 年の利益は 1 億 8,400 万ドル(前年比 +108%) — [Quartz: The HFT firm that's about to go public only had one day of trading losses in four years](https://qz.com/186209/the-high-frequency-trading-firm-thats-about-to-go-public-only-had-one-day-of-trading-losses-in-four-years) ; [Finance Magnates: Virtu Financial's IPO](https://financemagnates.com/institutional-forex/technology/virtu-financials-ipo-becomes-a-bright-spark-in-the-doom-gloom-affecting-the-industry)
+- Virtu Financial の IPO 届出書(S-1、2014 年)は「リアルタイムのリスク管理戦略と技術の結果、対象期間の合計 1,238 営業日のうち損失日は 1 日だけ」と記載。90% 超の日で 100 万ドル超の収益(スニペット準拠)。2013 年の利益は 1 億 8,400 万ドル(前年比 +108%) — [Quartz: The HFT firm that's about to go public only had one day of trading losses in four years](https://qz.com/186209/the-high-frequency-trading-firm-thats-about-to-go-public-only-had-one-day-of-trading-losses-in-four-years) ; [Finance Magnates: Virtu Financial's IPO](https://financemagnates.com/institutional-forex/technology/virtu-financials-ipo-becomes-a-bright-spark-in-the-doom-gloom-affecting-the-industry)
 - SG CTA Index は 2023 年 8 月までの 8 か月で黒字 4・赤字 4、SG Trend Index も 8 か月中 4 か月黒字 — [The Full FX: Early Results Point to CTA Struggle in August](https://thefullfx.com/early-results-point-to-cta-struggle-in-august/) ; 2022 年 10 月、SG Trend Index は 21 営業日中 9 日で下落 — [The Full FX: Trend Followers Eye Record Year](https://thefullfx.com/trend-followers-eye-record-year/) ; 2019 年 4 月は SG Trend Index 構成 10 プログラムすべてが黒字 — [Hedgeweek: CTAs continue positive run led by trend following strategies](https://hedgeweek.com/news/ctas-continue-positive-run-led-trend-following-strategies) ; 「CTA は直近 9 四半期中 8 四半期で黒字」 — [Hedgeweek market data](https://www.hedgeweek.com/content_channels/market-data/page/3/)
 - シャープレシオの推定値は(原リターンが非正規でも)漸近的に正規分布に従い、√q による期間変換は IID 下でのみ正しい(Lo 2002) — [The Statistics of Sharpe Ratios](https://traders.studentorg.berkeley.edu/papers/The-Statistics-of-Sharpe-Ratios.pdf) ; 月次データによるシャープ推定精度の改善 — [SSRN 2959632](https://papers.ssrn.com/abstract=2959632) ; 確率的シャープレシオ(Bailey & López de Prado) — [QuantConnect: Probabilistic Sharpe Ratio](https://www.quantconnect.com/research/17112/probabilistic-sharpe-ratio/)
 
@@ -299,7 +299,7 @@ GMOクリック証券 FXネオの USD/JPY は 0.2 銭原則固定だが、適用
 | 5 | ×2.24 | ×1.51 | ×1.29 | ×1.15 |
 | 10 | ×3.16 | ×1.64 | ×1.35 | ×1.18 |
 
-例: 単一戦略 SR 1.0(黒字月 61.4%)に、同じ USD/JPY 上で相関 0.5 の戦略を 2 本足す → SR 1.22(63.6%)。相関 0.3 の戦略を 4 本足す → SR 1.51(66.9%)。相関 0.3 で SR 2(71.8%)に達するには単体 SR 1.32 × 5 本、または SR 1.0 × 10 本超が必要。
+例: 単一戦略 SR 1.0(黒字月 61.4%)に、同じ USD/JPY 上で相関 0.5 の戦略を 2 本足す → SR 1.22(63.8%)。相関 0.3 の戦略を 4 本足す → SR 1.51(66.9%)。相関 0.3 で SR 2(71.8%)に達するには単体 SR 1.32 × 5 本が必要。注意: 等相関 ρ の下で本数を無限に増やしても合成 SR の上限は SR_単体/√ρ(ρ=0.3 で ×1.83、ρ=0.5 で ×1.41、ρ=0.7 で ×1.20)なので、単体 SR 1.0 の戦略を相関 0.3 で何本束ねても SR 2 には届かない。黒字月 70% 超は「本数」ではなく「単体エッジの質 × 低相関」でしか得られない。
 
 ### Inferences
 - 同一通貨ペア・隣接時間足の戦略は P&L 相関が 0.5〜0.7 になりやすく、分散倍率は 1.1〜1.2 に留まる。黒字月 70% 台を目指すなら、(a) 平均回帰(アジア時間レンジ)とブレイクアウト(ロンドン/NY 時間)のように符号の異なるエッジを時間帯で分ける、(b) 将来的に EUR/USD や GBP/JPY 等の低相関ストリームを加える、(c) 時間足を 15 分と 1 時間(+日足フィルター)に分ける、の順で相関を下げる設計が必要。USD/JPY 単一・1〜60 分足のままなら、現実的な到達点は SR 1〜1.5(黒字月 61〜67%)。
